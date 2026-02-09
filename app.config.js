@@ -9,18 +9,21 @@ export default {
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
     
-    // ✅ ADDED: OTA Updates Configuration
     updates: {
-      url: "https://u.expo.dev/f438370b-8c69-4d6e-bb2e-a8c67823cd0d" // Matches your EAS Project ID
+      url: "https://u.expo.dev/f438370b-8c69-4d6e-bb2e-a8c67823cd0d"
     },
-    // ✅ ADDED: Ensures updates only run if native code is compatible
+    
     runtimeVersion: {
       policy: "appVersion"
     },
 
     ios: {
       supportsTablet: true,
-      bundleIdentifier: "com.aniyu.app"
+      bundleIdentifier: "com.aniyu.app",
+      // ✅ REQUIRED for Google Sign-In on iOS (Download this from Firebase Console)
+      googleServicesFile: "./GoogleService-Info.plist",
+      // ✅ Enable Apple Sign-In
+      usesAppleSignIn: true
     },
     android: {
       adaptiveIcon: {
@@ -30,7 +33,9 @@ export default {
         monochromeImage: "./assets/images/android-icon-monochrome.png"
       },
       edgeToEdgeEnabled: true,
-      package: "com.aniyu.app"
+      package: "com.aniyu.app",
+      // ✅ REQUIRED for Google Sign-In on Android (Download this from Firebase Console)
+      googleServicesFile: "./google-services.json"
     },
     web: {
       output: "static",
@@ -58,7 +63,11 @@ export default {
           "androidAppId": "ca-app-pub-3940256099942544~3347511713",
           "iosAppId": "ca-app-pub-3940256099942544~1458002511"
         }
-      ]
+      ],
+      // ✅ NEW: Google Sign-In Plugin
+      "@react-native-google-signin/google-signin",
+      // ✅ NEW: Apple Authentication Plugin
+      "expo-apple-authentication"
     ],
     experiments: {
       typedRoutes: true,

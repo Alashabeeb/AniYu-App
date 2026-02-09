@@ -1,17 +1,32 @@
 import { Ionicons } from '@expo/vector-icons';
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
+import * as AppleAuthentication from 'expo-apple-authentication';
 import { useRouter } from 'expo-router';
-import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
-import { collection, doc, getDocs, query, setDoc, where } from 'firebase/firestore';
+import {
+    createUserWithEmailAndPassword,
+    GoogleAuthProvider,
+    OAuthProvider,
+    signInWithCredential,
+    updateProfile
+} from 'firebase/auth';
+import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
 import React, { useState } from 'react';
 import {
     ActivityIndicator, KeyboardAvoidingView,
     Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
 import CustomAlert from '../../components/CustomAlert';
 import { auth, db } from '../../config/firebaseConfig';
 import { useTheme } from '../../context/ThemeContext';
-import { getFriendlyErrorMessage } from '../../utils/errorHandler'; // ✅ Imported Friendly Error Handler
+import { getFriendlyErrorMessage } from '../../utils/errorHandler';
+
+// Note: GoogleSignin.configure is global, so it's already configured if Login mounted first, 
+// but safe to call again or ensure it's in a central place.
+GoogleSignin.configure({
+  webClientId: "891600067276-gd325gpe02fi1ceps35ri17ab7gnlonk.apps.googleusercontent.com", 
+});
 
 export default function SignUpScreen() {
   const router = useRouter();
@@ -33,8 +48,69 @@ export default function SignUpScreen() {
     setAlertConfig({ visible: true, type, title, message });
   };
 
+  const handleSocialSignUp = async (provider: 'google' | 'apple') => {
+    setLoading(true);
+    try {
+      let credential;
+
+      if (provider === 'google') {
+        await GoogleSignin.hasPlayServices();
+        const { idToken } = await GoogleSignin.signIn();
+        credential = GoogleAuthProvider.credential(idToken);
+      } else {
+        const appleCredential = await AppleAuthentication.signInAsync({
+          requestedScopes: [
+            AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+            AppleAuthentication.AppleAuthenticationScope.EMAIL,
+          ],
+        });
+        credential = new OAuthProvider('apple.com').credential({
+          idToken: appleCredential.identityToken!,
+          accessToken: appleCredential.authorizationCode!,
+        });
+      }
+
+      const userCredential = await signInWithCredential(auth, credential);
+      const user = userCredential.user;
+
+      // Check/Create User DB
+      const userDocRef = doc(db, "users", user.uid);
+      const userDoc = await getDoc(userDocRef);
+      
+      if (!userDoc.exists()) {
+        // For Google/Apple signup, we generate a username or allow them to change it later
+        // Here we try to use their name or generate one
+        const generatedUsername = user.displayName?.replace(/\s+/g, '').toLowerCase() || `user${Date.now().toString().slice(-6)}`;
+        
+        await setDoc(userDocRef, {
+            username: generatedUsername,
+            displayName: user.displayName || "User",
+            email: user.email,
+            role: 'user',
+            rank: 'GENIN',
+            avatar: user.photoURL || 'https://api.dicebear.com/7.x/avataaars/svg?seed=' + generatedUsername,
+            bio: "I'm new here!",
+            followers: [],
+            following: [],
+            createdAt: new Date(),
+            isVerified: false 
+        });
+        showAlert('success', 'Welcome!', 'Your account has been created successfully.');
+      } else {
+        // If they already exist, just log them in
+        router.replace('/(tabs)/feed');
+      }
+
+    } catch (error: any) {
+        if (error.code !== '12501') {
+            showAlert('error', 'Sign Up Failed', getFriendlyErrorMessage(error));
+        }
+    } finally {
+        setLoading(false);
+    }
+  };
+
   const handleSignUp = async () => {
-    // 1. Basic Validation
     if (!email || !password || !username) {
         return showAlert('warning', 'Missing Fields', 'Please fill in all fields to continue.');
     }
@@ -45,7 +121,6 @@ export default function SignUpScreen() {
     setLoading(true);
 
     try {
-        // 2. Check Username Availability
         const usersRef = collection(db, "users");
         const q = query(usersRef, where("username", "==", username.toLowerCase()));
         const snapshot = await getDocs(q);
@@ -55,20 +130,17 @@ export default function SignUpScreen() {
             return showAlert('error', 'Username Taken', 'This username is already in use. Please choose another.');
         }
 
-        // 3. Create User in Auth
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         const user = userCredential.user;
 
-        // 4. Set Display Name
         await updateProfile(user, { displayName: username });
 
-        // 5. Create Database Profile
         await setDoc(doc(db, "users", user.uid), {
             username: username.toLowerCase(),
             displayName: username,
             email: email,
-            role: 'user', // 🔒 SECURITY: Always 'user'
-            rank: 'GENIN', // 🔰 DEFAULT RANK
+            role: 'user',
+            rank: 'GENIN',
             avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=' + username,
             bio: "I'm new here!",
             followers: [],
@@ -77,13 +149,10 @@ export default function SignUpScreen() {
             isVerified: false 
         });
 
-        // ✅ Show Success Alert
         showAlert('success', 'Welcome!', 'Your account has been created successfully.');
 
     } catch (error: any) {
-        // ✅ UPDATED: Convert raw Firebase errors to friendly text
-        const friendlyMessage = getFriendlyErrorMessage(error);
-        showAlert('error', 'Sign Up Failed', friendlyMessage);
+        showAlert('error', 'Sign Up Failed', getFriendlyErrorMessage(error));
     } finally {
         setLoading(false);
     }
@@ -103,7 +172,6 @@ export default function SignUpScreen() {
             <Text style={[styles.subtitle, { color: theme.subText }]}>Join the AniYu community!</Text>
 
             <View style={styles.form}>
-                {/* Username Input */}
                 <View style={[styles.inputContainer, { backgroundColor: theme.card, borderColor: theme.border }]}>
                     <Ionicons name="person-outline" size={20} color={theme.subText} style={styles.icon} />
                     <TextInput 
@@ -116,7 +184,6 @@ export default function SignUpScreen() {
                     />
                 </View>
 
-                {/* Email Input */}
                 <View style={[styles.inputContainer, { backgroundColor: theme.card, borderColor: theme.border }]}>
                     <Ionicons name="mail-outline" size={20} color={theme.subText} style={styles.icon} />
                     <TextInput 
@@ -130,7 +197,6 @@ export default function SignUpScreen() {
                     />
                 </View>
 
-                {/* Password Input */}
                 <View style={[styles.inputContainer, { backgroundColor: theme.card, borderColor: theme.border }]}>
                     <Ionicons name="lock-closed-outline" size={20} color={theme.subText} style={styles.icon} />
                     <TextInput 
@@ -152,6 +218,28 @@ export default function SignUpScreen() {
                 </TouchableOpacity>
             </View>
 
+            {/* ✅ SOCIAL LOGIN DIVIDER */}
+            <View style={styles.dividerContainer}>
+                <View style={[styles.line, { backgroundColor: theme.border }]} />
+                <Text style={[styles.dividerText, { color: theme.subText }]}>Or sign up with</Text>
+                <View style={[styles.line, { backgroundColor: theme.border }]} />
+            </View>
+
+            {/* ✅ SOCIAL BUTTONS */}
+            <View style={styles.socialRow}>
+                <TouchableOpacity style={[styles.socialBtn, { borderColor: theme.border }]} onPress={() => handleSocialSignUp('google')}>
+                    <Ionicons name="logo-google" size={24} color={theme.text} />
+                    <Text style={[styles.socialText, { color: theme.text }]}>Google</Text>
+                </TouchableOpacity>
+
+                {Platform.OS === 'ios' && (
+                    <TouchableOpacity style={[styles.socialBtn, { borderColor: theme.border }]} onPress={() => handleSocialSignUp('apple')}>
+                        <Ionicons name="logo-apple" size={24} color={theme.text} />
+                        <Text style={[styles.socialText, { color: theme.text }]}>Apple</Text>
+                    </TouchableOpacity>
+                )}
+            </View>
+
             <View style={styles.footer}>
                 <Text style={{ color: theme.subText }}>Already have an account? </Text>
                 <TouchableOpacity onPress={() => router.push('/login')}>
@@ -161,7 +249,6 @@ export default function SignUpScreen() {
 
         </ScrollView>
 
-        {/* Custom Alert Component */}
         <CustomAlert 
             visible={alertConfig.visible}
             type={alertConfig.type}
@@ -169,7 +256,6 @@ export default function SignUpScreen() {
             message={alertConfig.message}
             onClose={() => {
                 setAlertConfig(prev => ({ ...prev, visible: false }));
-                // Redirect if success
                 if (alertConfig.type === 'success') {
                     router.replace('/(tabs)/feed');
                 }
@@ -193,4 +279,12 @@ const styles = StyleSheet.create({
   button: { height: 55, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginTop: 10, shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 5, elevation: 5 },
   buttonText: { color: 'white', fontSize: 18, fontWeight: 'bold' },
   footer: { flexDirection: 'row', justifyContent: 'center', marginTop: 30 },
+
+  // Social Styles
+  dividerContainer: { flexDirection: 'row', alignItems: 'center', marginVertical: 25 },
+  line: { flex: 1, height: 1 },
+  dividerText: { marginHorizontal: 10, fontSize: 14 },
+  socialRow: { flexDirection: 'row', gap: 15 },
+  socialBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 12, borderRadius: 12, borderWidth: 1, gap: 10 },
+  socialText: { fontWeight: '600', fontSize: 16 },
 });
