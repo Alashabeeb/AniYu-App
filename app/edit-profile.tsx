@@ -2,7 +2,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { Stack, useRouter } from 'expo-router';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+// ✅ ADDED: collection, getDocs, query, where
+import { collection, doc, getDoc, getDocs, query, updateDoc, where } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage';
 import React, { useEffect, useState } from 'react';
 import {
@@ -77,7 +78,6 @@ export default function EditProfileScreen() {
     }
   };
 
-  // ✅ NEW: Bulletproof Blob Creator
   const getBlobFromUri = async (uri: string): Promise<Blob> => {
     const blob = await new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
@@ -102,10 +102,7 @@ export default function EditProfileScreen() {
 
           const blob = await getBlobFromUri(uri);
           
-          // Use exact path matching the rules: users/{uid}/{file}
           const storageRef = ref(storage, `users/${user.uid}/${type}.jpg`);
-          
-          // Add Metadata
           const metadata = { contentType: 'image/jpeg' };
           
           await uploadBytesResumable(storageRef, blob, metadata);
@@ -126,6 +123,7 @@ export default function EditProfileScreen() {
       }
   };
 
+  // ✅ UPDATED: Handle Save with Unique Username Check
   const handleSave = async () => {
     const user = auth.currentUser;
     if (!user) return;
@@ -136,15 +134,37 @@ export default function EditProfileScreen() {
 
     setLoading(true);
     try {
-        await updateDoc(doc(db, "users", user.uid), {
-            displayName,
-            username,
-            bio,
+        const lowerCaseUsername = username.trim().toLowerCase();
+
+        // 1. Get current data to check if username actually changed
+        const userDocRef = doc(db, "users", user.uid);
+        const userDocSnap = await getDoc(userDocRef);
+        const currentData = userDocSnap.data();
+
+        // 2. Only check uniqueness if the username is DIFFERENT from what they already have
+        if (currentData && currentData.username !== lowerCaseUsername) {
+            const usersRef = collection(db, "users");
+            // Query for ANY user with this username
+            const q = query(usersRef, where("username", "==", lowerCaseUsername));
+            const querySnapshot = await getDocs(q);
+
+            if (!querySnapshot.empty) {
+                setLoading(false);
+                return showAlert('error', 'Username Taken', 'This username is already taken by another user.');
+            }
+        }
+
+        // 3. Update Profile
+        await updateDoc(userDocRef, {
+            displayName: displayName.trim(),
+            username: lowerCaseUsername, // Always save as lowercase for consistency
+            bio: bio.trim(),
             avatar,
             banner
         });
         showAlert('success', 'Profile Updated', 'Your changes have been saved successfully.');
     } catch (error) {
+        console.error(error);
         showAlert('error', 'Update Failed', 'Could not update profile. Please check your connection.');
     } finally {
         setLoading(false);

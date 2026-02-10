@@ -22,8 +22,7 @@ import { auth, db } from '../../config/firebaseConfig';
 import { useTheme } from '../../context/ThemeContext';
 import { getFriendlyErrorMessage } from '../../utils/errorHandler';
 
-// Note: GoogleSignin.configure is global, so it's already configured if Login mounted first, 
-// but safe to call again or ensure it's in a central place.
+// Note: GoogleSignin.configure is global, but safe to verify config here
 GoogleSignin.configure({
   webClientId: "891600067276-gd325gpe02fi1ceps35ri17ab7gnlonk.apps.googleusercontent.com", 
 });
@@ -55,7 +54,12 @@ export default function SignUpScreen() {
 
       if (provider === 'google') {
         await GoogleSignin.hasPlayServices();
-        const { idToken } = await GoogleSignin.signIn();
+        const response = await GoogleSignin.signIn();
+
+        // ✅ FIX: Extract idToken correctly from response.data
+        const idToken = response.data?.idToken;
+        if (!idToken) throw new Error("Google Sign-In failed: No ID Token found.");
+
         credential = GoogleAuthProvider.credential(idToken);
       } else {
         const appleCredential = await AppleAuthentication.signInAsync({
@@ -73,13 +77,10 @@ export default function SignUpScreen() {
       const userCredential = await signInWithCredential(auth, credential);
       const user = userCredential.user;
 
-      // Check/Create User DB
       const userDocRef = doc(db, "users", user.uid);
       const userDoc = await getDoc(userDocRef);
       
       if (!userDoc.exists()) {
-        // For Google/Apple signup, we generate a username or allow them to change it later
-        // Here we try to use their name or generate one
         const generatedUsername = user.displayName?.replace(/\s+/g, '').toLowerCase() || `user${Date.now().toString().slice(-6)}`;
         
         await setDoc(userDocRef, {
@@ -97,12 +98,13 @@ export default function SignUpScreen() {
         });
         showAlert('success', 'Welcome!', 'Your account has been created successfully.');
       } else {
-        // If they already exist, just log them in
+        // If user already exists, just log them in
         router.replace('/(tabs)/feed');
       }
 
     } catch (error: any) {
         if (error.code !== '12501') {
+            console.error(error);
             showAlert('error', 'Sign Up Failed', getFriendlyErrorMessage(error));
         }
     } finally {

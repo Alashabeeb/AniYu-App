@@ -27,9 +27,8 @@ import { auth, db } from '../../config/firebaseConfig';
 import { useTheme } from '../../context/ThemeContext';
 import { getFriendlyErrorMessage } from '../../utils/errorHandler';
 
-// ✅ CONFIGURE GOOGLE SIGN IN (Run this once)
+// ✅ CONFIGURE GOOGLE SIGN IN
 GoogleSignin.configure({
-  // You get this from your Firebase Console -> Authentication -> Sign-in method -> Google -> Web SDK configuration
   webClientId: "891600067276-gd325gpe02fi1ceps35ri17ab7gnlonk.apps.googleusercontent.com", 
 });
 
@@ -80,7 +79,8 @@ export default function LoginScreen() {
     try {
       await sendPasswordResetEmail(auth, resetEmail);
       setResetModalVisible(false);
-      showAlert('success', 'Email Sent', 'Check your inbox for password reset instructions.');
+      // ✅ UPDATED MESSAGE: Mention Spam folder
+      showAlert('success', 'Email Sent', 'Check your inbox or spam folder for password reset instructions.');
     } catch (error: any) {
       Alert.alert("Error", getFriendlyErrorMessage(error));
     } finally {
@@ -97,7 +97,12 @@ export default function LoginScreen() {
         // 1. Check Play Services
         await GoogleSignin.hasPlayServices();
         // 2. Sign In
-        const { idToken, user: googleUser } = await GoogleSignin.signIn();
+        const response = await GoogleSignin.signIn();
+        
+        // ✅ FIX: Correctly extract idToken from response.data
+        const idToken = response.data?.idToken;
+        if (!idToken) throw new Error("Google Sign-In failed: No ID Token found.");
+
         // 3. Create Credential
         credential = GoogleAuthProvider.credential(idToken);
       } else {
@@ -146,10 +151,12 @@ export default function LoginScreen() {
         }
       }
 
-      // Login Successful (Router handles redirect automatically)
+      // Login Successful (Router handles redirect automatically via _layout listener usually, or we can force it)
+      // router.replace('/(tabs)/feed');
 
     } catch (error: any) {
       if (error.code !== '12501') { // Ignore "User cancelled" error
+         console.error(error);
          showAlert('error', 'Login Failed', getFriendlyErrorMessage(error));
       }
     } finally {
