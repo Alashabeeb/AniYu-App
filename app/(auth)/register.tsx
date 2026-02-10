@@ -54,9 +54,17 @@ export default function SignUpScreen() {
 
       if (provider === 'google') {
         await GoogleSignin.hasPlayServices();
+        
+        // ✅ FIX 1: Force Account Chooser (Sign out first to clear cache)
+        try {
+            await GoogleSignin.signOut();
+        } catch (e) {
+            // Ignore error if user wasn't signed in
+        }
+
         const response = await GoogleSignin.signIn();
 
-        // ✅ FIX: Extract idToken correctly from response.data
+        // ✅ FIX 2: Extract idToken correctly
         const idToken = response.data?.idToken;
         if (!idToken) throw new Error("Google Sign-In failed: No ID Token found.");
 
@@ -98,12 +106,13 @@ export default function SignUpScreen() {
         });
         showAlert('success', 'Welcome!', 'Your account has been created successfully.');
       } else {
-        // If user already exists, just log them in
-        router.replace('/(tabs)/feed');
+        // If user already exists, just log them in and go Home
+        // ✅ FIX 3: Redirect to Home (/(tabs)) instead of Feed
+        router.replace('/(tabs)');
       }
 
     } catch (error: any) {
-        if (error.code !== '12501') {
+        if (error.code !== '12501') { // Ignore "User cancelled" error
             console.error(error);
             showAlert('error', 'Sign Up Failed', getFriendlyErrorMessage(error));
         }
@@ -259,7 +268,8 @@ export default function SignUpScreen() {
             onClose={() => {
                 setAlertConfig(prev => ({ ...prev, visible: false }));
                 if (alertConfig.type === 'success') {
-                    router.replace('/(tabs)/feed');
+                    // ✅ FIX 4: Success redirect to Home
+                    router.replace('/(tabs)');
                 }
             }}
         />
