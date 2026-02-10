@@ -217,7 +217,7 @@ export default function ProfileScreen() {
             </View>
         </View>
 
-        {/* ✅ UPDATED: Added onMore Prop for "See All" */}
+        {/* See All Favorites */}
         <View style={{ marginTop: 20 }}>
             {favorites.length > 0 && (
                 <TrendingRail 
@@ -233,6 +233,10 @@ export default function ProfileScreen() {
             <MenuItem icon="settings-outline" label="Settings" theme={theme} onPress={() => router.push('/settings')} isLink />
             <MenuItem icon="download-outline" label="Downloads" theme={theme} onPress={() => router.push('/downloads')} isLink />
             <MenuItem icon="notifications-outline" label="Notifications" theme={theme} onPress={() => router.push('/notifications')} isLink />
+            
+            {/* ✅ ADDED: Privacy Policy Button */}
+            <MenuItem icon="shield-checkmark-outline" label="Privacy & Terms" theme={theme} onPress={() => router.push('/privacy-policy')} isLink />
+            
             <MenuItem icon="help-circle-outline" label="Help & Support" theme={theme} onPress={() => router.push('/help-support')} isLink />
             
             <TouchableOpacity style={styles.menuItem} onPress={handleLogout}>

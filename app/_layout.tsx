@@ -81,6 +81,7 @@ function RootLayoutNav() {
           <Stack.Screen name="manga/[id]" options={{ headerShown: false }} />
           <Stack.Screen name="chapter-read" options={{ headerShown: false }} />
           <Stack.Screen name="settings" options={{ presentation: 'modal' }} />
+          <Stack.Screen name="privacy-policy" options={{ headerShown: false }} />
         </Stack>
       </ToastProvider>
     </ThemeProvider>
