@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import {
@@ -28,8 +29,6 @@ import {
     ViewToken
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-// ✅ IMPORT ASYNC STORAGE
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import AdBanner from '../../components/AdBanner';
 import PostCard from '../../components/PostCard';
@@ -38,7 +37,6 @@ import { useTheme } from '../../context/ThemeContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-// ✅ CACHE KEYS
 const FEED_CACHE_KEY = 'aniyu_feed_cache_v1';
 const viewedFeedSession = new Set<string>();
 
@@ -57,13 +55,14 @@ export default function FeedScreen() {
   const [searchingUsers, setSearchingUsers] = useState(false);
 
   const [blockedUsers, setBlockedUsers] = useState<string[]>([]);
-  const [viewableItemIds, setViewableItemIds] = useState<string[]>([]);
+  
+  // ✅ FIX: Track ONLY ONE playing post ID
+  const [playingPostId, setPlayingPostId] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState('All'); 
   const flatListRef = useRef<FlatList>(null); 
   const [selectedGenre, setSelectedGenre] = useState<string | null>(null);
 
-  // ✅ LOAD CACHED FEED ON MOUNT
   useEffect(() => {
       const loadCache = async () => {
           try {
@@ -111,12 +110,9 @@ export default function FeedScreen() {
         limit(50) 
     );
     
-    // ✅ SAVE TO CACHE ON UPDATE
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const postsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setPosts(postsData);
-      
-      // Save data for next offline launch
       AsyncStorage.setItem(FEED_CACHE_KEY, JSON.stringify(postsData)).catch(err => console.log("Cache save failed", err));
     });
     return unsubscribe; 
@@ -221,10 +217,17 @@ export default function FeedScreen() {
       itemVisiblePercentThreshold: 50 
   }).current;
 
+  // ✅ UPDATED: Viewability Logic
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
-      const visibleIds = viewableItems.map(v => v.item.id);
-      setViewableItemIds(visibleIds);
+      // 1. PLAYBACK LOGIC: Pick strictly the first visible item
+      if (viewableItems.length > 0) {
+          const firstVisible = viewableItems[0];
+          setPlayingPostId(firstVisible.item.id);
+      } else {
+          setPlayingPostId(null);
+      }
 
+      // 2. VIEW COUNTING LOGIC (Preserved)
       viewableItems.forEach((viewToken) => {
           if (viewToken.isViewable && viewToken.item?.id) {
               const postId = viewToken.item.id;
@@ -270,10 +273,11 @@ export default function FeedScreen() {
         renderItem={({ item }) => (
             <PostCard 
                 post={item} 
-                isVisible={viewableItemIds.includes(item.id)} 
+                // ✅ FIX: Only play if ID matches playingPostId
+                isVisible={playingPostId === item.id} 
             />
         )}
-        extraData={viewableItemIds} 
+        extraData={playingPostId} // ✅ Ensure re-render when active video changes
     />
   );
 

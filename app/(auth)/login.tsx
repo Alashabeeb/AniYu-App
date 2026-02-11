@@ -79,7 +79,6 @@ export default function LoginScreen() {
     try {
       await sendPasswordResetEmail(auth, resetEmail);
       setResetModalVisible(false);
-      // ✅ UPDATED MESSAGE: Mention Spam folder
       showAlert('success', 'Email Sent', 'Check your inbox or spam folder for password reset instructions.');
     } catch (error: any) {
       Alert.alert("Error", getFriendlyErrorMessage(error));
@@ -96,14 +95,22 @@ export default function LoginScreen() {
       if (provider === 'google') {
         // 1. Check Play Services
         await GoogleSignin.hasPlayServices();
+
+        // ✅ FIX: Force Account Chooser (Sign out first to clear cache)
+        try {
+            await GoogleSignin.signOut();
+        } catch (e) {
+            // It's okay if they were already signed out
+        }
+
         // 2. Sign In
         const response = await GoogleSignin.signIn();
         
-        // ✅ FIX: Correctly extract idToken from response.data
+        // 3. Extract ID Token
         const idToken = response.data?.idToken;
         if (!idToken) throw new Error("Google Sign-In failed: No ID Token found.");
 
-        // 3. Create Credential
+        // 4. Create Credential
         credential = GoogleAuthProvider.credential(idToken);
       } else {
         // Apple Logic
@@ -120,11 +127,11 @@ export default function LoginScreen() {
         });
       }
 
-      // 4. Sign In to Firebase
+      // 5. Sign In to Firebase
       const userCredential = await signInWithCredential(auth, credential);
       const user = userCredential.user;
 
-      // 5. Check if User Exists in DB, if not Create (Auto-Registration)
+      // 6. Check if User Exists in DB
       const userDoc = await getDoc(doc(db, "users", user.uid));
       
       if (!userDoc.exists()) {
@@ -140,19 +147,19 @@ export default function LoginScreen() {
             followers: [],
             following: [],
             createdAt: new Date(),
+            lastActiveAt: new Date(), // ✅ Added Last Active
             isVerified: false 
         });
       } else {
-        // Check Role if exists
+        // ✅ CRITICAL: Check Role if user exists
         const userData = userDoc.data();
-        if (userData.role !== 'user') {
-           await signOut(auth);
+        if (userData?.role !== 'user') {
+           await signOut(auth); // Kick them out
            throw new Error("Access Denied: Admins must use web dashboard.");
         }
       }
 
-      // Login Successful (Router handles redirect automatically via _layout listener usually, or we can force it)
-      // router.replace('/(tabs)/feed');
+      // Login Successful (Router handles redirect automatically via _layout listener usually)
 
     } catch (error: any) {
       if (error.code !== '12501') { // Ignore "User cancelled" error

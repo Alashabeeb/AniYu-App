@@ -7,6 +7,7 @@ import {
     GoogleAuthProvider,
     OAuthProvider,
     signInWithCredential,
+    signOut, // ✅ Added signOut
     updateProfile
 } from 'firebase/auth';
 import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
@@ -22,7 +23,6 @@ import { auth, db } from '../../config/firebaseConfig';
 import { useTheme } from '../../context/ThemeContext';
 import { getFriendlyErrorMessage } from '../../utils/errorHandler';
 
-// Note: GoogleSignin.configure is global, but safe to verify config here
 GoogleSignin.configure({
   webClientId: "891600067276-gd325gpe02fi1ceps35ri17ab7gnlonk.apps.googleusercontent.com", 
 });
@@ -54,17 +54,9 @@ export default function SignUpScreen() {
 
       if (provider === 'google') {
         await GoogleSignin.hasPlayServices();
-        
-        // ✅ FIX 1: Force Account Chooser (Sign out first to clear cache)
-        try {
-            await GoogleSignin.signOut();
-        } catch (e) {
-            // Ignore error if user wasn't signed in
-        }
+        try { await GoogleSignin.signOut(); } catch (e) { }
 
         const response = await GoogleSignin.signIn();
-
-        // ✅ FIX 2: Extract idToken correctly
         const idToken = response.data?.idToken;
         if (!idToken) throw new Error("Google Sign-In failed: No ID Token found.");
 
@@ -95,24 +87,29 @@ export default function SignUpScreen() {
             username: generatedUsername,
             displayName: user.displayName || "User",
             email: user.email,
-            role: 'user',
+            role: 'user', // Default role
             rank: 'GENIN',
             avatar: user.photoURL || 'https://api.dicebear.com/7.x/avataaars/svg?seed=' + generatedUsername,
             bio: "I'm new here!",
             followers: [],
             following: [],
             createdAt: new Date(),
+            lastActiveAt: new Date(),
             isVerified: false 
         });
         showAlert('success', 'Welcome!', 'Your account has been created successfully.');
       } else {
-        // If user already exists, just log them in and go Home
-        // ✅ FIX 3: Redirect to Home (/(tabs)) instead of Feed
+        // ✅ FIX: Check Role if user already exists!
+        const userData = userDoc.data();
+        if (userData?.role !== 'user') {
+            await signOut(auth); // Kick them out immediately
+            throw new Error("Access Denied: This account is restricted to the Web Dashboard.");
+        }
         router.replace('/(tabs)');
       }
 
     } catch (error: any) {
-        if (error.code !== '12501') { // Ignore "User cancelled" error
+        if (error.code !== '12501') {
             console.error(error);
             showAlert('error', 'Sign Up Failed', getFriendlyErrorMessage(error));
         }
@@ -157,6 +154,7 @@ export default function SignUpScreen() {
             followers: [],
             following: [],
             createdAt: new Date(),
+            lastActiveAt: new Date(),
             isVerified: false 
         });
 
@@ -229,14 +227,12 @@ export default function SignUpScreen() {
                 </TouchableOpacity>
             </View>
 
-            {/* ✅ SOCIAL LOGIN DIVIDER */}
             <View style={styles.dividerContainer}>
                 <View style={[styles.line, { backgroundColor: theme.border }]} />
                 <Text style={[styles.dividerText, { color: theme.subText }]}>Or sign up with</Text>
                 <View style={[styles.line, { backgroundColor: theme.border }]} />
             </View>
 
-            {/* ✅ SOCIAL BUTTONS */}
             <View style={styles.socialRow}>
                 <TouchableOpacity style={[styles.socialBtn, { borderColor: theme.border }]} onPress={() => handleSocialSignUp('google')}>
                     <Ionicons name="logo-google" size={24} color={theme.text} />
@@ -268,7 +264,6 @@ export default function SignUpScreen() {
             onClose={() => {
                 setAlertConfig(prev => ({ ...prev, visible: false }));
                 if (alertConfig.type === 'success') {
-                    // ✅ FIX 4: Success redirect to Home
                     router.replace('/(tabs)');
                 }
             }}
@@ -291,8 +286,6 @@ const styles = StyleSheet.create({
   button: { height: 55, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginTop: 10, shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 5, elevation: 5 },
   buttonText: { color: 'white', fontSize: 18, fontWeight: 'bold' },
   footer: { flexDirection: 'row', justifyContent: 'center', marginTop: 30 },
-
-  // Social Styles
   dividerContainer: { flexDirection: 'row', alignItems: 'center', marginVertical: 25 },
   line: { flex: 1, height: 1 },
   dividerText: { marginHorizontal: 10, fontSize: 14 },
