@@ -41,3 +41,10 @@ app-example
 # generated native folders
 /ios
 /android
+
+.env
+.env*.local
+
+# Firebase Config
+google-services.json
+GoogleService-Info.plist
