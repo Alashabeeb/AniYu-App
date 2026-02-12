@@ -1,7 +1,8 @@
 import {
     collection, deleteDoc, doc, getDoc, getDocs,
     limit, orderBy, query, serverTimestamp,
-    where, writeBatch // ✅ ADDED writeBatch
+    startAfter,
+    where, writeBatch
 } from 'firebase/firestore';
 import {
     Ban, ChevronDown, ChevronUp, Clock, FileText,
@@ -22,33 +23,65 @@ export default function Comments() {
     const navigate = useNavigate();
     const [posts, setPosts] = useState([]);
     const [commentsMap, setCommentsMap] = useState({}); 
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(false);
     const [expandedPostId, setExpandedPostId] = useState(null); 
     const [loadingComments, setLoadingComments] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [actionLoading, setActionLoading] = useState(null);
 
+    // ✅ PAGINATION STATE
+    const [lastVisible, setLastVisible] = useState(null);
+    const [hasMore, setHasMore] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
+
     useEffect(() => {
-        fetchPosts();
+        fetchPosts(true);
     }, []);
 
-    // 1. Fetch Main Posts (Roots)
-    const fetchPosts = async () => {
-        setLoading(true);
+    // 1. ✅ OPTIMIZED: Fetch Main Posts (Roots) with Pagination
+    const fetchPosts = async (isFirstLoad = false) => {
+        if (loading || loadingMore || (!isFirstLoad && !hasMore)) return;
+
+        if (isFirstLoad) setLoading(true);
+        else setLoadingMore(true);
+
         try {
-            const q = query(collection(db, "posts"), orderBy("createdAt", "desc"), limit(50));
+            let q = query(
+                collection(db, "posts"), 
+                orderBy("createdAt", "desc"), 
+                limit(20) // Reduced from 50 to 20 for faster initial load
+            );
+
+            if (!isFirstLoad && lastVisible) {
+                q = query(
+                    collection(db, "posts"), 
+                    orderBy("createdAt", "desc"), 
+                    startAfter(lastVisible),
+                    limit(20)
+                );
+            }
+
             const snap = await getDocs(q);
             const allItems = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            
+            // Filter client-side to ensure we only get roots (in case parentId check needed)
+            // Ideally, your DB query should have where('parentId', '==', null) if possible
             const mainPosts = allItems.filter(item => !item.parentId);
-            setPosts(mainPosts);
+
+            setPosts(prev => isFirstLoad ? mainPosts : [...prev, ...mainPosts]);
+            setLastVisible(snap.docs[snap.docs.length - 1]);
+            
+            if (snap.docs.length < 20) setHasMore(false);
+
         } catch (error) {
             console.error("Error fetching posts:", error);
         } finally {
             setLoading(false);
+            setLoadingMore(false);
         }
     };
 
-    // 2. Fetch Comments for a specific Post
+    // 2. Fetch Comments for a specific Post (Lazy Load - Good!)
     const fetchCommentsForPost = async (postId) => {
         if (commentsMap[postId]) return; 
         setLoadingComments(true);
@@ -56,7 +89,8 @@ export default function Comments() {
             const q = query(
                 collection(db, "posts"), 
                 where("parentId", "==", postId),
-                orderBy("createdAt", "desc")
+                orderBy("createdAt", "desc"),
+                limit(50) // ✅ Added limit safety
             );
             const snap = await getDocs(q);
             const postComments = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -224,6 +258,10 @@ export default function Comments() {
             .btn-ban { background: white; color: #4b5563; border-color: #e5e7eb; }
             .btn-ban:hover { background: #f3f4f6; color: #111827; }
 
+            .btn-load-more { width: 100%; padding: 15px; margin-top: 10px; background-color: #f3f4f6; border: none; border-radius: 8px; font-weight: bold; color: #4b5563; cursor: pointer; transition: background-color 0.2s; }
+            .btn-load-more:hover { background-color: #e5e7eb; }
+            .btn-load-more:disabled { opacity: 0.5; cursor: not-allowed; }
+
             /* DROPDOWN COMMENTS AREA */
             .comments-section { background: #f8fafc; border-top: 1px solid #e5e7eb; padding: 0 20px 20px 20px; animation: slideDown 0.2s ease-out; }
             .comments-header { font-size: 0.8rem; font-weight: 700; color: #64748b; text-transform: uppercase; padding: 15px 0 10px; display: block; border-bottom: 1px dashed #cbd5e1; margin-bottom: 10px; }
@@ -372,6 +410,19 @@ export default function Comments() {
                             )}
                         </div>
                     ))
+                )}
+                
+                {/* ✅ LOAD MORE BUTTON */}
+                {hasMore && !loading && (
+                    <div style={{padding: 10}}>
+                        <button 
+                            className="btn-load-more" 
+                            onClick={() => fetchPosts(false)} 
+                            disabled={loadingMore}
+                        >
+                            {loadingMore ? <Loader2 className="animate-spin" style={{margin:'0 auto'}}/> : "Load More Posts"}
+                        </button>
+                    </div>
                 )}
             </div>
         </div>

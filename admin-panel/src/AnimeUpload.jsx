@@ -124,15 +124,22 @@ export default function AnimeUpload() {
     }
   };
 
-  const sendAutoNotification = async (title, body) => {
+  // ✅ COST OPTIMIZED: Replaced the loop with a single global announcement
+  const sendAutoNotification = async (title, body, targetId = null) => {
       try {
-          const usersSnap = await getDocs(collection(db, "users"));
-          const promises = usersSnap.docs.map(userDoc => 
-              addDoc(collection(db, "users", userDoc.id, "notifications"), {
-                  title, body, read: false, createdAt: serverTimestamp(), type: 'system'
-              })
-          );
-          await Promise.all(promises);
+          // ❌ REMOVED: The loop that read all 100k users and wrote 100k docs.
+          
+          // ✅ ADDED: Single write to 'global_announcements' collection.
+          // Your mobile app should listen to this collection to show notifications.
+          await addDoc(collection(db, "announcements"), {
+              title,
+              body,
+              targetId,
+              type: 'anime_release',
+              createdAt: serverTimestamp()
+          });
+          
+          console.log("Global announcement sent successfully.");
       } catch (e) { console.error("Notification failed:", e); }
   };
 
@@ -143,10 +150,11 @@ export default function AnimeUpload() {
       try {
           await updateDoc(doc(db, 'anime', anime.id), { status: 'Ongoing' });
           
-          // Notify Users on Approval
+          // Notify Users on Approval (Cheaply)
           await sendAutoNotification(
               `New Release: ${anime.title}`,
-              `${anime.title} has just been released! Watch it now on AniYu.`
+              `${anime.title} has just been released! Watch it now on AniYu.`,
+              anime.id
           );
 
           alert("Anime Approved & Published!");
@@ -292,17 +300,12 @@ export default function AnimeUpload() {
     setEpisodes(newEps); 
   };
 
-  // ✅ UPDATED: Strict Type Validation for Episode Files
   const updateEpisodeState = (index, field, value) => { 
       if (field === 'thumbFile' && value && !value.type.startsWith('image/')) {
           alert("Invalid file type. Please upload an image file (JPG, PNG, etc) for the thumbnail.");
           return;
       }
-      // ✅ We keep this check simple to catch non-video MIME types, 
-      // but rely on the accept attribute for the specific extensions.
       if (field === 'videoFile' && value && !value.type.startsWith('video/')) {
-          // Some MKV files might not have a standard MIME type in some browsers, 
-          // but we'll warn the user anyway to be safe.
           alert("Warning: The file type detected is not a standard video format. If this is a valid video file, you may proceed, otherwise please check the file.");
       }
       const newEps = [...episodes]; 
@@ -326,7 +329,6 @@ export default function AnimeUpload() {
     setEpisodes(newEps);
   };
 
-  // ✅ UPDATED: Strict Type Validation for Cover Image
   const handleFileChange = (e, setter, requiredType = 'image') => { 
       const file = e.target.files[0];
       if (!file) return;
@@ -465,13 +467,15 @@ export default function AnimeUpload() {
              if (newEpCount > 0) {
                  await sendAutoNotification(
                      `New Episode: ${animeTitle}`,
-                     `${newEpCount} new episode(s) added to ${animeTitle}. Watch now!`
+                     `${newEpCount} new episode(s) added to ${animeTitle}. Watch now!`,
+                     animeId
                  );
              }
           } else {
              await sendAutoNotification(
                  `New Anime Arrived! 🌟`,
-                 `${animeTitle} is now available on AniYu. Check it out!`
+                 `${animeTitle} is now available on AniYu. Check it out!`,
+                 animeId
              );
           }
       }

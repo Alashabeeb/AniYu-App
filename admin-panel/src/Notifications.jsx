@@ -1,4 +1,4 @@
-import { addDoc, collection, getDocs, orderBy, query, serverTimestamp } from 'firebase/firestore';
+import { addDoc, collection, getDocs, limit, orderBy, query, serverTimestamp, startAfter } from 'firebase/firestore';
 import {
     Bell,
     CheckCircle,
@@ -31,28 +31,49 @@ export default function Notifications() {
 
   // User Picker Modal State
   const [showUserPicker, setShowUserPicker] = useState(false);
-  const [allUsers, setAllUsers] = useState([]);
+  const [userList, setUserList] = useState([]);
+  const [lastVisibleUser, setLastVisibleUser] = useState(null);
   const [userSearch, setUserSearch] = useState('');
+  const [loadingUsers, setLoadingUsers] = useState(false);
 
-  // --- FETCH HISTORY & USERS ---
+  // --- FETCH HISTORY ---
   useEffect(() => {
       fetchHistory();
-      fetchAllUsers();
   }, []);
 
   const fetchHistory = async () => {
       try {
-          const q = query(collection(db, "notification_logs"), orderBy('createdAt', 'desc'));
+          // Limit history to last 20 items
+          const q = query(collection(db, "notification_logs"), orderBy('createdAt', 'desc'), limit(20));
           const snap = await getDocs(q);
           setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       } catch (e) { console.error(e); }
   };
 
-  const fetchAllUsers = async () => {
+  // --- PAGINATED USER FETCH ---
+  const fetchUsers = async (reset = false) => {
+      if (loadingUsers) return;
+      setLoadingUsers(true);
       try {
-          const snap = await getDocs(collection(db, "users"));
-          setAllUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+          let q = query(collection(db, "users"), orderBy("createdAt", "desc"), limit(20));
+          
+          if (!reset && lastVisibleUser) {
+              q = query(collection(db, "users"), orderBy("createdAt", "desc"), startAfter(lastVisibleUser), limit(20));
+          }
+
+          const snap = await getDocs(q);
+          const newUsers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          
+          setUserList(prev => reset ? newUsers : [...prev, ...newUsers]);
+          setLastVisibleUser(snap.docs[snap.docs.length - 1]);
       } catch (e) { console.error(e); }
+      finally { setLoadingUsers(false); }
+  };
+
+  // Open modal and load users
+  const openUserPicker = () => {
+      setShowUserPicker(true);
+      if (userList.length === 0) fetchUsers(true);
   };
 
   // --- SELECTION LOGIC ---
@@ -64,7 +85,8 @@ export default function Notifications() {
       }
   };
 
-  const filteredUsers = allUsers.filter(u => 
+  // Client-side search for loaded users (At scale, this should be server-side or Algolia)
+  const filteredUsers = userList.filter(u => 
       (u.username || '').toLowerCase().includes(userSearch.toLowerCase()) || 
       (u.email || '').toLowerCase().includes(userSearch.toLowerCase())
   );
@@ -74,51 +96,61 @@ export default function Notifications() {
       e.preventDefault();
       if(!title || !body) return alert("Please fill in title and message.");
       
-      let recipients = [];
-
-      // Determine Recipients based on Type
-      if (targetType === 'specific') {
-          if (!targetUid) return alert("Please enter a User UID.");
-          recipients = [{ id: targetUid }];
-      } 
-      else if (targetType === 'multiple') {
-          if (selectedUsers.length === 0) return alert("Please select at least one user.");
-          recipients = selectedUsers;
-      } 
-      else if (targetType === 'all') {
-          recipients = allUsers;
-      }
-
       setLoading(true);
 
       try {
-          // Send to everyone in the list
-          const promises = recipients.map(user => 
-              addDoc(collection(db, "users", user.id, "notifications"), {
+          let recipientCount = 0;
+          let targetLabel = '';
+
+          // CASE 1: BROADCAST TO ALL (Optimized)
+          if (targetType === 'all') {
+              // ✅ Write single document to global_announcements
+              await addDoc(collection(db, "announcements"), {
                   title,
                   body,
-                  read: false,
-                  createdAt: serverTimestamp(),
-                  type: 'system'
-              })
-          );
-          await Promise.all(promises);
+                  type: 'system_broadcast',
+                  targetId: 'all',
+                  createdAt: serverTimestamp()
+              });
+              targetLabel = 'All Users (Global Broadcast)';
+              recipientCount = 'All'; 
+          } 
+          
+          // CASE 2: SPECIFIC USER (Direct Write)
+          else if (targetType === 'specific') {
+              if (!targetUid) throw new Error("Please enter a User UID.");
+              await addDoc(collection(db, "users", targetUid, "notifications"), {
+                  title, body, read: false, createdAt: serverTimestamp(), type: 'system'
+              });
+              targetLabel = `User: ${targetUid}`;
+              recipientCount = 1;
+          } 
+          
+          // CASE 3: SELECTED GROUP (Direct Write Loop - OK for small groups)
+          else if (targetType === 'multiple') {
+              if (selectedUsers.length === 0) throw new Error("Please select at least one user.");
+              
+              const promises = selectedUsers.map(user => 
+                  addDoc(collection(db, "users", user.id, "notifications"), {
+                      title, body, read: false, createdAt: serverTimestamp(), type: 'system'
+                  })
+              );
+              await Promise.all(promises);
+              
+              targetLabel = `Group (${selectedUsers.length} users)`;
+              recipientCount = selectedUsers.length;
+          }
 
           // Log the action
-          let targetLabel = '';
-          if (targetType === 'all') targetLabel = 'All Users';
-          else if (targetType === 'specific') targetLabel = `User: ${targetUid}`;
-          else targetLabel = `Group (${recipients.length} users)`;
-
           await addDoc(collection(db, "notification_logs"), {
               title,
               body,
               target: targetLabel,
-              recipientCount: recipients.length,
+              recipientCount: recipientCount,
               createdAt: serverTimestamp()
           });
 
-          alert(`Successfully sent to ${recipients.length} user(s)!`);
+          alert(`Successfully sent!`);
           
           // Reset Form
           setTitle('');
@@ -224,7 +256,7 @@ export default function Notifications() {
                                             <div style={{ color: '#9ca3af', fontStyle:'italic', marginBottom: 15, textAlign:'center' }}>No users selected yet.</div>
                                         )}
                                         
-                                        <button type="button" onClick={() => setShowUserPicker(true)} style={{ width: '100%', padding: 10, background: 'white', border: '1px dashed #2563eb', color: '#2563eb', fontWeight: 700, borderRadius: 8, cursor:'pointer' }}>
+                                        <button type="button" onClick={openUserPicker} style={{ width: '100%', padding: 10, background: 'white', border: '1px dashed #2563eb', color: '#2563eb', fontWeight: 700, borderRadius: 8, cursor:'pointer' }}>
                                             + Open User Picker
                                         </button>
                                     </div>
@@ -252,7 +284,7 @@ export default function Notifications() {
                         </form>
                     ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 15 }}>
-                            {/* HISTORY LIST (Same as before) */}
+                            {/* HISTORY LIST */}
                             {history.length === 0 ? (
                                 <div style={{ textAlign: 'center', padding: 40, color: '#9ca3af' }}><History size={40} style={{ opacity: 0.2, marginBottom: 10 }} /><p>No notifications sent yet.</p></div>
                             ) : (
@@ -265,7 +297,7 @@ export default function Notifications() {
                                         <p style={{ margin: '0 0 10px 0', fontSize: '0.9rem', color: '#4b5563' }}>{log.body}</p>
                                         <div style={{ display: 'flex', gap: 10 }}>
                                             <span className="chip" style={{ fontSize: '0.7rem', padding: '2px 8px' }}>{log.target}</span>
-                                            <span style={{ fontSize: '0.75rem', color: '#6b7280', display: 'flex', alignItems: 'center', gap: 4 }}><CheckCircle size={12} color="#10b981"/> Sent to {log.recipientCount}</span>
+                                            <span style={{ fontSize: '0.75rem', color: '#6b7280', display: 'flex', alignItems: 'center', gap: 4 }}><CheckCircle size={12} color="#10b981"/> {log.recipientCount === 'All' ? 'Broadcast Sent' : `Sent to ${log.recipientCount}`}</span>
                                         </div>
                                     </div>
                                 ))
@@ -279,33 +311,31 @@ export default function Notifications() {
         {/* RIGHT COLUMN */}
         <div style={{ gridColumn: 'span 4' }}>
             <div className="card" style={{ background: '#eff6ff', border: '1px solid #bfdbfe', padding: 25 }}>
-                <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#1e3a8a', display: 'flex', alignItems: 'center', gap: 10, margin: '0 0 15px 0' }}><Info size={20}/> Quick Tips</h3>
+                <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#1e3a8a', display: 'flex', alignItems: 'center', gap: 10, margin: '0 0 15px 0' }}><Info size={20}/> Best Practices</h3>
                 <ul style={{ paddingLeft: 20, color: '#1e40af', fontSize: '0.9rem', lineHeight: '1.6', margin: 0 }}>
-                    <li style={{ marginBottom: 10 }}>Use <b>Group Select</b> to target beta testers or VIPs.</li>
-                    <li style={{ marginBottom: 10 }}>Notifications appear in the user's mobile inbox.</li>
-                    <li>Avoid spamming "All Users".</li>
+                    <li style={{ marginBottom: 10 }}><b>Use "Everyone" sparingly.</b> It sends a push to every installed device.</li>
+                    <li style={{ marginBottom: 10 }}>For critical alerts (maintenance, updates), use <b>Broadcast</b>.</li>
+                    <li>Individual warnings should always use <b>Single User</b> mode.</li>
                 </ul>
             </div>
         </div>
       </div>
 
-      {/* ✅ USER PICKER MODAL */}
+      {/* ✅ USER PICKER MODAL (Paginated) */}
       {showUserPicker && (
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
               <div style={{ background: 'white', borderRadius: 16, width: '90%', maxWidth: 500, maxHeight: '80vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 50px rgba(0,0,0,0.2)' }}>
-                  {/* Modal Header */}
                   <div style={{ padding: 20, borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800 }}>Select Users</h3>
                       <button onClick={() => setShowUserPicker(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}><X size={24}/></button>
                   </div>
                   
-                  {/* Modal Search */}
                   <div style={{ padding: 15, borderBottom: '1px solid #e5e7eb' }}>
                       <div style={{ position: 'relative' }}>
                           <Search size={18} style={{ position: 'absolute', left: 12, top: 12, color: '#9ca3af' }} />
                           <input 
                               type="text" 
-                              placeholder="Search by name or email..." 
+                              placeholder="Search loaded users..." 
                               className="input-field" 
                               style={{ paddingLeft: 40 }}
                               value={userSearch}
@@ -314,7 +344,6 @@ export default function Notifications() {
                       </div>
                   </div>
 
-                  {/* User List */}
                   <div style={{ overflowY: 'auto', flex: 1, padding: 10 }}>
                       {filteredUsers.map(user => {
                           const isSelected = selectedUsers.some(u => u.id === user.id);
@@ -337,10 +366,18 @@ export default function Notifications() {
                               </div>
                           );
                       })}
-                      {filteredUsers.length === 0 && <div style={{ padding: 20, textAlign: 'center', color: '#9ca3af' }}>No users found.</div>}
+                      
+                      {/* Load More Button inside Modal */}
+                      <button 
+                        type="button" 
+                        onClick={() => fetchUsers(false)} 
+                        disabled={loadingUsers}
+                        style={{ width: '100%', padding: 10, marginTop: 10, background: '#f3f4f6', border: 'none', borderRadius: 8, color: '#6b7280', cursor:'pointer' }}
+                      >
+                          {loadingUsers ? "Loading..." : "Load More Users"}
+                      </button>
                   </div>
 
-                  {/* Modal Footer */}
                   <div style={{ padding: 20, borderTop: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f9fafb', borderBottomLeftRadius: 16, borderBottomRightRadius: 16 }}>
                       <div style={{ fontWeight: 600, color: '#4b5563' }}>{selectedUsers.length} selected</div>
                       <button onClick={() => setShowUserPicker(false)} className="btn-publish" style={{ width: 'auto', padding: '10px 25px' }}>Done</button>

@@ -114,15 +114,21 @@ export default function MangaUpload() {
     }
   };
 
-  const sendAutoNotification = async (title, body) => {
+  // ✅ COST OPTIMIZED: Replaced the loop with a single global announcement
+  const sendAutoNotification = async (title, body, targetId = null) => {
       try {
-          const usersSnap = await getDocs(collection(db, "users"));
-          const promises = usersSnap.docs.map(userDoc => 
-              addDoc(collection(db, "users", userDoc.id, "notifications"), {
-                  title, body, read: false, createdAt: serverTimestamp(), type: 'system'
-              })
-          );
-          await Promise.all(promises);
+          // ❌ REMOVED: Loop through all users (Expensive!)
+          
+          // ✅ ADDED: Single global announcement
+          await addDoc(collection(db, "announcements"), {
+              title,
+              body,
+              targetId,
+              type: 'manga_release',
+              createdAt: serverTimestamp()
+          });
+          
+          console.log("Global announcement sent successfully.");
       } catch (e) { console.error("Notification failed:", e); }
   };
 
@@ -133,9 +139,11 @@ export default function MangaUpload() {
       try {
           await updateDoc(doc(db, 'manga', manga.id), { status: 'Ongoing' });
           
+          // Notify Users on Approval (Cheaply)
           await sendAutoNotification(
               `New Manga: ${manga.title}`,
-              `Read ${manga.title} now on AniYu!`
+              `Read ${manga.title} now on AniYu!`,
+              manga.id
           );
 
           alert("Approved & Published!");
@@ -400,7 +408,12 @@ export default function MangaUpload() {
 
       setStatus('Success!');
       if (notifyUsers && finalStatus !== 'Pending') {
-          await sendAutoNotification(isEditMode ? `New Chapter: ${mangaTitle}` : `New Manga: ${mangaTitle}`, `Read ${mangaTitle} now on AniYu!`);
+          // Notify safely (single write)
+          await sendAutoNotification(
+              isEditMode ? `New Chapter: ${mangaTitle}` : `New Manga: ${mangaTitle}`, 
+              `Read ${mangaTitle} now on AniYu!`,
+              mangaId
+          );
       }
 
       alert(finalStatus === 'Pending' ? "Submitted for Review! Waiting for Admin approval." : "Published!");

@@ -1,6 +1,14 @@
 import { onAuthStateChanged } from 'firebase/auth';
-import { collection, doc, getCountFromServer, getDoc, getDocs, onSnapshot, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
-import { Bell, BookOpen, ChevronDown, Edit, Eye, Flag, LayoutDashboard, LogOut, Menu, MessageSquare, Settings, ThumbsUp, TrendingUp, Users as UsersIcon, Video, X } from 'lucide-react'; // ✅ Added Settings
+import {
+    collection, doc, getCountFromServer, getDoc, getDocs,
+    limit, orderBy,
+    query, serverTimestamp, updateDoc, where
+} from 'firebase/firestore';
+import {
+    Bell, BookOpen, ChevronDown, Edit, Eye, Flag,
+    LayoutDashboard, LogOut, Menu, MessageSquare,
+    Settings, ThumbsUp, TrendingUp, Users as UsersIcon, Video, X
+} from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, Navigate, Route, BrowserRouter as Router, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
@@ -13,7 +21,7 @@ import Login from './Login';
 import MangaUpload from './MangaUpload';
 import Notifications from './Notifications';
 import Reports from './Reports';
-import SettingsPage from './Settings'; // ✅ Import Settings Page
+import SettingsPage from './Settings';
 import Users from './Users';
 import { auth, db } from './firebase';
 
@@ -37,7 +45,7 @@ function Dashboard({ role, userId }) {
   const navigate = useNavigate();
   const [metric, setMetric] = useState('activity'); 
   const [timeRange, setTimeRange] = useState('24h'); 
-  const [allUsers, setAllUsers] = useState([]); 
+  const [recentUsers, setRecentUsers] = useState([]); // ✅ Renamed to recentUsers to be clear
   const [chartData, setChartData] = useState([]); 
   const [contentList, setContentList] = useState([]); 
   const [stats, setStats] = useState({ users: 0, activeUsers: 0, anime: 0, manga: 0, reports: 0, totalViews: 0, totalLikes: 0 });
@@ -47,24 +55,40 @@ function Dashboard({ role, userId }) {
   const isProducer = role === 'anime_producer' || role === 'manga_producer';
 
   useEffect(() => {
-    let unsubscribeUsers = null;
     const fetchData = async () => {
       try {
         if (isAdmin) {
-            unsubscribeUsers = onSnapshot(collection(db, "users"), (snapshot) => {
-                const usersData = snapshot.docs.map(doc => ({
-                  id: doc.id, ...doc.data(),
-                  createdAt: doc.data().createdAt?.toDate ? doc.data().createdAt.toDate() : new Date(0),
-                  lastActiveAt: doc.data().lastActiveAt?.toDate ? doc.data().lastActiveAt.toDate() : new Date(0), 
-                }));
-                setAllUsers(usersData); 
-            });
+            // ✅ 1. CHEAP COUNTS (Accurate Totals without reading docs)
+            const usersCountSnap = await getCountFromServer(collection(db, "users"));
+            
+            // Active users in last 24h
+            const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+            const activeCountSnap = await getCountFromServer(query(collection(db, "users"), where("lastActiveAt", ">=", yesterday)));
 
             const rSnap = await getCountFromServer(collection(db, "reports"));
             const aSnap = await getCountFromServer(collection(db, "anime"));
             const mSnap = await getCountFromServer(collection(db, "manga"));
             
-            setStats(prev => ({ ...prev, anime: aSnap.data().count, manga: mSnap.data().count, reports: rSnap.data().count }));
+            setStats(prev => ({ 
+                ...prev, 
+                users: usersCountSnap.data().count, 
+                activeUsers: activeCountSnap.data().count,
+                anime: aSnap.data().count, 
+                manga: mSnap.data().count, 
+                reports: rSnap.data().count 
+            }));
+
+            // ✅ 2. LIMITED FETCH FOR CHART (Prevents 100k read bomb)
+            // We only fetch the last 500 users to generate the "Recent Trend" graph.
+            const usersQ = query(collection(db, "users"), orderBy("createdAt", "desc"), limit(500));
+            const usersSnapshot = await getDocs(usersQ);
+            
+            const usersData = usersSnapshot.docs.map(doc => ({
+              id: doc.id, ...doc.data(),
+              createdAt: doc.data().createdAt?.toDate ? doc.data().createdAt.toDate() : new Date(0),
+              lastActiveAt: doc.data().lastActiveAt?.toDate ? doc.data().lastActiveAt.toDate() : new Date(0), 
+            }));
+            setRecentUsers(usersData); 
         } 
         else if (isProducer) {
             const collectionName = role === 'anime_producer' ? 'anime' : 'manga';
@@ -83,12 +107,11 @@ function Dashboard({ role, userId }) {
       } catch (e) { console.error("Error fetching data:", e); }
     };
     if (role && userId) fetchData();
-    return () => { if (unsubscribeUsers) unsubscribeUsers(); };
   }, [role, userId]); 
 
-  // Filter Logic
+  // Filter Logic (Updated to work with recentUsers)
   useEffect(() => {
-    if (!isAdmin || allUsers.length === 0) return;
+    if (!isAdmin || recentUsers.length === 0) return;
     const now = new Date();
     let startTime = new Date();
     let buckets = [];
@@ -107,22 +130,21 @@ function Dashboard({ role, userId }) {
         for (let i = 5; i >= 0; i--) { const d = new Date(); d.setDate(now.getDate() - (i * 5)); buckets.push({ date: d, label: formatDateLabel(d, 'month') }); }
     }
 
-    const filteredNewUsers = allUsers.filter(u => u.createdAt >= startTime).length;
-    const filteredActiveUsers = allUsers.filter(u => u.lastActiveAt >= startTime).length;
-    setStats(prev => ({ ...prev, users: timeRange === 'all' ? allUsers.length : filteredNewUsers, activeUsers: filteredActiveUsers }));
-
+    // NOTE: We don't overwrite 'stats.users' here anymore because we fetched the REAL total count above safely.
+    
     const processChart = buckets.map((bucket, index) => {
         const nextBucketDate = buckets[index + 1]?.date || new Date(); 
         let count = metric === 'registrations' 
-            ? allUsers.filter(u => u.createdAt >= bucket.date && u.createdAt < nextBucketDate).length
-            : allUsers.filter(u => u.lastActiveAt >= bucket.date && u.lastActiveAt < nextBucketDate).length;
+            ? recentUsers.filter(u => u.createdAt >= bucket.date && u.createdAt < nextBucketDate).length
+            : recentUsers.filter(u => u.lastActiveAt >= bucket.date && u.lastActiveAt < nextBucketDate).length;
         return { name: bucket.label, value: count };
     });
     setChartData(processChart);
-  }, [timeRange, metric, allUsers, isAdmin]);
+  }, [timeRange, metric, recentUsers, isAdmin]);
 
   // --- RENDER PRODUCER ---
   if (isProducer) {
+      // ... (Keep existing Producer Render exactly the same)
       return (
         <div className="dashboard-container">
             <h1 className="page-title"><Video className="text-blue"/> Studio Dashboard</h1>
@@ -237,12 +259,12 @@ function Dashboard({ role, userId }) {
 
       <div className="stats-grid">
         <div className="stat-card">
-            <p className="stat-label">{timeRange === 'all' ? 'Total Users' : 'New Users'}</p>
-            <h2 className="stat-value">{stats.users}</h2>
+            <p className="stat-label">{timeRange === 'all' ? 'Total Users' : 'Total Users'}</p>
+            <h2 className="stat-value">{stats.users.toLocaleString()}</h2>
         </div>
         <div className="stat-card">
-            <p className="stat-label">Active Users</p>
-            <h2 className="stat-value green">{stats.activeUsers}</h2>
+            <p className="stat-label">Active Users (24h)</p>
+            <h2 className="stat-value green">{stats.activeUsers.toLocaleString()}</h2>
         </div>
         <div className="stat-card">
             <p className="stat-label">Total Anime</p>
@@ -341,6 +363,7 @@ function Layout({ logout, role, userId }) {
         .stat-value.green { color: #16a34a; }
         .stat-value.blue { color: #2563eb; }
         .stat-value.purple { color: #7c3aed; }
+        .stat-value.red { color: #ef4444; }
         
         .section { margin-top: 32px; }
         .section-title { font-size: 1.25rem; font-weight: 700; margin-bottom: 16px; color: #111827; }

@@ -1,4 +1,4 @@
-import { collection, doc, getDocs, orderBy, query, updateDoc } from 'firebase/firestore';
+import { collection, doc, getDocs, limit, orderBy, query, startAfter, updateDoc } from 'firebase/firestore';
 import {
     CheckCircle,
     Clock,
@@ -15,30 +15,54 @@ import { db } from './firebase';
 
 export default function Reports() {
     const [reports, setReports] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(false);
     const [filter, setFilter] = useState('pending'); // 'pending' | 'resolved' | 'dismissed'
+    
+    // Pagination State
+    const [lastVisible, setLastVisible] = useState(null);
+    const [hasMore, setHasMore] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
 
     // --- FETCH REPORTS ---
     useEffect(() => {
-        fetchReports();
+        fetchReports(true);
     }, []);
 
-    const fetchReports = async () => {
-        setLoading(true);
+    const fetchReports = async (isFirstLoad = false) => {
+        if (loading || loadingMore || (!isFirstLoad && !hasMore)) return;
+
+        if (isFirstLoad) setLoading(true);
+        else setLoadingMore(true);
+
         try {
-            console.log("Fetching reports...");
-            // Use simple query first to avoid Index errors
-            const q = query(collection(db, "reports"), orderBy('createdAt', 'desc'));
+            let q = query(
+                collection(db, "reports"), 
+                orderBy('createdAt', 'desc'),
+                limit(20)
+            );
+
+            if (!isFirstLoad && lastVisible) {
+                q = query(
+                    collection(db, "reports"), 
+                    orderBy('createdAt', 'desc'),
+                    startAfter(lastVisible),
+                    limit(20)
+                );
+            }
+
             const snap = await getDocs(q);
             const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-            console.log("Reports fetched:", data);
-            setReports(data);
+            
+            setReports(prev => isFirstLoad ? data : [...prev, ...data]);
+            setLastVisible(snap.docs[snap.docs.length - 1]);
+            
+            if (snap.docs.length < 20) setHasMore(false);
+
         } catch (e) { 
             console.error("Error fetching reports:", e); 
-            // If Index error, fallback to client-side sort might be needed, 
-            // but let's just show the error in console for now.
         } finally { 
-            setLoading(false); 
+            setLoading(false);
+            setLoadingMore(false);
         }
     };
 
@@ -183,6 +207,19 @@ export default function Reports() {
 
                         </div>
                     ))
+                )}
+                
+                {/* ✅ LOAD MORE BUTTON */}
+                {hasMore && !loading && (
+                    <div style={{padding: 10, textAlign:'center'}}>
+                        <button 
+                            onClick={() => fetchReports(false)} 
+                            disabled={loadingMore}
+                            style={{ padding: '10px 20px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#f3f4f6', cursor: 'pointer', fontWeight: 'bold', color:'#4b5563' }}
+                        >
+                            {loadingMore ? <Loader2 className="animate-spin" size={14} /> : "Load More Reports"}
+                        </button>
+                    </div>
                 )}
             </div>
         </div>
