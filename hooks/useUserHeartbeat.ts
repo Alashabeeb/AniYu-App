@@ -1,7 +1,7 @@
 import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { useEffect } from 'react';
 import { AppState } from 'react-native';
-import { auth, db } from '../config/firebaseConfig'; // ⚠️ Check your path to firebaseConfig
+import { auth, db } from '../config/firebaseConfig';
 
 export const useUserHeartbeat = () => {
   useEffect(() => {
@@ -25,8 +25,9 @@ export const useUserHeartbeat = () => {
     // 2. Run immediately on mount
     updateHeartbeat();
 
-    // 3. Run every 5 minutes (300,000ms) while app is open
-    const interval = setInterval(updateHeartbeat, 5 * 60 * 1000);
+    // 3. Run every 15 minutes (900,000ms) while app is open
+    // ✅ CHANGED from 5 mins to 15 mins to save 66% on database writes
+    const interval = setInterval(updateHeartbeat, 15 * 60 * 1000);
 
     // 4. Update when app comes to foreground (user switches back to app)
     const subscription = AppState.addEventListener('change', (nextAppState) => {

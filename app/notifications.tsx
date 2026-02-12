@@ -1,9 +1,21 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
-import { Stack, useRouter } from 'expo-router';
-import { collection, doc, onSnapshot, orderBy, query, updateDoc } from 'firebase/firestore';
-import React, { useCallback, useEffect, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useRouter } from 'expo-router';
 import {
+  collection,
+  doc,
+  DocumentSnapshot,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  startAfter,
+  updateDoc,
+  writeBatch
+} from 'firebase/firestore';
+import React, { useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
   FlatList,
   RefreshControl,
   StyleSheet,
@@ -12,178 +24,228 @@ import {
   View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
 import { auth, db } from '../config/firebaseConfig';
 import { useTheme } from '../context/ThemeContext';
-import { AppNotification, getNotifications, markAllAsRead, markLocalNotificationAsRead } from '../services/notificationService';
+import { getNotifications, markAllAsRead } from '../services/notificationService'; // Local ones
+
+const CACHE_KEY = 'user_notifications_cache';
 
 export default function NotificationsScreen() {
   const router = useRouter();
   const { theme } = useTheme();
-  const currentUser = auth.currentUser;
+  const user = auth.currentUser;
 
-  const [localNotifs, setLocalNotifs] = useState<AppNotification[]>([]);
-  const [socialNotifs, setSocialNotifs] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  // 1. Fetch Local Notifications (Drops)
-  useFocusEffect(
-    useCallback(() => {
-      loadLocalData();
-    }, [])
-  );
+  // ✅ PAGINATION STATE
+  const [lastVisible, setLastVisible] = useState<DocumentSnapshot | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
 
-  const loadLocalData = async () => {
-    const data = await getNotifications();
-    setLocalNotifs(data);
-  };
-
-  // 2. Fetch Social & System Notifications (Firestore)
   useEffect(() => {
-      if (!currentUser) return;
-      const q = query(
-          collection(db, 'users', currentUser.uid, 'notifications'),
-          orderBy('createdAt', 'desc')
-      );
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-          const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          setSocialNotifs(data);
-      });
-      return unsubscribe;
+    loadInitialData();
   }, []);
 
-  const handleRefresh = async () => {
-      setRefreshing(true);
-      await loadLocalData();
-      setRefreshing(false);
+  // 1. Load from Cache + Fresh Fetch
+  const loadInitialData = async () => {
+    if (!user) return;
+    setLoading(true);
+
+    // A. Show Cached Data First (Instant & Free)
+    try {
+        const cached = await AsyncStorage.getItem(CACHE_KEY);
+        if (cached) setNotifications(JSON.parse(cached));
+    } catch (e) { console.log("Cache error", e); }
+
+    // B. Fetch Fresh Data (Cost: 15 Reads)
+    await fetchNotifications(true);
+    setLoading(false);
   };
 
-  const handleMarkRead = async () => {
-      // Mark Firestore (Batch update is ideal, but looping works for now)
-      socialNotifs.forEach(async (item) => {
-        if (!item.read) {
-           await updateDoc(doc(db, 'users', currentUser!.uid, 'notifications', item.id), { read: true });
+  const fetchNotifications = async (isRefresh = false) => {
+    if (!user) return;
+    if (isRefresh) {
+        setRefreshing(true);
+        setHasMore(true);
+    }
+
+    try {
+        // 1. Get Local System Notifications (Free)
+        const localNotifs = await getNotifications();
+
+        // 2. Get Social Notifications (Firestore - Cost: 15 Reads)
+        const q = query(
+            collection(db, 'users', user.uid, 'notifications'),
+            orderBy('createdAt', 'desc'),
+            limit(15) // ✅ LIMIT 15
+        );
+        
+        const snapshot = await getDocs(q);
+        const socialNotifs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isSocial: true }));
+
+        // 3. Merge & Sort
+        // ✅ FIX: Added ': any' to a and b to fix the red underline
+        const allNotifs = [...localNotifs, ...socialNotifs].sort((a: any, b: any) => {
+            const dateA = a.createdAt ? a.createdAt.toMillis() : a.date;
+            const dateB = b.createdAt ? b.createdAt.toMillis() : b.date;
+            return dateB - dateA;
+        });
+
+        setNotifications(allNotifs);
+        setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
+        
+        // Save to Cache
+        AsyncStorage.setItem(CACHE_KEY, JSON.stringify(allNotifs));
+
+    } catch (error) {
+        console.error("Error fetching notifications:", error);
+    } finally {
+        setRefreshing(false);
+    }
+  };
+
+  // ✅ LOAD MORE (Pagination)
+  const loadMore = async () => {
+    if (loadingMore || !hasMore || !lastVisible || !user) return;
+    setLoadingMore(true);
+
+    try {
+        const q = query(
+            collection(db, 'users', user.uid, 'notifications'),
+            orderBy('createdAt', 'desc'),
+            startAfter(lastVisible),
+            limit(15) // ✅ Load NEXT 15
+        );
+
+        const snapshot = await getDocs(q);
+        
+        if (snapshot.empty) {
+            setHasMore(false);
+        } else {
+            const moreNotifs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isSocial: true }));
+            setNotifications(prev => [...prev, ...moreNotifs]);
+            setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
         }
-      });
-      // Mark Local
-      await markAllAsRead();
-      loadLocalData();
+    } catch (error) {
+        console.log("Load more error:", error);
+    } finally {
+        setLoadingMore(false);
+    }
   };
 
-  // 3. Combine & Sort (Newest First)
-  const combinedNotifications = [...socialNotifs, ...localNotifs].sort((a, b) => {
-      const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.date || 0);
-      const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.date || 0);
-      return timeB - timeA;
-  });
+  // ✅ MARK SINGLE AS READ
+  const handleMarkAsRead = async (item: any) => {
+      // 1. Update UI Immediately (Optimistic)
+      const updated = notifications.map(n => n.id === item.id ? { ...n, read: true } : n);
+      setNotifications(updated);
+      AsyncStorage.setItem(CACHE_KEY, JSON.stringify(updated)); // Update Cache
 
-  // ✅ UPDATED ICON LOGIC: Handle Admin Types
-  const getIcon = (type: string) => {
-      switch(type) {
-          case 'like': return { name: 'heart', color: '#FF6B6B' };
-          case 'comment': return { name: 'chatbubble', color: '#4ECDC4' };
-          case 'repost': return { name: 'repeat', color: '#45B7D1' };
-          case 'follow': return { name: 'person-add', color: '#FFD700' };
-          // New Admin Types
-          case 'system': return { name: 'megaphone', color: '#FF9F1C' }; // 📢 Admin Broadcast
-          case 'error': return { name: 'warning', color: '#EF4444' };    // ⚠️ Ban/Warning
-          case 'success': return { name: 'checkmark-circle', color: '#10B981' }; // ✅ Success
-          default: return { name: 'notifications', color: theme.tint };
-      }
-  };
-
-  const handlePress = async (item: any) => {
-      if (!currentUser) return;
-
-      // 1. Mark as Read
-      if (!item.read) {
+      // 2. Update Backend
+      if (item.isSocial && user) {
           try {
-              if (item.createdAt) {
-                  // Firestore
-                  await updateDoc(doc(db, 'users', currentUser.uid, 'notifications', item.id), { read: true });
-              } else {
-                  // Local
-                  await markLocalNotificationAsRead(item.id);
-                  loadLocalData();
-              }
-          } catch (e) {
-              console.log("Error marking read:", e);
-          }
+              const ref = doc(db, 'users', user.uid, 'notifications', item.id);
+              await updateDoc(ref, { read: true });
+          } catch (e) { console.error(e); }
       }
-
-      // 2. Navigation Logic
-      if (item.targetId) {
-          if (item.type === 'like' || item.type === 'comment' || item.type === 'repost') {
-             router.push({ pathname: '/post-details', params: { postId: item.targetId } });
-          } else if (item.type === 'anime') {
-             router.push({ pathname: '/anime/[id]', params: { id: item.targetId } });
-          } else if (item.type === 'manga') {
-             router.push({ pathname: '/manga/[id]', params: { id: item.targetId } });
-          }
-      }
-      else if (item.actorId && item.type === 'follow') {
-          router.push({ pathname: '/feed-profile', params: { userId: item.actorId } });
-      }
-      // System/Admin messages stay on screen (just marked read)
   };
+
+  // ✅ MARK ALL AS READ (Batch Write - Cheaper)
+  const handleMarkAllRead = async () => {
+      if (!user) return;
+      
+      // 1. UI Update
+      const updated = notifications.map(n => ({ ...n, read: true }));
+      setNotifications(updated);
+      AsyncStorage.setItem(CACHE_KEY, JSON.stringify(updated));
+
+      // 2. Local Service Update
+      await markAllAsRead();
+
+      // 3. Firestore Batch Update (Only unread ones to save writes)
+      try {
+          const batch = writeBatch(db);
+          let count = 0;
+          
+          notifications.forEach(n => {
+              if (n.isSocial && !n.read && count < 450) { // Batch limit is 500
+                  const ref = doc(db, 'users', user.uid, 'notifications', n.id);
+                  batch.update(ref, { read: true });
+                  count++;
+              }
+          });
+          
+          if (count > 0) await batch.commit();
+      } catch (e) { console.error("Batch update failed", e); }
+  };
+
+  const handlePress = (item: any) => {
+      handleMarkAsRead(item);
+      if (item.type === 'anime') router.push(`/anime/${item.targetId || ''}`);
+      if (item.type === 'manga') router.push(`/manga/${item.targetId || ''}`);
+      if (item.type === 'follow') router.push({ pathname: '/feed-profile', params: { userId: item.actorId } });
+      if (item.type === 'like' || item.type === 'comment' || item.type === 'repost') {
+          // Navigate to post details (assuming you have a post-details route)
+           router.push({ pathname: '/post-details', params: { postId: item.targetId } });
+      }
+  };
+
+  const renderItem = ({ item }: { item: any }) => (
+      <TouchableOpacity 
+        style={[styles.item, { backgroundColor: item.read ? theme.background : theme.card, borderColor: theme.border }]}
+        onPress={() => handlePress(item)}
+      >
+          <View style={[styles.iconBox, { backgroundColor: item.read ? 'transparent' : theme.tint }]}>
+              <Ionicons 
+                name={item.type === 'like' ? 'heart' : item.type === 'comment' ? 'chatbubble' : 'notifications'} 
+                size={20} 
+                color={item.read ? theme.subText : 'white'} 
+              />
+          </View>
+          <View style={{ flex: 1 }}>
+              <Text style={[styles.title, { color: theme.text, fontWeight: item.read ? 'normal' : 'bold' }]}>{item.title}</Text>
+              <Text style={[styles.body, { color: theme.subText }]}>{item.body}</Text>
+              <Text style={[styles.date, { color: theme.subText }]}>
+                  {new Date(item.createdAt ? item.createdAt.toMillis() : item.date).toLocaleDateString()}
+              </Text>
+          </View>
+          {!item.read && <View style={[styles.dot, { backgroundColor: theme.tint }]} />}
+      </TouchableOpacity>
+  );
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
-      <Stack.Screen options={{ headerShown: false }} />
-      
       <View style={[styles.header, { borderBottomColor: theme.border }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={24} color={theme.text} />
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: theme.text }]}>Notifications</Text>
-        
-        {/* Mark All Read Button */}
-        <TouchableOpacity onPress={handleMarkRead} style={{ marginLeft: 'auto', padding: 5 }}>
-            <Ionicons name="checkmark-done-outline" size={26} color={theme.tint} />
-        </TouchableOpacity>
+          <TouchableOpacity onPress={() => router.back()} style={{ padding: 5 }}>
+              <Ionicons name="arrow-back" size={24} color={theme.text} />
+          </TouchableOpacity>
+          <Text style={[styles.headerTitle, { color: theme.text }]}>Notifications</Text>
+          <TouchableOpacity onPress={handleMarkAllRead}>
+              <Text style={{ color: theme.tint, fontWeight: '600' }}>Read All</Text>
+          </TouchableOpacity>
       </View>
 
-      <FlatList
-        data={combinedNotifications}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={{ padding: 15, paddingBottom: 50 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={theme.tint} />}
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Ionicons name="notifications-off-outline" size={64} color={theme.subText} />
-            <Text style={[styles.emptyText, { color: theme.subText }]}>No notifications yet.</Text>
-          </View>
-        }
-        renderItem={({ item }) => {
-            const iconData = getIcon(item.type);
-            return (
-              <TouchableOpacity 
-                activeOpacity={0.7}
-                onPress={() => handlePress(item)}
-                style={[
-                  styles.card, 
-                  { backgroundColor: theme.card, borderLeftColor: item.read ? 'transparent' : iconData.color }
-                ]}
-              >
-                <View style={[styles.iconBox, { backgroundColor: `${iconData.color}20` }]}>
-                    <Ionicons name={iconData.name as any} size={24} color={iconData.color} />
-                </View>
-                <View style={styles.info}>
-                  <Text style={[styles.title, { color: theme.text, fontWeight: item.read ? 'normal' : '800' }]}>
-                      {item.title}
-                  </Text>
-                  <Text style={[styles.body, { color: theme.subText }]} numberOfLines={3}>
-                      {item.body}
-                  </Text>
-                  <Text style={[styles.date, { color: theme.subText }]}>
-                    {item.createdAt?.seconds 
-                        ? new Date(item.createdAt.seconds * 1000).toLocaleDateString() 
-                        : (item.date ? new Date(item.date).toLocaleDateString() : '')}
-                  </Text>
-                </View>
-                {!item.read && <View style={[styles.dot, { backgroundColor: theme.tint }]} />}
-              </TouchableOpacity>
-            );
-        }}
+      <FlatList 
+          data={notifications}
+          keyExtractor={item => item.id}
+          renderItem={renderItem}
+          contentContainerStyle={{ padding: 10 }}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => fetchNotifications(true)} tintColor={theme.tint} />}
+          
+          // ✅ PAGINATION PROPS
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={loadingMore ? <ActivityIndicator color={theme.tint} style={{ margin: 15 }} /> : null}
+          
+          ListEmptyComponent={
+              !loading ? (
+                  <View style={{ marginTop: 50, alignItems: 'center' }}>
+                      <Text style={{ color: theme.subText }}>No notifications yet.</Text>
+                  </View>
+              ) : null
+          }
       />
     </SafeAreaView>
   );
@@ -191,17 +253,12 @@ export default function NotificationsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', padding: 15, borderBottomWidth: 1 },
-  backBtn: { marginRight: 15 },
-  headerTitle: { fontSize: 20, fontWeight: 'bold' },
-  emptyContainer: { alignItems: 'center', marginTop: 100 },
-  emptyText: { marginTop: 10, fontSize: 16 },
-  
-  card: { flexDirection: 'row', padding: 15, borderRadius: 12, marginBottom: 10, borderLeftWidth: 4, alignItems: 'center', elevation: 1 },
-  iconBox: { width: 45, height: 45, borderRadius: 22.5, justifyContent: 'center', alignItems: 'center', marginRight: 15 },
-  info: { flex: 1 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 15, borderBottomWidth: 1 },
+  headerTitle: { fontSize: 18, fontWeight: 'bold' },
+  item: { flexDirection: 'row', padding: 15, borderRadius: 12, marginBottom: 10, borderWidth: 1, alignItems: 'center' },
+  iconBox: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', marginRight: 15 },
   title: { fontSize: 16, marginBottom: 4 },
-  body: { fontSize: 14, marginBottom: 6, lineHeight: 20 },
-  date: { fontSize: 10 },
+  body: { fontSize: 14, marginBottom: 4 },
+  date: { fontSize: 12 },
   dot: { width: 8, height: 8, borderRadius: 4, marginLeft: 10 }
 });

@@ -82,58 +82,43 @@ export default function AnimeDetailScreen() {
 
   const resumeTimeRef = useRef<number | null>(null);
 
-  // 1. Initialize Player (Paused by default)
+  // 1. Initialize Player
   const player = useVideoPlayer(currentVideoSource, player => { 
       player.loop = false; 
   });
 
-  // 2. ✅ CRITICAL CRASH FIX: Safe Pause Logic
   useFocusEffect(
     useCallback(() => {
-      // If we have a source, loading is done, and player exists -> Play
       if (!loading && currentVideoSource && player) {
           try {
             player.play();
           } catch(e) {}
       }
-
-      // Cleanup: Pause when screen loses focus (Back/Tab switch)
       return () => {
           try {
               if (player) player.pause();
-          } catch (e) {
-              // Ignore crash if player is already destroyed during navigation
-          }
+          } catch (e) {}
       };
     }, [loading, currentVideoSource, player])
   );
 
-  // AD LOGIC: Load & Listeners
+  // AD LOGIC
   useEffect(() => {
     const unsubscribeLoaded = interstitial.addAdEventListener(AdEventType.LOADED, () => {
       setAdLoaded(true);
     });
-
     const unsubscribeClosed = interstitial.addAdEventListener(AdEventType.CLOSED, () => {
       setAdLoaded(false);
       interstitial.load();
-      
       if (pendingDownloadEp) {
           performDownload(pendingDownloadEp);
           setPendingDownloadEp(null);
       }
     });
-
-    const unsubscribeError = interstitial.addAdEventListener(AdEventType.ERROR, (error) => {
-        setAdLoaded(false);
-    });
-
     interstitial.load();
-
     return () => {
       unsubscribeLoaded();
       unsubscribeClosed();
-      unsubscribeError();
     };
   }, [pendingDownloadEp]);
 
@@ -255,6 +240,22 @@ export default function AnimeDetailScreen() {
       } 
   }, [id]);
 
+  // ✅ NEW: LAZY LOAD SIMILAR ANIME
+  // This hook only fetches data when the user clicks the "Similar" tab.
+  useEffect(() => {
+    const loadSimilar = async () => {
+      if (activeTab === 'Similar' && similarAnime.length === 0 && anime?.genres) {
+        try {
+          const similar = await getSimilarAnime(anime.genres, id as string);
+          setSimilarAnime(similar);
+        } catch (error) {
+          console.error("Error loading similar anime:", error);
+        }
+      }
+    };
+    loadSimilar();
+  }, [activeTab, anime?.genres, id]);
+
   useEffect(() => {
       const determineSource = async () => {
           if (!currentEpId) return;
@@ -284,6 +285,7 @@ export default function AnimeDetailScreen() {
   const loadAllData = async () => {
     try {
       setLoading(true);
+      // ✅ Removed getSimilarAnime from the initial Promise.all for cost savings
       const [detailsData, episodesData] = await Promise.all([
         getAnimeDetails(id as string),
         getAnimeEpisodes(id as string)
@@ -304,10 +306,7 @@ export default function AnimeDetailScreen() {
           setUserReaction(reaction);
       }
       
-      if (animeData?.genres) {
-          const similar = await getSimilarAnime(animeData.genres, id as string);
-          setSimilarAnime(similar);
-      }
+      // ✅ Removed the immediate call to setSimilarAnime here
 
       if (animeData?.views !== undefined) {
           const calculatedRank = await getAnimeRank(animeData.views);
@@ -663,8 +662,14 @@ export default function AnimeDetailScreen() {
                         </View>
                     ) : (
                         <View style={{ alignItems: 'center', marginTop: 50 }}>
-                            <Ionicons name="film-outline" size={50} color={theme.subText} />
-                            <Text style={{ color: theme.subText, marginTop: 10 }}>No similar anime found.</Text>
+                            {activeTab === 'Similar' && similarAnime.length === 0 ? (
+                                <ActivityIndicator color={theme.tint} />
+                            ) : (
+                                <>
+                                    <Ionicons name="film-outline" size={50} color={theme.subText} />
+                                    <Text style={{ color: theme.subText, marginTop: 10 }}>No similar anime found.</Text>
+                                </>
+                            )}
                         </View>
                     )}
                 </View>

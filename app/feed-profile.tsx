@@ -7,13 +7,16 @@ import {
     arrayUnion,
     collection,
     doc,
+    DocumentSnapshot,
+    getDocs, // ✅ NEW: Use getDocs instead of onSnapshot
+    limit, // ✅ NEW
     onSnapshot,
     orderBy,
     query,
     serverTimestamp,
     setDoc,
-    updateDoc // ✅ IMPORT updateDoc
-    ,
+    startAfter, // ✅ NEW
+    updateDoc,
     where
 } from 'firebase/firestore';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -58,9 +61,21 @@ export default function FeedProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [userData, setUserData] = useState<any>(null);
   
+  // ✅ DATA STATE
   const [myPosts, setMyPosts] = useState<any[]>([]);
   const [repostedPosts, setRepostedPosts] = useState<any[]>([]);
   const [likedPosts, setLikedPosts] = useState<any[]>([]);
+
+  // ✅ PAGINATION STATE (Track last visible doc for each tab)
+  const [lastPost, setLastPost] = useState<DocumentSnapshot | null>(null);
+  const [lastRepost, setLastRepost] = useState<DocumentSnapshot | null>(null);
+  const [lastLike, setLastLike] = useState<DocumentSnapshot | null>(null);
+  
+  const [hasMorePosts, setHasMorePosts] = useState(true);
+  const [hasMoreReposts, setHasMoreReposts] = useState(true);
+  const [hasMoreLikes, setHasMoreLikes] = useState(true);
+
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const [activeTab, setActiveTab] = useState('Posts'); 
   const flatListRef = useRef<FlatList>(null);
@@ -73,7 +88,7 @@ export default function FeedProfileScreen() {
   useEffect(() => {
     if (!targetUserId) return;
 
-    // 1. Get User
+    // 1. Get User Data (Keep Realtime for Follow button status)
     const userRef = doc(db, "users", targetUserId);
     const unsubUser = onSnapshot(userRef, async (docSnap) => {
         if (docSnap.exists()) {
@@ -100,25 +115,111 @@ export default function FeedProfileScreen() {
         }
     });
 
-    // 2. Get Posts
-    const qMyPosts = query(
-        collection(db, 'posts'), 
-        where('userId', '==', targetUserId), 
-        orderBy('createdAt', 'desc')
-    );
-    const unsubPosts = onSnapshot(qMyPosts, (snapshot) => {
-        setMyPosts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
+    // ✅ LOAD INITIAL DATA (Limited to 15)
+    loadPosts(true);
+    loadReposts(true);
+    loadLikes(true);
 
-    // 3. Get Reposts & Likes
-    const qReposts = query(collection(db, 'posts'), where('reposts', 'array-contains', targetUserId), orderBy('createdAt', 'desc'));
-    const unsubReposts = onSnapshot(qReposts, (snap) => setRepostedPosts(snap.docs.map(doc => ({ id: doc.id, ...doc.data() }))));
-
-    const qLikes = query(collection(db, 'posts'), where('likes', 'array-contains', targetUserId), orderBy('createdAt', 'desc'));
-    const unsubLikes = onSnapshot(qLikes, (snap) => setLikedPosts(snap.docs.map(doc => ({ id: doc.id, ...doc.data() }))));
-
-    return () => { unsubUser(); unsubPosts(); unsubReposts(); unsubLikes(); };
+    return () => { unsubUser(); };
   }, [targetUserId]);
+
+  // --- ⬇️ OPTIMIZED FETCH FUNCTIONS ⬇️ ---
+
+  const loadPosts = async (initial = false) => {
+      if (!initial && (loadingMore || !hasMorePosts)) return;
+      if (!initial) setLoadingMore(true);
+
+      try {
+          let q = query(
+              collection(db, 'posts'), 
+              where('userId', '==', targetUserId), 
+              orderBy('createdAt', 'desc'),
+              limit(15) // ✅ Limit 15
+          );
+
+          if (!initial && lastPost) {
+              q = query(q, startAfter(lastPost));
+          }
+
+          const snapshot = await getDocs(q);
+          const newPosts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+          if (initial) {
+              setMyPosts(newPosts);
+          } else {
+              setMyPosts(prev => [...prev, ...newPosts]);
+          }
+
+          setLastPost(snapshot.docs[snapshot.docs.length - 1]);
+          if (snapshot.docs.length < 15) setHasMorePosts(false);
+
+      } catch (e) { console.error("Error loading posts", e); }
+      finally { setLoadingMore(false); }
+  };
+
+  const loadReposts = async (initial = false) => {
+      if (!initial && (loadingMore || !hasMoreReposts)) return;
+      if (!initial) setLoadingMore(true);
+
+      try {
+          let q = query(
+              collection(db, 'posts'), 
+              where('reposts', 'array-contains', targetUserId), 
+              orderBy('createdAt', 'desc'),
+              limit(15) // ✅ Limit 15
+          );
+
+          if (!initial && lastRepost) {
+              q = query(q, startAfter(lastRepost));
+          }
+
+          const snapshot = await getDocs(q);
+          const newPosts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+          if (initial) {
+              setRepostedPosts(newPosts);
+          } else {
+              setRepostedPosts(prev => [...prev, ...newPosts]);
+          }
+
+          setLastRepost(snapshot.docs[snapshot.docs.length - 1]);
+          if (snapshot.docs.length < 15) setHasMoreReposts(false);
+
+      } catch (e) { console.error("Error loading reposts", e); }
+      finally { setLoadingMore(false); }
+  };
+
+  const loadLikes = async (initial = false) => {
+      if (!initial && (loadingMore || !hasMoreLikes)) return;
+      if (!initial) setLoadingMore(true);
+
+      try {
+          let q = query(
+              collection(db, 'posts'), 
+              where('likes', 'array-contains', targetUserId), 
+              orderBy('createdAt', 'desc'),
+              limit(15) // ✅ Limit 15
+          );
+
+          if (!initial && lastLike) {
+              q = query(q, startAfter(lastLike));
+          }
+
+          const snapshot = await getDocs(q);
+          const newPosts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+          if (initial) {
+              setLikedPosts(newPosts);
+          } else {
+              setLikedPosts(prev => [...prev, ...newPosts]);
+          }
+
+          setLastLike(snapshot.docs[snapshot.docs.length - 1]);
+          if (snapshot.docs.length < 15) setHasMoreLikes(false);
+
+      } catch (e) { console.error("Error loading likes", e); }
+      finally { setLoadingMore(false); }
+  };
 
   const sortedMyPosts = useMemo(() => {
       return [...myPosts].sort((a, b) => {
@@ -146,11 +247,10 @@ export default function FeedProfileScreen() {
       }
   };
 
-  // ✅ HANDLE BLOCK USER
   const handleBlockUser = async () => {
       if (!currentUser || isOwnProfile || !targetUserId) return;
       setMenuVisible(false);
-      Alert.alert("Block User", "Are you sure you want to block this user? You won't see their posts.", [
+      Alert.alert("Block User", "Are you sure you want to block this user?", [
           { text: "Cancel", style: "cancel" },
           { 
               text: "Block", 
@@ -194,12 +294,19 @@ export default function FeedProfileScreen() {
       else if (index === 2) setActiveTab('Likes');
   };
 
-  const renderList = (data: any[], emptyMsg: string) => (
+  // ✅ UPDATED LIST RENDERER WITH PAGINATION
+  const renderList = (data: any[], emptyMsg: string, loadMoreFunc: () => void) => (
       <FlatList
           data={data}
           keyExtractor={item => item.id}
           contentContainerStyle={{ paddingBottom: 50, width: SCREEN_WIDTH }}
           renderItem={({ item }) => <PostCard post={item} />}
+          
+          // Pagination Props
+          onEndReached={loadMoreFunc}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color={theme.tint} style={{marginVertical: 10}} /> : null}
+
           ListEmptyComponent={
               <View style={{ marginTop: 50, alignItems: 'center', width: SCREEN_WIDTH }}>
                   <Text style={{ color: theme.subText }}>{emptyMsg}</Text>
@@ -294,9 +401,10 @@ export default function FeedProfileScreen() {
         showsHorizontalScrollIndicator={false}
         onMomentumScrollEnd={handleMomentumScrollEnd}
         renderItem={({ index }) => {
-            if (index === 0) return renderList(sortedMyPosts, "No posts yet.");
-            if (index === 1) return renderList(repostedPosts, "No reposts yet.");
-            if (index === 2) return renderList(likedPosts, "No liked posts yet.");
+            // ✅ PASSING LOAD MORE FUNCTIONS
+            if (index === 0) return renderList(sortedMyPosts, "No posts yet.", () => loadPosts(false));
+            if (index === 1) return renderList(repostedPosts, "No reposts yet.", () => loadReposts(false));
+            if (index === 2) return renderList(likedPosts, "No liked posts yet.", () => loadLikes(false));
             return null;
         }}
       />
@@ -310,7 +418,6 @@ export default function FeedProfileScreen() {
                         <Text style={[styles.menuText, { color: 'red' }]}>Report Profile</Text>
                     </TouchableOpacity>
                     
-                    {/* ✅ BLOCK OPTION */}
                     <TouchableOpacity style={styles.menuItem} onPress={handleBlockUser}>
                          <Ionicons name="ban-outline" size={20} color="#FF6B6B" />
                          <Text style={[styles.menuText, { color: '#FF6B6B' }]}>Block User</Text>

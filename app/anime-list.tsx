@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, getDocs, limit, query, where } from 'firebase/firestore'; // ✅ Added limit
 import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -16,7 +16,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { auth, db } from '../config/firebaseConfig';
 import { useTheme } from '../context/ThemeContext';
 import { getAnimeDetails, getRecommendedAnime, getTopAnime, getUpcomingAnime } from '../services/animeService';
-// ✅ Import toggleFavorite
 import { getFavorites, toggleFavorite } from '../services/favoritesService';
 import { getContinueWatching } from '../services/historyService';
 
@@ -26,7 +25,6 @@ export default function AnimeListScreen() {
   const { theme } = useTheme();
   
   const [list, setList] = useState<any[]>([]);
-  // ✅ State for Favorites
   const [favorites, setFavorites] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -38,7 +36,6 @@ export default function AnimeListScreen() {
   const loadData = async () => {
     setLoading(true);
     try {
-        // ✅ Load Favorites First
         const favs = await getFavorites();
         setFavorites(favs);
 
@@ -48,9 +45,11 @@ export default function AnimeListScreen() {
             const user = auth.currentUser;
             if (!user) return;
             
+            // ✅ FIX: Added limit(50) to prevent loading 1,000+ completed shows at once
             const q = query(
                 collection(db, 'users', user.uid, 'anime_progress'),
-                where('isCompleted', '==', true)
+                where('isCompleted', '==', true),
+                limit(50) 
             );
             const snapshot = await getDocs(q);
             
@@ -73,12 +72,15 @@ export default function AnimeListScreen() {
             });
             const topGenres = Object.entries(genreCounts).sort(([,a], [,b]) => b - a).map(([g]) => g).slice(0, 3);
             
+            // This function is already safe (uses our optimized service)
             const recs = await getRecommendedAnime(topGenres);
             setList(recs);
         } else if (type === 'upcoming') {
+            // This function is already safe (uses our optimized service)
             const upcoming = await getUpcomingAnime();
             setList(upcoming);
         } else {
+            // This function is already safe (uses our optimized service)
             const trending = await getTopAnime();
             const rankedTrending = trending.map((item, index) => ({
                 ...item,
@@ -93,12 +95,9 @@ export default function AnimeListScreen() {
     }
   };
 
-  // ✅ Toggle Favorite Handler
   const handleToggleFav = async (anime: any) => {
       const newFavs = await toggleFavorite(anime);
       setFavorites(newFavs);
-      
-      // If we are on the favorites screen, update the list immediately
       if (type === 'favorites') {
           setList(newFavs);
       }
@@ -158,7 +157,6 @@ export default function AnimeListScreen() {
             numColumns={3}
             contentContainerStyle={{ padding: 10 }}
             renderItem={({ item }) => {
-                // ✅ Check if Favorite
                 const isFav = favorites.some(f => String(f.mal_id) === String(item.mal_id));
 
                 return (
@@ -172,21 +170,18 @@ export default function AnimeListScreen() {
                                 style={styles.poster} 
                                 contentFit="cover"
                             />
-                            {/* Rank Badge */}
                             {item.rank && (
                                 <View style={[styles.rankBadge, { backgroundColor: item.rank <= 3 ? theme.tint : 'rgba(0,0,0,0.7)' }]}>
                                     <Text style={styles.rankText}>#{item.rank}</Text>
                                 </View>
                             )}
 
-                            {/* Status Badge */}
                             {item.status && item.status !== 'Upcoming' && (
                                 <View style={[styles.statusBadge, { backgroundColor: item.status === 'Completed' ? '#10b981' : '#3b82f6' }]}>
                                     <Text style={styles.statusText}>{item.status}</Text>
                                 </View>
                             )}
 
-                            {/* ✅ Favorite Button (Heart) */}
                             <TouchableOpacity 
                                 style={styles.favBtn}
                                 onPress={() => handleToggleFav(item)}
@@ -249,7 +244,6 @@ const styles = StyleSheet.create({
   },
   statusText: { color: 'white', fontSize: 8, fontWeight: 'bold', textTransform: 'uppercase' },
 
-  // ✅ New Fav Button Style
   favBtn: {
       position: 'absolute',
       top: 5,

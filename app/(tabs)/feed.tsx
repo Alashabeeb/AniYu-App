@@ -4,9 +4,8 @@ import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import {
     collection,
-    doc, // ✅ NEW IMPORT
-    DocumentSnapshot // ✅ NEW IMPORT
-    ,
+    doc,
+    DocumentSnapshot,
     getDoc,
     getDocs,
     increment,
@@ -109,7 +108,7 @@ export default function FeedScreen() {
       return unsub;
   }, []);
 
-  // ✅ 1. INITIAL LOAD (Replaces onSnapshot to save money)
+  // ✅ 1. INITIAL LOAD (Updated to 30)
   const loadPosts = async (isRefresh = false) => {
     if (isRefresh) {
         setRefreshing(true);
@@ -121,7 +120,7 @@ export default function FeedScreen() {
           collection(db, 'posts'), 
           where('parentId', '==', null), 
           orderBy('createdAt', 'desc'),
-          limit(10) // ✅ Limit to 10
+          limit(30) // ✅ CHANGED FROM 10 TO 30
       );
       
       const snapshot = await getDocs(q);
@@ -139,7 +138,7 @@ export default function FeedScreen() {
     }
   };
 
-  // ✅ 2. LOAD MORE (Pagination)
+  // ✅ 2. LOAD MORE (Updated to 30)
   const loadMorePosts = async () => {
     if (loadingMore || !hasMore || !lastVisible) return;
     setLoadingMore(true);
@@ -149,8 +148,8 @@ export default function FeedScreen() {
           collection(db, 'posts'), 
           where('parentId', '==', null), 
           orderBy('createdAt', 'desc'),
-          startAfter(lastVisible), // ✅ Start after last doc
-          limit(10)
+          startAfter(lastVisible), 
+          limit(30) // ✅ CHANGED FROM 10 TO 30
       );
 
       const snapshot = await getDocs(q);
@@ -316,7 +315,7 @@ export default function FeedScreen() {
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
         
-        // ✅ NEW: Pagination Props
+        // ✅ PAGINATION PROPS
         onEndReached={loadMorePosts}
         onEndReachedThreshold={0.5}
         ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color={theme.tint} style={{ marginVertical: 20 }} /> : null}

@@ -1,7 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import {
+  collection,
+  limit, // ✅ IMPORTED LIMIT
+  onSnapshot,
+  query,
+  where
+} from 'firebase/firestore';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -14,8 +21,6 @@ import {
   View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-// ✅ IMPORT ASYNC STORAGE
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useTheme } from '../../context/ThemeContext';
 
@@ -29,7 +34,6 @@ import { getFavorites, toggleFavorite } from '../../services/favoritesService';
 import { getContinueWatching } from '../../services/historyService';
 import { getUnreadLocalCount } from '../../services/notificationService';
 
-// ✅ CACHE KEY
 const HOME_DATA_CACHE_KEY = 'aniyu_home_screen_cache_v1';
 
 export default function HomeScreen() {
@@ -53,10 +57,9 @@ export default function HomeScreen() {
   
   const [hasUnread, setHasUnread] = useState(false);
 
-  // ✅ LOAD CACHE ON MOUNT
   useEffect(() => { 
-      loadFromCache(); // 1. Show saved content immediately
-      loadInitialData(); // 2. Try to fetch fresh content
+      loadFromCache(); 
+      loadInitialData(); 
   }, []);
 
   useFocusEffect(
@@ -67,10 +70,23 @@ export default function HomeScreen() {
     }, [])
   );
 
+  // ✅ OPTIMIZED NOTIFICATION CHECK
   useEffect(() => {
       if (!currentUser) return;
-      const q = query(collection(db, 'users', currentUser.uid, 'notifications'), where('read', '==', false));
-      const unsubscribe = onSnapshot(q, (snapshot) => checkUnreadStatus(snapshot.docs.length));
+      
+      // OLD: Checked ALL unread (Expensive)
+      // NEW: Checks only for the FIRST unread item (Cheap)
+      const q = query(
+        collection(db, 'users', currentUser.uid, 'notifications'), 
+        where('read', '==', false),
+        limit(1) // ✅ STOP READING AFTER 1 DOCUMENT
+      );
+      
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+          // If size > 0, we have at least one unread item.
+          // We don't need the exact count for a simple red dot.
+          checkUnreadStatus(snapshot.size);
+      });
       return unsubscribe;
   }, []);
 
@@ -97,7 +113,6 @@ export default function HomeScreen() {
       setContinueWatching(history);
   };
 
-  // ✅ NEW: Load data from local storage (Offline Support)
   const loadFromCache = async () => {
       try {
           const cachedData = await AsyncStorage.getItem(HOME_DATA_CACHE_KEY);
@@ -107,7 +122,6 @@ export default function HomeScreen() {
               if (upcoming) setUpcoming(upcoming);
               if (recommended) setRecommended(recommended);
               
-              // Only stop loading if we actually found data
               if (trending && trending.length > 0) setLoading(false); 
           }
       } catch (e) {
@@ -138,12 +152,10 @@ export default function HomeScreen() {
 
   const loadInitialData = async () => {
     try {
-      // If no cache was loaded yet, ensure spinner is showing
       if (trending.length === 0) setLoading(true); 
       
       await loadHistory();
 
-      // Parallel Fetch for speed
       const [trendingData, upcomingData, userGenres] = await Promise.all([
           getTopAnime(),
           getUpcomingAnime(),
@@ -156,7 +168,6 @@ export default function HomeScreen() {
       setUpcoming(upcomingData);
       setRecommended(recommendedData);
 
-      // ✅ SAVE TO CACHE (Persistence)
       await AsyncStorage.setItem(HOME_DATA_CACHE_KEY, JSON.stringify({
           trending: trendingData,
           upcoming: upcomingData,
