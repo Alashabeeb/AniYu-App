@@ -1,6 +1,8 @@
 import {
   collection,
-  doc,
+  doc, // ✅ NEW IMPORT
+  DocumentSnapshot // ✅ NEW IMPORT
+  ,
   getDoc,
   getDocs,
   getDocsFromCache,
@@ -9,10 +11,11 @@ import {
   orderBy,
   query,
   runTransaction,
-  updateDoc
+  startAfter,
+  updateDoc,
+  where
 } from 'firebase/firestore';
 import { db } from '../config/firebaseConfig';
-// ✅ Import Filter Logic
 import { getContentRating, isContentAllowed } from './settingsService';
 
 // ✅ Helper to filter manga based on user settings
@@ -36,7 +39,6 @@ export const getTopManga = async () => {
         const cachedSnapshot = await getDocsFromCache(q);
         results = cachedSnapshot.docs.map(doc => ({ mal_id: doc.id, ...doc.data() }));
     }
-    // ✅ Apply Filter
     return await filterContent(results);
   } catch (error) {
     console.error("Error fetching top manga:", error);
@@ -44,22 +46,15 @@ export const getTopManga = async () => {
   }
 };
 
-// 2. Get All Manga
+// 2. Get All Manga (Optimized Limit)
 export const getAllManga = async () => {
   try {
     const mangaRef = collection(db, 'manga');
-    const q = query(mangaRef, orderBy('updatedAt', 'desc'), limit(100));
+    const q = query(mangaRef, orderBy('updatedAt', 'desc'), limit(50)); // ✅ Reduced limit to 50
     
-    let results = [];
-    try {
-        const snapshot = await getDocs(q);
-        results = snapshot.docs.map(doc => ({ mal_id: doc.id, ...doc.data() }));
-    } catch (networkError) {
-        console.warn("Network failed, switching to Offline Cache...");
-        const cachedSnapshot = await getDocsFromCache(q);
-        results = cachedSnapshot.docs.map(doc => ({ mal_id: doc.id, ...doc.data() }));
-    }
-    // ✅ Apply Filter
+    const snapshot = await getDocs(q);
+    const results = snapshot.docs.map(doc => ({ mal_id: doc.id, ...doc.data() }));
+
     return await filterContent(results);
   } catch (error) {
     console.error("Error fetching all manga:", error);
@@ -67,19 +62,25 @@ export const getAllManga = async () => {
   }
 };
 
-// 3. Search Manga
+// 3. Search Manga (Optimized Prefix Search)
 export const searchManga = async (queryText: string) => {
+  if (!queryText) return [];
   try {
     const mangaRef = collection(db, 'manga');
-    const snapshot = await getDocs(mangaRef);
-    const allManga = snapshot.docs.map(doc => ({
+    // ✅ OPTIMIZED: Uses Firestore query instead of client-side filtering
+    const q = query(
+        mangaRef, 
+        where('title', '>=', queryText),
+        where('title', '<=', queryText + '\uf8ff'),
+        limit(20)
+    );
+    
+    const snapshot = await getDocs(q);
+    const matches = snapshot.docs.map(doc => ({
       mal_id: doc.id,
       ...doc.data()
     }));
-    const matches = allManga.filter((m: any) => 
-      m.title && m.title.toLowerCase().includes(queryText.toLowerCase())
-    );
-    // ✅ Apply Filter
+    
     return await filterContent(matches);
   } catch (error) {
     console.error("Error searching manga:", error);
@@ -104,21 +105,52 @@ export const getMangaDetails = async (id: string) => {
   }
 };
 
-// 5. Get Chapters
-export const getMangaChapters = async (id: string) => {
+// 5. Get Chapters (Paginated)
+export const getMangaChapters = async (id: string, lastVisible: DocumentSnapshot | null = null) => {
   try {
     const chaptersRef = collection(db, 'manga', id, 'chapters');
-    const q = query(chaptersRef, orderBy('number', 'asc'));
+    // ✅ PAGINATION: Fetch 50 at a time
+    let q = query(chaptersRef, orderBy('number', 'asc'), limit(50));
+    
+    if (lastVisible) {
+        q = query(q, startAfter(lastVisible));
+    }
+
     const snapshot = await getDocs(q);
     
-    return snapshot.docs.map(doc => ({
-      id: doc.id, 
-      ...doc.data()
-    }));
+    return {
+        data: snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })),
+        lastVisible: snapshot.docs[snapshot.docs.length - 1] || null
+    };
   } catch (error) {
     console.error("Error fetching chapters:", error);
-    return [];
+    return { data: [], lastVisible: null };
   }
+};
+
+// ✅ NEW: Get Single Adjacent Chapter (Next/Prev)
+export const getAdjacentChapter = async (mangaId: string, currentNumber: number, direction: 'next' | 'prev') => {
+    try {
+        const chaptersRef = collection(db, 'manga', mangaId, 'chapters');
+        const op = direction === 'next' ? '>' : '<';
+        const sortOrder = direction === 'next' ? 'asc' : 'desc';
+        
+        const q = query(
+            chaptersRef, 
+            where('number', op, currentNumber),
+            orderBy('number', sortOrder),
+            limit(1) // ✅ Only fetch ONE document
+        );
+        
+        const snapshot = await getDocs(q);
+        if (!snapshot.empty) {
+            return { id: snapshot.docs[0].id, ...snapshot.docs[0].data() };
+        }
+        return null;
+    } catch (error) {
+        console.error("Error fetching adjacent chapter:", error);
+        return null;
+    }
 };
 
 // 6. Increment View

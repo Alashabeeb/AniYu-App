@@ -163,11 +163,12 @@ export const incrementAnimeView = async (id: string) => {
   }
 };
 
-// Fetch episodes
+// Fetch episodes (UPDATED)
 export const getAnimeEpisodes = async (id: string) => {
   try {
     const episodesRef = collection(db, 'anime', id, 'episodes');
-    const q = query(episodesRef, orderBy('number', 'asc'));
+    // ✅ ADDED LIMIT(50) TO PREVENT READ BOMB
+    const q = query(episodesRef, orderBy('number', 'asc'), limit(50));
     const snapshot = await getDocs(q);
     
     return snapshot.docs.map(doc => ({

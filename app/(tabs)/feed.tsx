@@ -4,7 +4,9 @@ import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import {
     collection,
-    doc,
+    doc, // ✅ NEW IMPORT
+    DocumentSnapshot // ✅ NEW IMPORT
+    ,
     getDoc,
     getDocs,
     increment,
@@ -12,6 +14,7 @@ import {
     onSnapshot,
     orderBy,
     query,
+    startAfter,
     updateDoc,
     where
 } from 'firebase/firestore';
@@ -49,6 +52,11 @@ export default function FeedScreen() {
   const [userInterests, setUserInterests] = useState<string[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   
+  // ✅ PAGINATION STATE
+  const [lastVisible, setLastVisible] = useState<DocumentSnapshot | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+
   const [showSearch, setShowSearch] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [userResults, setUserResults] = useState<any[]>([]);
@@ -56,7 +64,6 @@ export default function FeedScreen() {
 
   const [blockedUsers, setBlockedUsers] = useState<string[]>([]);
   
-  // ✅ FIX: Track ONLY ONE playing post ID
   const [playingPostId, setPlayingPostId] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState('All'); 
@@ -102,25 +109,73 @@ export default function FeedScreen() {
       return unsub;
   }, []);
 
-  useEffect(() => {
-    const q = query(
-        collection(db, 'posts'), 
-        where('parentId', '==', null), 
-        orderBy('createdAt', 'desc'),
-        limit(50) 
-    );
+  // ✅ 1. INITIAL LOAD (Replaces onSnapshot to save money)
+  const loadPosts = async (isRefresh = false) => {
+    if (isRefresh) {
+        setRefreshing(true);
+        setHasMore(true); // Reset hasMore on refresh
+    }
     
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const postsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setPosts(postsData);
-      AsyncStorage.setItem(FEED_CACHE_KEY, JSON.stringify(postsData)).catch(err => console.log("Cache save failed", err));
-    });
-    return unsubscribe; 
+    try {
+      const q = query(
+          collection(db, 'posts'), 
+          where('parentId', '==', null), 
+          orderBy('createdAt', 'desc'),
+          limit(10) // ✅ Limit to 10
+      );
+      
+      const snapshot = await getDocs(q);
+      const newPosts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      setPosts(newPosts);
+      setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
+      
+      // Save to Cache
+      AsyncStorage.setItem(FEED_CACHE_KEY, JSON.stringify(newPosts)).catch(err => console.log("Cache save failed", err));
+    } catch (error) {
+      console.log("Error loading feed:", error);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // ✅ 2. LOAD MORE (Pagination)
+  const loadMorePosts = async () => {
+    if (loadingMore || !hasMore || !lastVisible) return;
+    setLoadingMore(true);
+
+    try {
+      const q = query(
+          collection(db, 'posts'), 
+          where('parentId', '==', null), 
+          orderBy('createdAt', 'desc'),
+          startAfter(lastVisible), // ✅ Start after last doc
+          limit(10)
+      );
+
+      const snapshot = await getDocs(q);
+      
+      if (snapshot.empty) {
+        setHasMore(false);
+      } else {
+        const morePosts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setPosts(prev => [...prev, ...morePosts]);
+        setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
+      }
+    } catch (error) {
+      console.log("Error loading more:", error);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  // Replace old useEffect with this
+  useEffect(() => {
+    loadPosts(); 
   }, []);
 
   useEffect(() => {
       let isActive = true;
-
       const runSearch = async () => {
           if (showSearch && searchText.trim().length > 0) {
               if(isActive) setSearchingUsers(true);
@@ -209,17 +264,14 @@ export default function FeedScreen() {
   };
 
   const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    setTimeout(() => { setRefreshing(false); }, 1000);
+    loadPosts(true); // ✅ Refresh calls loadPosts
   }, []);
 
   const viewabilityConfig = useRef({
       itemVisiblePercentThreshold: 50 
   }).current;
 
-  // ✅ UPDATED: Viewability Logic
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
-      // 1. PLAYBACK LOGIC: Pick strictly the first visible item
       if (viewableItems.length > 0) {
           const firstVisible = viewableItems[0];
           setPlayingPostId(firstVisible.item.id);
@@ -227,7 +279,6 @@ export default function FeedScreen() {
           setPlayingPostId(null);
       }
 
-      // 2. VIEW COUNTING LOGIC (Preserved)
       viewableItems.forEach((viewToken) => {
           if (viewToken.isViewable && viewToken.item?.id) {
               const postId = viewToken.item.id;
@@ -264,6 +315,12 @@ export default function FeedScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.tint} />}
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
+        
+        // ✅ NEW: Pagination Props
+        onEndReached={loadMorePosts}
+        onEndReachedThreshold={0.5}
+        ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color={theme.tint} style={{ marginVertical: 20 }} /> : null}
+        
         ListHeaderComponent={() => <View><AdBanner /></View>}
         ListEmptyComponent={
             <View style={{ padding: 40, alignItems: 'center', width: SCREEN_WIDTH }}>
@@ -273,11 +330,10 @@ export default function FeedScreen() {
         renderItem={({ item }) => (
             <PostCard 
                 post={item} 
-                // ✅ FIX: Only play if ID matches playingPostId
                 isVisible={playingPostId === item.id} 
             />
         )}
-        extraData={playingPostId} // ✅ Ensure re-render when active video changes
+        extraData={playingPostId}
     />
   );
 

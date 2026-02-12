@@ -10,7 +10,7 @@ import { AdConfig } from '../config/adConfig';
 
 import { useTheme } from '../context/ThemeContext';
 import { getMangaHistory, saveReadProgress } from '../services/historyService';
-import { getMangaChapters } from '../services/mangaService';
+import { getAdjacentChapter } from '../services/mangaService'; // ✅ NEW IMPORT
 
 const interstitial = InterstitialAd.createForAdRequest(AdConfig.interstitial, {
   requestNonPersonalizedAdsOnly: true,
@@ -22,99 +22,57 @@ export default function MangaReaderScreen() {
   const { theme } = useTheme();
   
   const [loading, setLoading] = useState(true);
-  const [chapters, setChapters] = useState<any[]>([]);
-  const [currentChapIndex, setCurrentChapIndex] = useState(-1);
+  
   const [localPdfData, setLocalPdfData] = useState<string | null>(null);
-
   const [initialPage, setInitialPage] = useState(1);
   const [isHistoryReady, setIsHistoryReady] = useState(false);
 
   const [adLoaded, setAdLoaded] = useState(false);
   const [nextChapterParams, setNextChapterParams] = useState<any>(null); 
 
-  const chapterNumber = Number(chapterNum);
-
   useEffect(() => {
-    const unsubscribeLoaded = interstitial.addAdEventListener(AdEventType.LOADED, () => {
-      setAdLoaded(true);
-    });
-
+    const unsubscribeLoaded = interstitial.addAdEventListener(AdEventType.LOADED, () => { setAdLoaded(true); });
     const unsubscribeClosed = interstitial.addAdEventListener(AdEventType.CLOSED, () => {
-      setAdLoaded(false);
-      interstitial.load(); 
-      
-      if (nextChapterParams) {
-          router.replace(nextChapterParams);
-          setNextChapterParams(null);
-      }
+      setAdLoaded(false); interstitial.load(); 
+      if (nextChapterParams) { router.replace(nextChapterParams); setNextChapterParams(null); }
     });
-
-    const unsubscribeError = interstitial.addAdEventListener(AdEventType.ERROR, (error) => {
-        setAdLoaded(false);
-    });
-
     interstitial.load();
-
-    return () => {
-      unsubscribeLoaded();
-      unsubscribeClosed();
-      unsubscribeError();
-    };
+    return () => { unsubscribeLoaded(); unsubscribeClosed(); };
   }, [nextChapterParams]);
 
+  // Load Progress
   useEffect(() => {
       const loadHistory = async () => {
           try {
             if (mangaId && chapterId) {
                 const history = await getMangaHistory();
                 const item = history.find(h => String(h.mal_id) === String(mangaId) && String(h.chapterId) === String(chapterId));
-                if (item && item.page > 1) {
-                    setInitialPage(item.page);
-                }
+                if (item && item.page > 1) { setInitialPage(item.page); }
             }
-          } catch (e) {
-              console.log("Error loading history:", e);
-          } finally {
-              setIsHistoryReady(true);
-          }
+          } catch (e) { console.log("Error loading history:", e); } 
+          finally { setIsHistoryReady(true); }
       };
       loadHistory();
   }, [mangaId, chapterId]);
 
-  useEffect(() => {
-      if (mangaId) {
-          getMangaChapters(mangaId as string).then(data => {
-              setChapters(data);
-              const idx = data.findIndex((c: any) => c.number === chapterNumber);
-              setCurrentChapIndex(idx);
-          });
-      }
-  }, [mangaId, chapterNumber]);
-
+  // Prepare File
   useEffect(() => {
       if (!url) return;
       const fileUrl = url as string;
-
       const prepareFile = async () => {
           if (fileUrl.startsWith('file://')) {
               try {
-                  const base64 = await FileSystem.readAsStringAsync(fileUrl, {
-                      encoding: 'base64', 
-                  });
+                  const base64 = await FileSystem.readAsStringAsync(fileUrl, { encoding: 'base64' });
                   setLocalPdfData(base64);
-              } catch (e) {
-                  console.error("Failed to load local file", e);
-              }
-          } else {
-              setLocalPdfData(null); 
-          }
+              } catch (e) { console.error("Failed to load local file", e); }
+          } else { setLocalPdfData(null); }
       };
       prepareFile();
   }, [url]);
 
-  const handleNavigate = (direction: 'next' | 'prev') => {
-      if (currentChapIndex === -1) return;
-      
+  // ✅ OPTIMIZED NAVIGATION (Efficient Fetch)
+  const handleNavigate = async (direction: 'next' | 'prev') => {
+      // 1. Save Progress
       if (mangaId && direction === 'next') {
         saveReadProgress(
             { mal_id: mangaId, title: title?.toString().split(' - ')[0] }, 
@@ -123,47 +81,49 @@ export default function MangaReaderScreen() {
         );
       }
 
-      const newIndex = direction === 'next' ? currentChapIndex + 1 : currentChapIndex - 1;
+      setLoading(true);
+
+      // 2. Fetch Single Document
+      // ✅ FIX: Added ': any' here to solve the TypeScript error
+      const nextChap: any = await getAdjacentChapter(mangaId as string, Number(chapterNum), direction);
       
-      if (newIndex >= 0 && newIndex < chapters.length) {
-          const nextChap = chapters[newIndex];
-          
-          // ✅ FIX: Extract URL from pages array
-          const nextUrl = nextChap.pages && nextChap.pages.length > 0 ? nextChap.pages[0] : null;
-
-          // Fallback to localUri if available (for downloads) or just fail if neither
-          const finalUrl = nextUrl || nextChap.localUri; 
-
-          if (!finalUrl) {
-              alert("Next chapter file unavailable");
-              return;
-          }
-
-          const newParams = {
-            pathname: '/chapter-read' as const,
-            params: {
-                url: finalUrl, 
-                title: `${title?.toString().split(' - ')[0]} - ${nextChap.title || 'Chapter ' + nextChap.number}`,
-                mangaId,
-                chapterId: nextChap.id || nextChap.number,
-                chapterNum: nextChap.number
-            }
-          };
-
-          if (direction === 'next' && adLoaded) {
-              setNextChapterParams(newParams); 
-              interstitial.show();             
-          } else {
-              router.replace(newParams);       
-          }
+      if (!nextChap) {
+          alert("No more chapters in this direction.");
+          setLoading(false);
+          return;
       }
+
+      const nextUrl = nextChap.pages && nextChap.pages.length > 0 ? nextChap.pages[0] : null;
+      if (!nextUrl) {
+          alert("Next chapter file unavailable");
+          setLoading(false);
+          return;
+      }
+
+      const newParams = {
+        pathname: '/chapter-read' as const,
+        params: {
+            url: nextUrl, 
+            title: `${title?.toString().split(' - ')[0]} - ${nextChap.title || 'Chapter ' + nextChap.number}`,
+            mangaId,
+            chapterId: nextChap.id || nextChap.number,
+            chapterNum: nextChap.number
+        }
+      };
+
+      if (direction === 'next' && adLoaded) {
+          setNextChapterParams(newParams); 
+          interstitial.show();             
+      } else {
+          router.replace(newParams);       
+      }
+      setLoading(false);
   };
 
   const handleMessage = (event: any) => {
       const data = event.nativeEvent.data;
-      if (data === "Loaded") {
-          setLoading(false);
-      } else if (data.startsWith("Page:")) {
+      if (data === "Loaded") { setLoading(false); } 
+      else if (data.startsWith("Page:")) {
           const page = parseInt(data.split(":")[1]);
           if (mangaId) {
             saveReadProgress(
@@ -183,10 +143,10 @@ export default function MangaReaderScreen() {
       );
   }
 
+  // HTML Content Construction
   let pdfJsSource = '';
-  if (localPdfData) {
-      pdfJsSource = `data: atob('${localPdfData}')`; 
-  } else {
+  if (localPdfData) { pdfJsSource = `data: atob('${localPdfData}')`; } 
+  else {
       let fixedUrl = url as string;
       if (fixedUrl.includes('firebasestorage.googleapis.com') && fixedUrl.includes('/o/')) {
           const parts = fixedUrl.split('?');
@@ -298,7 +258,7 @@ export default function MangaReaderScreen() {
           {loading && (
               <View style={styles.loader}>
                   <ActivityIndicator size="large" color={theme.tint} />
-                  <Text style={{color:'white', marginTop:10}}>Resuming...</Text>
+                  <Text style={{color:'white', marginTop:10}}>Loading...</Text>
               </View>
           )}
           <WebView
@@ -312,11 +272,11 @@ export default function MangaReaderScreen() {
       </View>
       {!loading && (
           <View style={styles.footer}>
-              <TouchableOpacity onPress={() => handleNavigate('prev')} disabled={currentChapIndex <= 0} style={[styles.navBtn, currentChapIndex <= 0 && { opacity: 0.3 }]}>
+              <TouchableOpacity onPress={() => handleNavigate('prev')} style={styles.navBtn}>
                   <Ionicons name="chevron-back" size={24} color="white" />
                   <Text style={{color:'white', marginLeft: 5}}>Prev</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => handleNavigate('next')} disabled={currentChapIndex === -1 || currentChapIndex >= chapters.length - 1} style={[styles.navBtn, (currentChapIndex === -1 || currentChapIndex >= chapters.length - 1) && { opacity: 0.3 }]}>
+              <TouchableOpacity onPress={() => handleNavigate('next')} style={styles.navBtn}>
                   <Text style={{color:'white', marginRight: 5}}>Next</Text>
                   <Ionicons name="chevron-forward" size={24} color="white" />
               </TouchableOpacity>
