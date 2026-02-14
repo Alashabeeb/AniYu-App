@@ -19,6 +19,8 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { auth, db, storage } from './firebase';
+// ✅ IMPORT R2 UPLOADER
+import { uploadToR2 } from './utils/r2Storage';
 
 const GENRES_LIST = [
   "Action", "Adventure", "Comedy", "Drama", "Fantasy", 
@@ -114,12 +116,8 @@ export default function MangaUpload() {
     }
   };
 
-  // ✅ COST OPTIMIZED: Replaced the loop with a single global announcement
   const sendAutoNotification = async (title, body, targetId = null) => {
       try {
-          // ❌ REMOVED: Loop through all users (Expensive!)
-          
-          // ✅ ADDED: Single global announcement
           await addDoc(collection(db, "announcements"), {
               title,
               body,
@@ -127,8 +125,6 @@ export default function MangaUpload() {
               type: 'manga_release',
               createdAt: serverTimestamp()
           });
-          
-          console.log("Global announcement sent successfully.");
       } catch (e) { console.error("Notification failed:", e); }
   };
 
@@ -167,7 +163,6 @@ export default function MangaUpload() {
         setMangaStatus('Ongoing'); 
     }
 
-    // ✅ UPDATED INITIAL STATE: Single file fields
     setChapters([{ id: Date.now(), number: 1, title: '', chapterFile: null, existingFileUrl: null, isNew: true }]);
     setDeletedChapters([]);
     setNotifyUsers(true);
@@ -241,7 +236,10 @@ export default function MangaUpload() {
           const ch = docSnap.data();
           if (ch.pages) {
               for (const pageUrl of ch.pages) {
-                  try { await deleteObject(ref(storage, pageUrl)); } catch (e) {}
+                  // Only try to delete from Firebase Storage if it's a firebase URL
+                  if (pageUrl && pageUrl.includes('firebasestorage')) {
+                      try { await deleteObject(ref(storage, pageUrl)); } catch (e) {}
+                  }
               }
           }
           return deleteDoc(doc(db, 'manga', manga.id, 'chapters', docSnap.id));
@@ -306,7 +304,21 @@ export default function MangaUpload() {
       setter(file); 
   };
   
-  const uploadFile = (file, path) => {
+  // ✅ MODIFIED UPLOAD FUNCTION: Routes PDF/CBZ/ZIP to R2, Images to Firebase
+  const uploadFile = async (file, path) => {
+    if (!file) return null;
+
+    // Check for "Heavy" files: PDF, CBZ, ZIP
+    const heavyTypes = ['application/pdf', 'application/zip', 'application/x-zip-compressed', 'application/x-cbz'];
+    const isHeavy = heavyTypes.includes(file.type) || file.name.endsWith('.cbz') || file.name.endsWith('.pdf');
+
+    if (isHeavy) {
+       return await uploadToR2(file, path, (p) => {
+           if (path.includes('pages')) setProgress(p);
+       });
+    }
+
+    // Default: Upload images to Firebase
     return new Promise((resolve, reject) => {
       const storageRef = ref(storage, `${path}/${Date.now()}_${file.name}`);
       const uploadTask = uploadBytesResumable(storageRef, file);
@@ -384,7 +396,9 @@ export default function MangaUpload() {
 
         // ✅ SINGLE FILE UPLOAD LOGIC
         if (ch.chapterFile) {
-            finalFileUrl = await uploadFile(ch.chapterFile, `manga_pages/${mangaId}/ch_${ch.number}`);
+            // Upload to R2 or Firebase based on file type handled in uploadFile
+            const result = await uploadFile(ch.chapterFile, `manga_pages/${mangaId}/ch_${ch.number}`);
+            finalFileUrl = typeof result === 'object' ? result.url : result;
         }
 
         // ✅ SAVE AS SINGLE ELEMENT ARRAY (Compatible with 'pages' field)

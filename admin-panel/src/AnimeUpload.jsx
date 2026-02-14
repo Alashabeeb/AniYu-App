@@ -26,6 +26,8 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { auth, db, storage } from './firebase';
+// ✅ IMPORT R2 UPLOADER
+import { uploadToR2 } from './utils/r2Storage';
 
 const GENRES_LIST = [
   "Action", "Adventure", "Comedy", "Drama", "Fantasy", 
@@ -124,13 +126,8 @@ export default function AnimeUpload() {
     }
   };
 
-  // ✅ COST OPTIMIZED: Replaced the loop with a single global announcement
   const sendAutoNotification = async (title, body, targetId = null) => {
       try {
-          // ❌ REMOVED: The loop that read all 100k users and wrote 100k docs.
-          
-          // ✅ ADDED: Single write to 'global_announcements' collection.
-          // Your mobile app should listen to this collection to show notifications.
           await addDoc(collection(db, "announcements"), {
               title,
               body,
@@ -138,8 +135,6 @@ export default function AnimeUpload() {
               type: 'anime_release',
               createdAt: serverTimestamp()
           });
-          
-          console.log("Global announcement sent successfully.");
       } catch (e) { console.error("Notification failed:", e); }
   };
 
@@ -150,7 +145,6 @@ export default function AnimeUpload() {
       try {
           await updateDoc(doc(db, 'anime', anime.id), { status: 'Ongoing' });
           
-          // Notify Users on Approval (Cheaply)
           await sendAutoNotification(
               `New Release: ${anime.title}`,
               `${anime.title} has just been released! Watch it now on AniYu.`,
@@ -257,6 +251,8 @@ export default function AnimeUpload() {
     if (view === 'details') setView('list');
 
     try {
+      // Note: We cannot programmatically delete from R2 easily without a backend key. 
+      // Manual cleanup on Cloudflare dashboard might be needed for R2 files, or implement a cleanup script.
       if (anime.images?.jpg?.image_url) {
         try { await deleteObject(ref(storage, anime.images.jpg.image_url)); } catch (e) { console.warn("Cover not found"); }
       }
@@ -264,19 +260,15 @@ export default function AnimeUpload() {
       const epSnapshot = await getDocs(collection(db, 'anime', anime.id, 'episodes'));
       const deletePromises = epSnapshot.docs.map(async (docSnap) => {
           const ep = docSnap.data();
-          if (ep.videoUrl) try { await deleteObject(ref(storage, ep.videoUrl)); } catch (e) {}
-          if (ep.thumbnailUrl && ep.thumbnailUrl !== anime.images?.jpg?.image_url) try { await deleteObject(ref(storage, ep.thumbnailUrl)); } catch (e) {}
-          if (ep.subtitles) {
-              for (const sub of ep.subtitles) {
-                  if (sub.url) try { await deleteObject(ref(storage, sub.url)); } catch (e) {}
-              }
+          if (ep.videoUrl && ep.videoUrl.includes('firebasestorage')) {
+             try { await deleteObject(ref(storage, ep.videoUrl)); } catch (e) {}
           }
           return deleteDoc(doc(db, 'anime', anime.id, 'episodes', docSnap.id));
       });
 
       await Promise.all(deletePromises);
       await deleteDoc(doc(db, 'anime', anime.id));
-      alert(`"${anime.title}" has been completely deleted.`);
+      alert(`"${anime.title}" has been deleted.`);
 
     } catch (e) { 
         alert("Error during deletion: " + e.message); 
@@ -335,15 +327,25 @@ export default function AnimeUpload() {
 
       if (requiredType === 'image' && !file.type.startsWith('image/')) {
           alert("Invalid file type. Please upload a valid image file.");
-          e.target.value = null; // Reset the input
+          e.target.value = null; 
           return;
       }
       setter(file); 
   };
   
-  const uploadFile = (file, path) => {
+  // ✅ MODIFIED UPLOAD FUNCTION: Routes Video to R2, Images to Firebase
+  const uploadFile = async (file, path) => {
+    if (!file) return null;
+
+    // 1. If it's a VIDEO -> Upload to Cloudflare R2 (Free Bandwidth)
+    if (file.type.startsWith('video/')) {
+       return await uploadToR2(file, path, (p) => {
+           if (path.includes('episodes')) setProgress(p);
+       });
+    }
+
+    // 2. If it's an IMAGE/SUBTITLE -> Upload to Firebase (Easy Optimization)
     return new Promise((resolve, reject) => {
-      if (!file) return resolve(null);
       const storageRef = ref(storage, `${path}/${Date.now()}_${file.name}`);
       const uploadTask = uploadBytesResumable(storageRef, file);
       uploadTask.on('state_changed', 
@@ -388,7 +390,7 @@ export default function AnimeUpload() {
         ageRating: selectedAge,
         images: { jpg: { image_url: finalCoverUrl } }, 
         type: 'TV', 
-        status: finalStatus, // ✅ Use enforced status
+        status: finalStatus,
         uploaderId: currentUser.uid, 
         updatedAt: serverTimestamp()
       };
@@ -413,7 +415,10 @@ export default function AnimeUpload() {
           for (const delEp of deletedEpisodes) {
               try {
                   await deleteDoc(doc(db, 'anime', animeId, 'episodes', delEp.id));
-                  if (delEp.existingVideoUrl) await deleteObject(ref(storage, delEp.existingVideoUrl)).catch(e => {});
+                  // Only delete from Firebase if it was a firebase URL. R2 cleanup is manual/separate.
+                  if (delEp.existingVideoUrl && delEp.existingVideoUrl.includes('firebasestorage')) {
+                      await deleteObject(ref(storage, delEp.existingVideoUrl)).catch(e => {});
+                  }
                   if (delEp.existingThumbUrl) await deleteObject(ref(storage, delEp.existingThumbUrl)).catch(e => {});
               } catch (e) { console.error("Error deleting episode:", e); }
           }
@@ -428,7 +433,7 @@ export default function AnimeUpload() {
         
         if (!ep.videoFile && !ep.existingVideoUrl) continue;
 
-        const vidResult = await uploadFile(ep.videoFile, 'episodes');
+        const vidResult = await uploadFile(ep.videoFile, `anime/${animeId}/episodes`);
         const thumbResult = await uploadFile(ep.thumbFile, 'episode_thumbnails');
 
         const finalSubtitles = [];
