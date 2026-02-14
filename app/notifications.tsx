@@ -1,251 +1,222 @@
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
+import { Stack, useRouter } from 'expo-router';
+import { collection, doc, limit, onSnapshot, orderBy, query, updateDoc } from 'firebase/firestore'; // ✅ Added limit
+import React, { useCallback, useEffect, useState } from 'react';
 import {
-  collection,
-  doc,
-  DocumentSnapshot,
-  getDocs,
-  limit,
-  orderBy,
-  query,
-  startAfter,
-  updateDoc,
-  writeBatch
-} from 'firebase/firestore';
-import React, { useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View
+    FlatList,
+    RefreshControl,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-
 import { auth, db } from '../config/firebaseConfig';
 import { useTheme } from '../context/ThemeContext';
-import { getNotifications, markAllAsRead } from '../services/notificationService'; // Local ones
-
-const CACHE_KEY = 'user_notifications_cache';
+import { AppNotification, getNotifications, markAllAsRead, markLocalNotificationAsRead } from '../services/notificationService';
 
 export default function NotificationsScreen() {
   const router = useRouter();
   const { theme } = useTheme();
-  const user = auth.currentUser;
+  const currentUser = auth.currentUser;
 
-  const [notifications, setNotifications] = useState<any[]>([]);
+  const [localNotifs, setLocalNotifs] = useState<AppNotification[]>([]);
+  const [socialNotifs, setSocialNotifs] = useState<any[]>([]);
+  const [globalNotifs, setGlobalNotifs] = useState<any[]>([]); // ✅ New State for Global Announcements
   const [refreshing, setRefreshing] = useState(false);
-  const [loading, setLoading] = useState(true);
 
-  // ✅ PAGINATION STATE
-  const [lastVisible, setLastVisible] = useState<DocumentSnapshot | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
+  // 1. Fetch Local Notifications (Drops)
+  useFocusEffect(
+    useCallback(() => {
+      loadLocalData();
+    }, [])
+  );
 
+  const loadLocalData = async () => {
+    const data = await getNotifications();
+    setLocalNotifs(data);
+  };
+
+  // 2. Fetch Notifications (Firestore)
   useEffect(() => {
-    loadInitialData();
+      if (!currentUser) return;
+
+      // A. Personal Notifications (Bans, Likes, Comments) - Standard
+      const qPersonal = query(
+          collection(db, 'users', currentUser.uid, 'notifications'),
+          orderBy('createdAt', 'desc')
+      );
+      const unsubPersonal = onSnapshot(qPersonal, (snapshot) => {
+          const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isGlobal: false }));
+          setSocialNotifs(data);
+      });
+
+      // B. Global Announcements (New Anime/Manga) - ✅ OPTIMIZED & NEW
+      // Listens to the single 'announcements' collection instead of checking user's subcollection
+      const qGlobal = query(
+          collection(db, 'announcements'),
+          orderBy('createdAt', 'desc'),
+          limit(20) // ✅ Limit to 20 to prevent high read costs
+      );
+      const unsubGlobal = onSnapshot(qGlobal, (snapshot) => {
+          const data = snapshot.docs.map(doc => ({ 
+              id: doc.id, 
+              ...doc.data(), 
+              isGlobal: true, // Flag to prevent "mark as read" writes
+              read: true // Treat as read by default to avoid unread dot complexity without local DB
+          }));
+          setGlobalNotifs(data);
+      });
+
+      return () => {
+          unsubPersonal();
+          unsubGlobal();
+      };
   }, []);
 
-  // 1. Load from Cache + Fresh Fetch
-  const loadInitialData = async () => {
-    if (!user) return;
-    setLoading(true);
-
-    // A. Show Cached Data First (Instant & Free)
-    try {
-        const cached = await AsyncStorage.getItem(CACHE_KEY);
-        if (cached) setNotifications(JSON.parse(cached));
-    } catch (e) { console.log("Cache error", e); }
-
-    // B. Fetch Fresh Data (Cost: 15 Reads)
-    await fetchNotifications(true);
-    setLoading(false);
+  const handleRefresh = async () => {
+      setRefreshing(true);
+      await loadLocalData();
+      setRefreshing(false);
   };
 
-  const fetchNotifications = async (isRefresh = false) => {
-    if (!user) return;
-    if (isRefresh) {
-        setRefreshing(true);
-        setHasMore(true);
-    }
-
-    try {
-        // 1. Get Local System Notifications (Free)
-        const localNotifs = await getNotifications();
-
-        // 2. Get Social Notifications (Firestore - Cost: 15 Reads)
-        const q = query(
-            collection(db, 'users', user.uid, 'notifications'),
-            orderBy('createdAt', 'desc'),
-            limit(15) // ✅ LIMIT 15
-        );
-        
-        const snapshot = await getDocs(q);
-        const socialNotifs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isSocial: true }));
-
-        // 3. Merge & Sort
-        // ✅ FIX: Added ': any' to a and b to fix the red underline
-        const allNotifs = [...localNotifs, ...socialNotifs].sort((a: any, b: any) => {
-            const dateA = a.createdAt ? a.createdAt.toMillis() : a.date;
-            const dateB = b.createdAt ? b.createdAt.toMillis() : b.date;
-            return dateB - dateA;
-        });
-
-        setNotifications(allNotifs);
-        setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
-        
-        // Save to Cache
-        AsyncStorage.setItem(CACHE_KEY, JSON.stringify(allNotifs));
-
-    } catch (error) {
-        console.error("Error fetching notifications:", error);
-    } finally {
-        setRefreshing(false);
-    }
-  };
-
-  // ✅ LOAD MORE (Pagination)
-  const loadMore = async () => {
-    if (loadingMore || !hasMore || !lastVisible || !user) return;
-    setLoadingMore(true);
-
-    try {
-        const q = query(
-            collection(db, 'users', user.uid, 'notifications'),
-            orderBy('createdAt', 'desc'),
-            startAfter(lastVisible),
-            limit(15) // ✅ Load NEXT 15
-        );
-
-        const snapshot = await getDocs(q);
-        
-        if (snapshot.empty) {
-            setHasMore(false);
-        } else {
-            const moreNotifs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isSocial: true }));
-            setNotifications(prev => [...prev, ...moreNotifs]);
-            setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
+  const handleMarkRead = async () => {
+      // Mark Firestore Personal Notifications Only
+      socialNotifs.forEach(async (item) => {
+        if (!item.read && !item.isGlobal) {
+           await updateDoc(doc(db, 'users', currentUser!.uid, 'notifications', item.id), { read: true });
         }
-    } catch (error) {
-        console.log("Load more error:", error);
-    } finally {
-        setLoadingMore(false);
-    }
-  };
-
-  // ✅ MARK SINGLE AS READ
-  const handleMarkAsRead = async (item: any) => {
-      // 1. Update UI Immediately (Optimistic)
-      const updated = notifications.map(n => n.id === item.id ? { ...n, read: true } : n);
-      setNotifications(updated);
-      AsyncStorage.setItem(CACHE_KEY, JSON.stringify(updated)); // Update Cache
-
-      // 2. Update Backend
-      if (item.isSocial && user) {
-          try {
-              const ref = doc(db, 'users', user.uid, 'notifications', item.id);
-              await updateDoc(ref, { read: true });
-          } catch (e) { console.error(e); }
-      }
-  };
-
-  // ✅ MARK ALL AS READ (Batch Write - Cheaper)
-  const handleMarkAllRead = async () => {
-      if (!user) return;
-      
-      // 1. UI Update
-      const updated = notifications.map(n => ({ ...n, read: true }));
-      setNotifications(updated);
-      AsyncStorage.setItem(CACHE_KEY, JSON.stringify(updated));
-
-      // 2. Local Service Update
+      });
+      // Mark Local
       await markAllAsRead();
-
-      // 3. Firestore Batch Update (Only unread ones to save writes)
-      try {
-          const batch = writeBatch(db);
-          let count = 0;
-          
-          notifications.forEach(n => {
-              if (n.isSocial && !n.read && count < 450) { // Batch limit is 500
-                  const ref = doc(db, 'users', user.uid, 'notifications', n.id);
-                  batch.update(ref, { read: true });
-                  count++;
-              }
-          });
-          
-          if (count > 0) await batch.commit();
-      } catch (e) { console.error("Batch update failed", e); }
+      loadLocalData();
   };
 
-  const handlePress = (item: any) => {
-      handleMarkAsRead(item);
-      if (item.type === 'anime') router.push(`/anime/${item.targetId || ''}`);
-      if (item.type === 'manga') router.push(`/manga/${item.targetId || ''}`);
-      if (item.type === 'follow') router.push({ pathname: '/feed-profile', params: { userId: item.actorId } });
-      if (item.type === 'like' || item.type === 'comment' || item.type === 'repost') {
-          // Navigate to post details (assuming you have a post-details route)
-           router.push({ pathname: '/post-details', params: { postId: item.targetId } });
+  // 3. Combine & Sort (Newest First)
+  const combinedNotifications = [...socialNotifs, ...globalNotifs, ...localNotifs].sort((a, b) => {
+      const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.date || 0);
+      const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.date || 0);
+      return timeB - timeA;
+  });
+
+  // ✅ UPDATED ICON LOGIC: Handle New Admin Types to prevent crashes
+  const getIcon = (type: string) => {
+      switch(type) {
+          // Standard Social
+          case 'like': return { name: 'heart', color: '#FF6B6B' };
+          case 'comment': return { name: 'chatbubble', color: '#4ECDC4' };
+          case 'repost': return { name: 'repeat', color: '#45B7D1' };
+          case 'follow': return { name: 'person-add', color: '#FFD700' };
+          
+          // New Admin/Global Types
+          case 'anime_release': return { name: 'play-circle', color: '#8b5cf6' }; // 🟣 Purple for Anime
+          case 'manga_release': return { name: 'book', color: '#ec4899' }; // 🩷 Pink for Manga
+          case 'system_broadcast': return { name: 'megaphone', color: '#FF9F1C' }; // 📢 Orange for Broadcasts
+          
+          // Legacy Admin Types
+          case 'system': return { name: 'megaphone', color: '#FF9F1C' };
+          case 'error': return { name: 'warning', color: '#EF4444' };
+          case 'success': return { name: 'checkmark-circle', color: '#10B981' };
+          
+          default: return { name: 'notifications', color: theme.tint };
       }
   };
 
-  const renderItem = ({ item }: { item: any }) => (
-      <TouchableOpacity 
-        style={[styles.item, { backgroundColor: item.read ? theme.background : theme.card, borderColor: theme.border }]}
-        onPress={() => handlePress(item)}
-      >
-          <View style={[styles.iconBox, { backgroundColor: item.read ? 'transparent' : theme.tint }]}>
-              <Ionicons 
-                name={item.type === 'like' ? 'heart' : item.type === 'comment' ? 'chatbubble' : 'notifications'} 
-                size={20} 
-                color={item.read ? theme.subText : 'white'} 
-              />
-          </View>
-          <View style={{ flex: 1 }}>
-              <Text style={[styles.title, { color: theme.text, fontWeight: item.read ? 'normal' : 'bold' }]}>{item.title}</Text>
-              <Text style={[styles.body, { color: theme.subText }]}>{item.body}</Text>
-              <Text style={[styles.date, { color: theme.subText }]}>
-                  {new Date(item.createdAt ? item.createdAt.toMillis() : item.date).toLocaleDateString()}
-              </Text>
-          </View>
-          {!item.read && <View style={[styles.dot, { backgroundColor: theme.tint }]} />}
-      </TouchableOpacity>
-  );
+  const handlePress = async (item: any) => {
+      if (!currentUser) return;
+
+      // 1. Mark as Read (Only if it's a personal notification)
+      // ✅ We skip global announcements because users can't write to that collection
+      if (!item.read && !item.isGlobal) {
+          try {
+              if (item.createdAt) {
+                  await updateDoc(doc(db, 'users', currentUser.uid, 'notifications', item.id), { read: true });
+              } else {
+                  await markLocalNotificationAsRead(item.id);
+                  loadLocalData();
+              }
+          } catch (e) {
+              console.log("Error marking read:", e);
+          }
+      }
+
+      // 2. Navigation Logic - ✅ Added handlers for new types
+      if (item.targetId) {
+          if (item.type === 'like' || item.type === 'comment' || item.type === 'repost') {
+             router.push({ pathname: '/post-details', params: { postId: item.targetId } });
+          } 
+          // New Global Types
+          else if (item.type === 'anime_release' || item.type === 'anime') {
+             router.push({ pathname: '/anime/[id]', params: { id: item.targetId } });
+          } 
+          else if (item.type === 'manga_release' || item.type === 'manga') {
+             router.push({ pathname: '/manga/[id]', params: { id: item.targetId } });
+          }
+      }
+      else if (item.actorId && item.type === 'follow') {
+          router.push({ pathname: '/feed-profile', params: { userId: item.actorId } });
+      }
+  };
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
+      <Stack.Screen options={{ headerShown: false }} />
+      
       <View style={[styles.header, { borderBottomColor: theme.border }]}>
-          <TouchableOpacity onPress={() => router.back()} style={{ padding: 5 }}>
-              <Ionicons name="arrow-back" size={24} color={theme.text} />
-          </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: theme.text }]}>Notifications</Text>
-          <TouchableOpacity onPress={handleMarkAllRead}>
-              <Text style={{ color: theme.tint, fontWeight: '600' }}>Read All</Text>
-          </TouchableOpacity>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+          <Ionicons name="arrow-back" size={24} color={theme.text} />
+        </TouchableOpacity>
+        <Text style={[styles.headerTitle, { color: theme.text }]}>Notifications</Text>
+        
+        {/* Mark All Read Button */}
+        <TouchableOpacity onPress={handleMarkRead} style={{ marginLeft: 'auto', padding: 5 }}>
+            <Ionicons name="checkmark-done-outline" size={26} color={theme.tint} />
+        </TouchableOpacity>
       </View>
 
-      <FlatList 
-          data={notifications}
-          keyExtractor={item => item.id}
-          renderItem={renderItem}
-          contentContainerStyle={{ padding: 10 }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => fetchNotifications(true)} tintColor={theme.tint} />}
-          
-          // ✅ PAGINATION PROPS
-          onEndReached={loadMore}
-          onEndReachedThreshold={0.5}
-          ListFooterComponent={loadingMore ? <ActivityIndicator color={theme.tint} style={{ margin: 15 }} /> : null}
-          
-          ListEmptyComponent={
-              !loading ? (
-                  <View style={{ marginTop: 50, alignItems: 'center' }}>
-                      <Text style={{ color: theme.subText }}>No notifications yet.</Text>
-                  </View>
-              ) : null
-          }
+      <FlatList
+        data={combinedNotifications}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={{ padding: 15, paddingBottom: 50 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={theme.tint} />}
+        ListEmptyComponent={
+          <View style={styles.emptyContainer}>
+            <Ionicons name="notifications-off-outline" size={64} color={theme.subText} />
+            <Text style={[styles.emptyText, { color: theme.subText }]}>No notifications yet.</Text>
+          </View>
+        }
+        renderItem={({ item }) => {
+            const iconData = getIcon(item.type);
+            return (
+              <TouchableOpacity 
+                activeOpacity={0.7}
+                onPress={() => handlePress(item)}
+                style={[
+                  styles.card, 
+                  { backgroundColor: theme.card, borderLeftColor: item.read ? 'transparent' : iconData.color }
+                ]}
+              >
+                <View style={[styles.iconBox, { backgroundColor: `${iconData.color}20` }]}>
+                    <Ionicons name={iconData.name as any} size={24} color={iconData.color} />
+                </View>
+                <View style={styles.info}>
+                  <Text style={[styles.title, { color: theme.text, fontWeight: item.read ? 'normal' : '800' }]}>
+                      {item.title}
+                  </Text>
+                  <Text style={[styles.body, { color: theme.subText }]} numberOfLines={3}>
+                      {item.body}
+                  </Text>
+                  <Text style={[styles.date, { color: theme.subText }]}>
+                    {item.createdAt?.seconds 
+                        ? new Date(item.createdAt.seconds * 1000).toLocaleDateString() 
+                        : (item.date ? new Date(item.date).toLocaleDateString() : '')}
+                  </Text>
+                </View>
+                {!item.read && <View style={[styles.dot, { backgroundColor: theme.tint }]} />}
+              </TouchableOpacity>
+            );
+        }}
       />
     </SafeAreaView>
   );
@@ -253,12 +224,17 @@ export default function NotificationsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 15, borderBottomWidth: 1 },
-  headerTitle: { fontSize: 18, fontWeight: 'bold' },
-  item: { flexDirection: 'row', padding: 15, borderRadius: 12, marginBottom: 10, borderWidth: 1, alignItems: 'center' },
-  iconBox: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', marginRight: 15 },
+  header: { flexDirection: 'row', alignItems: 'center', padding: 15, borderBottomWidth: 1 },
+  backBtn: { marginRight: 15 },
+  headerTitle: { fontSize: 20, fontWeight: 'bold' },
+  emptyContainer: { alignItems: 'center', marginTop: 100 },
+  emptyText: { marginTop: 10, fontSize: 16 },
+  
+  card: { flexDirection: 'row', padding: 15, borderRadius: 12, marginBottom: 10, borderLeftWidth: 4, alignItems: 'center', elevation: 1 },
+  iconBox: { width: 45, height: 45, borderRadius: 22.5, justifyContent: 'center', alignItems: 'center', marginRight: 15 },
+  info: { flex: 1 },
   title: { fontSize: 16, marginBottom: 4 },
-  body: { fontSize: 14, marginBottom: 4 },
-  date: { fontSize: 12 },
+  body: { fontSize: 14, marginBottom: 6, lineHeight: 20 },
+  date: { fontSize: 10 },
   dot: { width: 8, height: 8, borderRadius: 4, marginLeft: 10 }
 });
