@@ -3,18 +3,12 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { AdEventType, InterstitialAd } from 'react-native-google-mobile-ads';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
-import { AdConfig } from '../config/adConfig';
 
 import { useTheme } from '../context/ThemeContext';
 import { getMangaHistory, saveReadProgress } from '../services/historyService';
-import { getAdjacentChapter } from '../services/mangaService'; // ✅ NEW IMPORT
-
-const interstitial = InterstitialAd.createForAdRequest(AdConfig.interstitial, {
-  requestNonPersonalizedAdsOnly: true,
-});
+import { getAdjacentChapter } from '../services/mangaService';
 
 export default function MangaReaderScreen() {
   const { url, title, mangaId, chapterId, chapterNum } = useLocalSearchParams();
@@ -26,19 +20,6 @@ export default function MangaReaderScreen() {
   const [localPdfData, setLocalPdfData] = useState<string | null>(null);
   const [initialPage, setInitialPage] = useState(1);
   const [isHistoryReady, setIsHistoryReady] = useState(false);
-
-  const [adLoaded, setAdLoaded] = useState(false);
-  const [nextChapterParams, setNextChapterParams] = useState<any>(null); 
-
-  useEffect(() => {
-    const unsubscribeLoaded = interstitial.addAdEventListener(AdEventType.LOADED, () => { setAdLoaded(true); });
-    const unsubscribeClosed = interstitial.addAdEventListener(AdEventType.CLOSED, () => {
-      setAdLoaded(false); interstitial.load(); 
-      if (nextChapterParams) { router.replace(nextChapterParams); setNextChapterParams(null); }
-    });
-    interstitial.load();
-    return () => { unsubscribeLoaded(); unsubscribeClosed(); };
-  }, [nextChapterParams]);
 
   // Load Progress
   useEffect(() => {
@@ -111,12 +92,7 @@ export default function MangaReaderScreen() {
         }
       };
 
-      if (direction === 'next' && adLoaded) {
-          setNextChapterParams(newParams); 
-          interstitial.show();             
-      } else {
-          router.replace(newParams);       
-      }
+      router.replace(newParams);       
       setLoading(false);
   };
 

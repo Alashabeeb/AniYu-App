@@ -4,7 +4,7 @@ import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import {
   collection,
-  limit, // ✅ IMPORTED LIMIT
+  limit,
   onSnapshot,
   query,
   where
@@ -24,7 +24,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useTheme } from '../../context/ThemeContext';
 
-import AdBanner from '../../components/AdBanner';
 import HeroCarousel from '../../components/HeroCarousel';
 import TrendingRail from '../../components/TrendingRail';
 
@@ -70,21 +69,16 @@ export default function HomeScreen() {
     }, [])
   );
 
-  // ✅ OPTIMIZED NOTIFICATION CHECK
   useEffect(() => {
       if (!currentUser) return;
       
-      // OLD: Checked ALL unread (Expensive)
-      // NEW: Checks only for the FIRST unread item (Cheap)
       const q = query(
         collection(db, 'users', currentUser.uid, 'notifications'), 
         where('read', '==', false),
-        limit(1) // ✅ STOP READING AFTER 1 DOCUMENT
+        limit(1) 
       );
       
       const unsubscribe = onSnapshot(q, (snapshot) => {
-          // If size > 0, we have at least one unread item.
-          // We don't need the exact count for a simple red dot.
           checkUnreadStatus(snapshot.size);
       });
       return unsubscribe;
@@ -319,8 +313,6 @@ export default function HomeScreen() {
               onToggleFavorite={handleToggleFav}
               onMore={() => router.push('/anime-list?type=trending')} 
           />
-
-          <AdBanner />
           
           <TrendingRail 
               title="Upcoming Anime" 
@@ -330,8 +322,6 @@ export default function HomeScreen() {
               onMore={() => router.push('/anime-list?type=upcoming')}
               />
 
-          <AdBanner />
-
           <TrendingRail 
               title="Recommended for You" 
               data={recommended.slice(0, 5)} 
@@ -339,8 +329,6 @@ export default function HomeScreen() {
               onToggleFavorite={handleToggleFav}
               onMore={() => router.push('/anime-list?type=recommended')} 
           />
-
-          <AdBanner />
           
           {favorites.length > 0 && (
               <TrendingRail 

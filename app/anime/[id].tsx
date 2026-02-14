@@ -6,9 +6,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator, Alert, Image, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View
 } from 'react-native';
-import { AdEventType, InterstitialAd } from 'react-native-google-mobile-ads';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { AdConfig } from '../../config/adConfig';
 
 import { auth, db } from '../../config/firebaseConfig';
 import { useTheme } from '../../context/ThemeContext';
@@ -43,10 +41,6 @@ const RANKS = [
     { name: 'KAGE', min: 100, max: Infinity },
 ];
 
-const interstitial = InterstitialAd.createForAdRequest(AdConfig.interstitial, {
-  requestNonPersonalizedAdsOnly: true,
-});
-
 export default function AnimeDetailScreen() {
   const { id, episodeId } = useLocalSearchParams();
   const { theme } = useTheme();
@@ -76,10 +70,6 @@ export default function AnimeDetailScreen() {
   const [currentEpId, setCurrentEpId] = useState<string | null>(null);
   const [currentVideoSource, setCurrentVideoSource] = useState<string | null>(null);
 
-  // Ad State
-  const [adLoaded, setAdLoaded] = useState(false);
-  const [pendingDownloadEp, setPendingDownloadEp] = useState<any>(null);
-
   const resumeTimeRef = useRef<number | null>(null);
 
   // 1. Initialize Player
@@ -101,26 +91,6 @@ export default function AnimeDetailScreen() {
       };
     }, [loading, currentVideoSource, player])
   );
-
-  // AD LOGIC
-  useEffect(() => {
-    const unsubscribeLoaded = interstitial.addAdEventListener(AdEventType.LOADED, () => {
-      setAdLoaded(true);
-    });
-    const unsubscribeClosed = interstitial.addAdEventListener(AdEventType.CLOSED, () => {
-      setAdLoaded(false);
-      interstitial.load();
-      if (pendingDownloadEp) {
-          performDownload(pendingDownloadEp);
-          setPendingDownloadEp(null);
-      }
-    });
-    interstitial.load();
-    return () => {
-      unsubscribeLoaded();
-      unsubscribeClosed();
-    };
-  }, [pendingDownloadEp]);
 
   // HISTORY CHECK
   useEffect(() => {
@@ -423,12 +393,7 @@ export default function AnimeDetailScreen() {
         return;
     }
 
-    if (adLoaded) {
-        setPendingDownloadEp(ep); 
-        interstitial.show();      
-    } else {
-        performDownload(ep);
-    }
+    performDownload(ep);
   };
 
   const submitReview = async () => {

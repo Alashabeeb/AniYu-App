@@ -1,13 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { doc, DocumentSnapshot, getDoc, serverTimestamp, setDoc } from 'firebase/firestore'; // ✅ IMPORT DocumentSnapshot
-import React, { useCallback, useEffect, useState } from 'react';
+import { doc, DocumentSnapshot, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
+import React, { useCallback, useState } from 'react';
 import {
     ActivityIndicator, Alert, Image, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View
 } from 'react-native';
-import { AdEventType, InterstitialAd } from 'react-native-google-mobile-ads';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { AdConfig } from '../../config/adConfig';
 import { auth, db } from '../../config/firebaseConfig';
 import { useTheme } from '../../context/ThemeContext';
 import { downloadChapterToFile, getMangaDownloads } from '../../services/downloadService';
@@ -18,10 +16,6 @@ import {
     getMangaDetails,
     incrementMangaView
 } from '../../services/mangaService';
-
-const interstitial = InterstitialAd.createForAdRequest(AdConfig.interstitial, {
-  requestNonPersonalizedAdsOnly: true,
-});
 
 export default function MangaDetailScreen() {
   const { id } = useLocalSearchParams();
@@ -44,18 +38,6 @@ export default function MangaDetailScreen() {
   const [modalVisible, setModalVisible] = useState(false);
   const [userRating, setUserRating] = useState(0);
   const [submittingReview, setSubmittingReview] = useState(false);
-  const [adLoaded, setAdLoaded] = useState(false);
-  const [pendingDownloadChapter, setPendingDownloadChapter] = useState<any>(null);
-
-  useEffect(() => {
-    const unsubscribeLoaded = interstitial.addAdEventListener(AdEventType.LOADED, () => { setAdLoaded(true); });
-    const unsubscribeClosed = interstitial.addAdEventListener(AdEventType.CLOSED, () => {
-      setAdLoaded(false); interstitial.load();
-      if (pendingDownloadChapter) { performDownload(pendingDownloadChapter); setPendingDownloadChapter(null); }
-    });
-    interstitial.load();
-    return () => { unsubscribeLoaded(); unsubscribeClosed(); };
-  }, [pendingDownloadChapter]);
 
   useFocusEffect(useCallback(() => { if (id) loadStatus(); }, [id]));
   useFocusEffect(useCallback(() => { if(id) loadData(); }, [id]));
@@ -140,8 +122,7 @@ export default function MangaDetailScreen() {
   const handleDownload = (chapter: any) => {
       const chId = String(chapter.id || chapter.number);
       if (downloadedChapters.includes(chId)) return; 
-      if (adLoaded) { setPendingDownloadChapter(chapter); interstitial.show(); } 
-      else { performDownload(chapter); }
+      performDownload(chapter);
   };
 
   const handleReadChapter = (chapter: any) => {

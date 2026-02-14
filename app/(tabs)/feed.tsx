@@ -32,7 +32,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import AdBanner from '../../components/AdBanner';
 import PostCard from '../../components/PostCard';
 import { auth, db } from '../../config/firebaseConfig';
 import { useTheme } from '../../context/ThemeContext';
@@ -120,7 +119,7 @@ export default function FeedScreen() {
           collection(db, 'posts'), 
           where('parentId', '==', null), 
           orderBy('createdAt', 'desc'),
-          limit(30) // ✅ CHANGED FROM 10 TO 30
+          limit(30) 
       );
       
       const snapshot = await getDocs(q);
@@ -149,7 +148,7 @@ export default function FeedScreen() {
           where('parentId', '==', null), 
           orderBy('createdAt', 'desc'),
           startAfter(lastVisible), 
-          limit(30) // ✅ CHANGED FROM 10 TO 30
+          limit(30) 
       );
 
       const snapshot = await getDocs(q);
@@ -320,7 +319,6 @@ export default function FeedScreen() {
         onEndReachedThreshold={0.5}
         ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color={theme.tint} style={{ marginVertical: 20 }} /> : null}
         
-        ListHeaderComponent={() => <View><AdBanner /></View>}
         ListEmptyComponent={
             <View style={{ padding: 40, alignItems: 'center', width: SCREEN_WIDTH }}>
                 <Text style={{ color: theme.subText }}>{emptyMessage}</Text>

@@ -20,9 +20,7 @@ export default {
     ios: {
       supportsTablet: true,
       bundleIdentifier: "com.aniyu.app",
-      // ✅ REQUIRED for Google Sign-In on iOS (Download this from Firebase Console)
       googleServicesFile: "./GoogleService-Info.plist",
-      // ✅ Enable Apple Sign-In
       usesAppleSignIn: true
     },
     android: {
@@ -34,7 +32,6 @@ export default {
       },
       edgeToEdgeEnabled: true,
       package: "com.aniyu.app",
-      // ✅ REQUIRED for Google Sign-In on Android (Download this from Firebase Console)
       googleServicesFile: "./google-services.json"
     },
     web: {
@@ -57,16 +54,9 @@ export default {
       ],
       "expo-video",
       "expo-font",
-      [
-        "react-native-google-mobile-ads",
-        {
-          "androidAppId": "ca-app-pub-3940256099942544~3347511713",
-          "iosAppId": "ca-app-pub-3940256099942544~1458002511"
-        }
-      ],
-      // ✅ NEW: Google Sign-In Plugin
+      // ❌ REMOVED: react-native-google-mobile-ads plugin block
+      
       "@react-native-google-signin/google-signin",
-      // ✅ NEW: Apple Authentication Plugin
       "expo-apple-authentication"
     ],
     experiments: {
