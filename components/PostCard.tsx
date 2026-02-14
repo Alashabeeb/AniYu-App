@@ -4,26 +4,27 @@ import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import {
-  addDoc,
-  arrayRemove,
-  arrayUnion,
-  collection,
-  deleteDoc,
-  doc,
-  serverTimestamp,
-  updateDoc
+    addDoc,
+    arrayRemove,
+    arrayUnion,
+    collection,
+    deleteDoc,
+    doc,
+    increment,
+    serverTimestamp,
+    updateDoc
 } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import {
-  Alert,
-  Modal,
-  Pressable,
-  Share,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  TouchableWithoutFeedback,
-  View
+    Alert,
+    Modal,
+    Pressable,
+    Share,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    TouchableWithoutFeedback,
+    View
 } from 'react-native';
 import { auth, db } from '../config/firebaseConfig';
 import { useTheme } from '../context/ThemeContext';
@@ -94,7 +95,12 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
         sendSocialNotification(post.userId, 'like', { uid: currentUser.uid, name: currentUser.displayName || 'User', avatar: currentUser.photoURL || '' }, '', post.id);
     }
     const postRef = doc(db, 'posts', post.id);
-    await updateDoc(postRef, { likes: isLiked ? arrayRemove(currentUser.uid) : arrayUnion(currentUser.uid) });
+    
+    // ✅ Updated: Atomic Increment
+    await updateDoc(postRef, { 
+        likes: isLiked ? arrayRemove(currentUser.uid) : arrayUnion(currentUser.uid),
+        likeCount: increment(isLiked ? -1 : 1) 
+    });
   };
 
   const handleRepost = async () => {
@@ -103,7 +109,12 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
         sendSocialNotification(post.userId, 'repost', { uid: currentUser.uid, name: currentUser.displayName || 'User', avatar: currentUser.photoURL || '' }, '', post.id);
     }
     const postRef = doc(db, 'posts', post.id);
-    await updateDoc(postRef, { reposts: isReposted ? arrayRemove(currentUser.uid) : arrayUnion(currentUser.uid) });
+    
+    // ✅ Updated: Atomic Increment
+    await updateDoc(postRef, { 
+        reposts: isReposted ? arrayRemove(currentUser.uid) : arrayUnion(currentUser.uid),
+        repostCount: increment(isReposted ? -1 : 1)
+    });
   };
 
   const handleShare = async () => {
@@ -200,14 +211,15 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
                   contentFit="cover" 
                   allowsFullscreen={false}
                   allowsPictureInPicture={false}
-                  nativeControls={false} // ✅ Correct Prop
+                  nativeControls={false} 
               />
           )}
 
           <View style={styles.actions}>
             <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleLike(); }}>
               <Ionicons name={isLiked ? "heart" : "heart-outline"} size={18} color={isLiked ? "#FF6B6B" : theme.subText} />
-              <Text style={[styles.count, { color: isLiked ? "#FF6B6B" : theme.subText }]}>{post.likes?.length || 0}</Text>
+              {/* ✅ PREFER NUMERIC COUNT */}
+              <Text style={[styles.count, { color: isLiked ? "#FF6B6B" : theme.subText }]}>{post.likeCount || post.likes?.length || 0}</Text>
             </TouchableOpacity>
             
             <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleGoToDetails(); }}>
@@ -217,7 +229,8 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
             
             <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleRepost(); }}>
               <Ionicons name="repeat-outline" size={18} color={isReposted ? "#00BA7C" : theme.subText} />
-              <Text style={[styles.count, { color: isReposted ? "#00BA7C" : theme.subText }]}>{post.reposts?.length || 0}</Text>
+              {/* ✅ PREFER NUMERIC COUNT */}
+              <Text style={[styles.count, { color: isReposted ? "#00BA7C" : theme.subText }]}>{post.repostCount || post.reposts?.length || 0}</Text>
             </TouchableOpacity>
             
             <View style={styles.actionBtn}>

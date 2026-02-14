@@ -6,7 +6,6 @@ import {
     collection,
     doc,
     DocumentSnapshot,
-    getDoc,
     getDocs,
     increment,
     limit,
@@ -85,33 +84,20 @@ export default function FeedScreen() {
   }, []);
 
   useEffect(() => {
-    const fetchUserInterests = async () => {
-      if (!currentUser) return;
-      try {
-        const userDocRef = doc(db, 'users', currentUser.uid);
-        const userSnap = await getDoc(userDocRef);
-        if (userSnap.exists()) {
-          const data = userSnap.data();
-          setUserInterests(data.interests || data.favoriteGenres || []);
-        }
-      } catch (error) { console.log("Error fetching user interests:", error); }
-    };
-    fetchUserInterests();
-  }, []);
-
-  useEffect(() => {
       if (!currentUser) return;
       const unsub = onSnapshot(doc(db, 'users', currentUser.uid), (doc) => {
-          setBlockedUsers(doc.data()?.blockedUsers || []);
+          const data = doc.data();
+          setBlockedUsers(data?.blockedUsers || []);
+          setUserInterests(data?.interests || data?.favoriteGenres || []);
       });
       return unsub;
   }, []);
 
-  // ✅ 1. INITIAL LOAD (Updated to 30)
+  // ✅ 1. INITIAL LOAD (Strict limit 10 for Task #4)
   const loadPosts = async (isRefresh = false) => {
     if (isRefresh) {
         setRefreshing(true);
-        setHasMore(true); // Reset hasMore on refresh
+        setHasMore(true); 
     }
     
     try {
@@ -119,7 +105,7 @@ export default function FeedScreen() {
           collection(db, 'posts'), 
           where('parentId', '==', null), 
           orderBy('createdAt', 'desc'),
-          limit(30) 
+          limit(10) // ✅ Optimized for cost
       );
       
       const snapshot = await getDocs(q);
@@ -128,7 +114,6 @@ export default function FeedScreen() {
       setPosts(newPosts);
       setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
       
-      // Save to Cache
       AsyncStorage.setItem(FEED_CACHE_KEY, JSON.stringify(newPosts)).catch(err => console.log("Cache save failed", err));
     } catch (error) {
       console.log("Error loading feed:", error);
@@ -137,7 +122,7 @@ export default function FeedScreen() {
     }
   };
 
-  // ✅ 2. LOAD MORE (Updated to 30)
+  // ✅ 2. LOAD MORE (Strict limit 10)
   const loadMorePosts = async () => {
     if (loadingMore || !hasMore || !lastVisible) return;
     setLoadingMore(true);
@@ -148,7 +133,7 @@ export default function FeedScreen() {
           where('parentId', '==', null), 
           orderBy('createdAt', 'desc'),
           startAfter(lastVisible), 
-          limit(30) 
+          limit(10) // ✅ Optimized for cost
       );
 
       const snapshot = await getDocs(q);
@@ -167,7 +152,6 @@ export default function FeedScreen() {
     }
   };
 
-  // Replace old useEffect with this
   useEffect(() => {
     loadPosts(); 
   }, []);
@@ -236,9 +220,11 @@ export default function FeedScreen() {
                 groups[normalizedTag] = { name: normalizedTag, posts: [], stats: { likes: 0, comments: 0, reposts: 0 } };
             }
             groups[normalizedTag].posts.push(post);
-            groups[normalizedTag].stats.likes += (post.likes?.length || 0);
+            
+            // ✅ Task #4: Use Aggregated Counters for performance
+            groups[normalizedTag].stats.likes += (post.likeCount || post.likes?.length || 0);
             groups[normalizedTag].stats.comments += (post.commentCount || 0);
-            groups[normalizedTag].stats.reposts += (post.reposts?.length || 0);
+            groups[normalizedTag].stats.reposts += (post.repostCount || post.reposts?.length || 0);
         });
     });
     return Object.values(groups).sort((a, b) => {
@@ -262,13 +248,15 @@ export default function FeedScreen() {
   };
 
   const onRefresh = useCallback(() => {
-    loadPosts(true); // ✅ Refresh calls loadPosts
+    loadPosts(true); 
   }, []);
 
+  // ✅ FIX: Stable Viewability Config using useRef.current to avoid "red underline" issue
   const viewabilityConfig = useRef({
       itemVisiblePercentThreshold: 50 
   }).current;
 
+  // ✅ FIX: Stable Callback for item views
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
       if (viewableItems.length > 0) {
           const firstVisible = viewableItems[0];
@@ -311,10 +299,11 @@ export default function FeedScreen() {
         contentContainerStyle={{ paddingBottom: 100, width: SCREEN_WIDTH }}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.tint} />}
+        
+        // ✅ PROPS ARE NOW STABLE
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
         
-        // ✅ PAGINATION PROPS
         onEndReached={loadMorePosts}
         onEndReachedThreshold={0.5}
         ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color={theme.tint} style={{ marginVertical: 20 }} /> : null}

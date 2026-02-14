@@ -133,11 +133,19 @@ export default function PostDetailsScreen() {
       });
   }).current;
 
+  // ✅ UPDATED: Toggle Action with Numeric Counters
   const toggleAction = async (id: string, field: 'likes' | 'reposts', currentArray: string[]) => {
       if (!user) return;
       const ref = doc(db, 'posts', id);
       const isActive = currentArray?.includes(user.uid);
-      await updateDoc(ref, { [field]: isActive ? arrayRemove(user.uid) : arrayUnion(user.uid) });
+      
+      // Determine counterpart integer field
+      const countField = field === 'likes' ? 'likeCount' : 'repostCount';
+
+      await updateDoc(ref, { 
+          [field]: isActive ? arrayRemove(user.uid) : arrayUnion(user.uid),
+          [countField]: increment(isActive ? -1 : 1)
+      });
   };
 
   const handleShare = async (item: any) => {
@@ -239,6 +247,9 @@ export default function PostDetailsScreen() {
         parentId: postId, 
         likes: [],
         reposts: [],
+        // Initialize counts for comments too
+        likeCount: 0,
+        repostCount: 0,
         commentCount: 0,
         views: 0
       });
@@ -305,7 +316,8 @@ export default function PostDetailsScreen() {
                 <View style={styles.commentActions}>
                     <TouchableOpacity style={styles.actionButton} onPress={() => toggleAction(item.id, 'likes', item.likes || [])}>
                         <Ionicons name={isLiked ? "heart" : "heart-outline"} size={16} color={isLiked ? "#FF6B6B" : theme.subText} />
-                        <Text style={[styles.actionText, { color: theme.subText }]}>{item.likes?.length || 0}</Text>
+                        {/* ✅ Use Aggregated Counter */}
+                        <Text style={[styles.actionText, { color: theme.subText }]}>{item.likeCount || item.likes?.length || 0}</Text>
                     </TouchableOpacity>
                     <TouchableOpacity style={styles.actionButton} onPress={() => goToDetails(item.id)}>
                         <Ionicons name="chatbubble-outline" size={16} color={theme.subText} />
@@ -313,7 +325,8 @@ export default function PostDetailsScreen() {
                     </TouchableOpacity>
                     <TouchableOpacity style={styles.actionButton} onPress={() => toggleAction(item.id, 'reposts', item.reposts || [])}>
                         <Ionicons name="repeat-outline" size={16} color={isReposted ? "#00BA7C" : theme.subText} />
-                         <Text style={[styles.actionText, { color: theme.subText }]}>{item.reposts?.length || 0}</Text>
+                         {/* ✅ Use Aggregated Counter */}
+                         <Text style={[styles.actionText, { color: theme.subText }]}>{item.repostCount || item.reposts?.length || 0}</Text>
                     </TouchableOpacity>
                     <View style={styles.actionButton}>
                         <Ionicons name="stats-chart" size={16} color={theme.subText} />
@@ -385,8 +398,9 @@ export default function PostDetailsScreen() {
                   </Text>
                   
                   <View style={[styles.statsRow, { borderTopColor: theme.border, borderBottomColor: theme.border }]}>
-                      <Text style={{ color: theme.subText }}><Text style={{ fontWeight: 'bold', color: theme.text }}>{post.likes?.length || 0}</Text> Likes</Text>
-                      <Text style={{ color: theme.subText, marginLeft: 15 }}><Text style={{ fontWeight: 'bold', color: theme.text }}>{post.reposts?.length || 0}</Text> Reposts</Text>
+                      {/* ✅ Updated to use Aggregated Counters */}
+                      <Text style={{ color: theme.subText }}><Text style={{ fontWeight: 'bold', color: theme.text }}>{post.likeCount || post.likes?.length || 0}</Text> Likes</Text>
+                      <Text style={{ color: theme.subText, marginLeft: 15 }}><Text style={{ fontWeight: 'bold', color: theme.text }}>{post.repostCount || post.reposts?.length || 0}</Text> Reposts</Text>
                       <Text style={{ color: theme.subText, marginLeft: 15 }}><Text style={{ fontWeight: 'bold', color: theme.text }}>{post.commentCount || 0}</Text> Comments</Text>
                       <Text style={{ color: theme.subText, marginLeft: 15 }}><Text style={{ fontWeight: 'bold', color: theme.text }}>{post.views || 0}</Text> Views</Text>
                   </View>

@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { ResizeMode, Video } from 'expo-av';
-import * as ImageManipulator from 'expo-image-manipulator'; // ✅ NEW IMPORT
+import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { Stack, useRouter } from 'expo-router';
 import {
@@ -66,11 +66,9 @@ export default function CreatePostScreen() {
     if (!result.canceled) setMedia(result.assets[0]);
   };
 
-  // ✅ NEW: Compress Media before Upload
   const processMedia = async (uri: string, type: 'image' | 'video') => {
-    if (type === 'video') return uri; // Skip video compression for now
+    if (type === 'video') return uri; 
     
-    // Compress Image to max 1080 width and 70% quality
     const manipulated = await ImageManipulator.manipulateAsync(
       uri,
       [{ resize: { width: 1080 } }], 
@@ -82,12 +80,10 @@ export default function CreatePostScreen() {
   const uploadMediaToStorage = async (uri: string, type: 'image' | 'video') => {
     if (!user) throw new Error("No user");
     
-    // ✅ STEP 1: Process/Compress
     const processedUri = await processMedia(uri, type);
 
     const response = await fetch(processedUri);
     const blob = await response.blob();
-    // Ensure unique filename
     const filename = `posts/${user.uid}_${Date.now()}.${type === 'video' ? 'mp4' : 'jpg'}`;
     const storageRef = ref(storage, filename);
     await uploadBytes(storageRef, blob);
@@ -142,6 +138,9 @@ export default function CreatePostScreen() {
         createdAt: serverTimestamp(),
         likes: [],
         reposts: [],
+        // ✅ NEW: Initialize Aggregated Counters
+        likeCount: 0,
+        repostCount: 0,
         commentCount: 0,
         parentId: null,
         views: 0 
