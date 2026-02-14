@@ -14,19 +14,36 @@ import {
   where
 } from 'firebase/firestore';
 import { db } from '../config/firebaseConfig';
-import { getContentRating, isContentAllowed } from './settingsService';
+import { getContentRating } from './settingsService';
 
-// ✅ Helper to filter anime based on user settings
-const filterContent = async (data: any[]) => {
-    const userRating = await getContentRating();
-    return data.filter(item => isContentAllowed(item.rating, item.genres, userRating));
+// ✅ Helper to get allowed ratings based on user settings
+const getAllowedRatings = async () => {
+    const userRating = await getContentRating(); // e.g., '12+', '16+', '18+'
+    
+    // Logic: If user can see '16+', they can also see '12+' and 'All'.
+    // We explicitly list all allowed rating strings for the 'IN' query.
+    switch(userRating) {
+        case '18+': return ['All', '12+', '16+', '18+'];
+        case '16+': return ['All', '12+', '16+'];
+        case '12+': return ['All', '12+'];
+        default: return ['All'];
+    }
 };
 
-// Fetch Top 50 Anime (Trending)
+// Fetch Top 50 Anime (Trending) - Optimized
 export const getTopAnime = async () => {
   try {
+    const allowed = await getAllowedRatings();
     const animeRef = collection(db, 'anime');
-    const q = query(animeRef, orderBy('views', 'desc'), limit(50)); 
+    
+    // ✅ Server-Side Filtering: Only fetch allowed content
+    // Note: You may need a composite index for 'ageRating' + 'views'.
+    const q = query(
+        animeRef, 
+        where('ageRating', 'in', allowed),
+        orderBy('views', 'desc'), 
+        limit(50)
+    ); 
     
     let results = [];
     try {
@@ -37,23 +54,27 @@ export const getTopAnime = async () => {
         const cachedSnapshot = await getDocsFromCache(q);
         results = cachedSnapshot.docs.map(doc => ({ mal_id: doc.id, ...doc.data() }));
     }
-    return await filterContent(results);
+    return results;
   } catch (error) {
     console.error("Error fetching anime:", error);
     return [];
   }
 };
 
-// Fetch Upcoming Anime (Max 15)
+// Fetch Upcoming Anime - Optimized
 export const getUpcomingAnime = async () => {
   try {
+    const allowed = await getAllowedRatings();
     const animeRef = collection(db, 'anime');
-    const q = query(animeRef, where('status', '==', 'Upcoming'), limit(15));
+    const q = query(
+        animeRef, 
+        where('status', '==', 'Upcoming'),
+        where('ageRating', 'in', allowed),
+        limit(15)
+    );
     
     const snapshot = await getDocs(q);
-    const results = snapshot.docs.map(doc => ({ mal_id: doc.id, ...doc.data() }));
-    
-    return await filterContent(results);
+    return snapshot.docs.map(doc => ({ mal_id: doc.id, ...doc.data() }));
   } catch (error) {
     console.error("Error fetching upcoming:", error);
     return [];
@@ -90,27 +111,27 @@ export const getAnimeRank = async (currentViews: number) => {
   }
 };
 
-// Fetch Similar Anime based on Genres
+// Fetch Similar Anime based on Genres - Optimized
 export const getSimilarAnime = async (genres: string[], currentId: string) => {
   try {
     if (!genres || genres.length === 0) return [];
     
+    const allowed = await getAllowedRatings();
     const animeRef = collection(db, 'anime');
     const searchGenres = genres.slice(0, 10); 
     
     const q = query(
         animeRef, 
-        where('genres', 'array-contains-any', searchGenres), 
+        where('genres', 'array-contains-any', searchGenres),
+        where('ageRating', 'in', allowed),
         limit(20)
     );
     
     const snapshot = await getDocs(q);
     
-    const results = snapshot.docs
+    return snapshot.docs
         .map(doc => ({ mal_id: doc.id, ...doc.data() }))
         .filter((a: any) => String(a.mal_id) !== String(currentId));
-
-    return await filterContent(results);
 
   } catch (error) {
     console.error("Error fetching similar anime:", error);
@@ -118,19 +139,21 @@ export const getSimilarAnime = async (genres: string[], currentId: string) => {
   }
 };
 
-// Get Recommended Anime based on User Genres
+// Get Recommended Anime based on User Genres - Optimized
 export const getRecommendedAnime = async (userGenres: string[]) => {
   try {
     if (!userGenres || userGenres.length === 0) {
         return getTopAnime(); 
     }
 
+    const allowed = await getAllowedRatings();
     const searchGenres = userGenres.slice(0, 5); 
 
     const animeRef = collection(db, 'anime');
     const q = query(
         animeRef, 
         where('genres', 'array-contains-any', searchGenres), 
+        where('ageRating', 'in', allowed),
         limit(50)
     );
     
@@ -141,9 +164,7 @@ export const getRecommendedAnime = async (userGenres: string[]) => {
         ...doc.data()
     })) as any[];
 
-    const sorted = results.sort((a, b) => (b.views || 0) - (a.views || 0));
-    
-    return await filterContent(sorted);
+    return results.sort((a, b) => (b.views || 0) - (a.views || 0));
 
   } catch (error) {
     console.error("Error fetching recommendations:", error);
@@ -163,11 +184,10 @@ export const incrementAnimeView = async (id: string) => {
   }
 };
 
-// Fetch episodes (UPDATED)
+// Fetch episodes
 export const getAnimeEpisodes = async (id: string) => {
   try {
     const episodesRef = collection(db, 'anime', id, 'episodes');
-    // ✅ ADDED LIMIT(50) TO PREVENT READ BOMB
     const q = query(episodesRef, orderBy('number', 'asc'), limit(50));
     const snapshot = await getDocs(q);
     
@@ -187,22 +207,31 @@ export const getAnimeEpisodes = async (id: string) => {
   }
 };
 
-// Search ALL Anime (No Limit)
+// ✅ OPTIMIZED: Search using 'keywords' + 'rating' in DB
 export const searchAnime = async (queryText: string) => {
   try {
-    const animeRef = collection(db, 'anime');
-    const snapshot = await getDocs(animeRef); 
+    if(!queryText) return [];
     
-    const allAnime = snapshot.docs.map(doc => ({
+    const allowed = await getAllowedRatings();
+    const animeRef = collection(db, 'anime');
+    
+    // Convert input to lowercase token
+    const searchTerm = queryText.toLowerCase().trim().split(/\s+/)[0]; 
+
+    const q = query(
+        animeRef, 
+        where('keywords', 'array-contains', searchTerm),
+        where('ageRating', 'in', allowed),
+        limit(20) // Only pay for 20 reads, not 1000!
+    );
+    
+    const snapshot = await getDocs(q);
+    
+    return snapshot.docs.map(doc => ({
       mal_id: doc.id,
       ...doc.data()
     }));
 
-    const matches = allAnime.filter((a: any) => 
-      a.title && a.title.toLowerCase().includes(queryText.toLowerCase())
-    );
-
-    return await filterContent(matches);
   } catch (error) {
     console.error("Search error:", error);
     return [];
@@ -273,8 +302,6 @@ export const getAnimeReviews = async (animeId: string) => {
 export const toggleAnimeReaction = async (animeId: string, userId: string, reaction: 'like' | 'dislike') => {
     try {
         const animeRef = doc(db, 'anime', animeId);
-        // Note: Storing interaction in subcollection of Anime. 
-        // Ensure security rules allow users to write to this path: /anime/{animeId}/interactions/{userId}
         const userInteractRef = doc(db, 'anime', animeId, 'interactions', userId);
 
         await runTransaction(db, async (transaction) => {
@@ -284,26 +311,23 @@ export const toggleAnimeReaction = async (animeId: string, userId: string, react
             if (!animeDoc.exists()) throw "Anime not found";
 
             const currentData = interactDoc.exists() ? interactDoc.data() : {};
-            const oldReaction = currentData.reaction; // 'like' | 'dislike' | undefined
+            const oldReaction = currentData.reaction; 
 
             let likesInc = 0;
             let dislikesInc = 0;
 
             if (oldReaction === reaction) {
-                // Case 1: Remove reaction (toggle off)
                 transaction.delete(userInteractRef);
                 if (reaction === 'like') likesInc = -1;
                 if (reaction === 'dislike') dislikesInc = -1;
             } else {
-                // Case 2: New reaction OR Swap reaction
                 transaction.set(userInteractRef, { reaction, userId, updatedAt: new Date().toISOString() });
-                
                 if (reaction === 'like') {
                     likesInc = 1;
-                    if (oldReaction === 'dislike') dislikesInc = -1; // Swap logic
+                    if (oldReaction === 'dislike') dislikesInc = -1; 
                 } else {
                     dislikesInc = 1;
-                    if (oldReaction === 'like') likesInc = -1; // Swap logic
+                    if (oldReaction === 'like') likesInc = -1; 
                 }
             }
 
@@ -330,7 +354,7 @@ export const getUserReaction = async (animeId: string, userId: string) => {
     }
 };
 
-// ✅ Submit Comment (Backend Only - Users can't see)
+// Submit Comment
 export const addAnimeComment = async (animeId: string, userId: string, userName: string, text: string) => {
     try {
         const commentsRef = collection(db, 'anime', animeId, 'comments');
@@ -339,7 +363,7 @@ export const addAnimeComment = async (animeId: string, userId: string, userName:
             userName,
             text,
             createdAt: new Date().toISOString(),
-            isPrivate: true // Optional flag for admin filtering
+            isPrivate: true 
         });
         return true;
     } catch (error) {

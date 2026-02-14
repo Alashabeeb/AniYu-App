@@ -138,6 +138,22 @@ export default function AnimeUpload() {
       } catch (e) { console.error("Notification failed:", e); }
   };
 
+  // ✅ HELPER: Generate Search Keywords
+  const generateKeywords = (title) => {
+    if (!title) return [];
+    // 1. Split title into words
+    const words = title.toLowerCase().split(/\s+/);
+    // 2. Generate partials for better matching (optional, but good for "Naru" -> "Naruto")
+    // For cost saving, we will stick to full words as tokens for now.
+    const keywords = [];
+    words.forEach(word => {
+        if(word.length > 1) keywords.push(word);
+    });
+    // 3. Add the full title lowercased
+    keywords.push(title.toLowerCase());
+    return [...new Set(keywords)]; // Remove duplicates
+  };
+
   // --- ACTIONS ---
 
   const handleApprove = async (anime) => {
@@ -333,7 +349,6 @@ export default function AnimeUpload() {
       setter(file); 
   };
   
-  // ✅ MODIFIED UPLOAD FUNCTION: Routes Video to R2, Images to Firebase
   const uploadFile = async (file, path) => {
     if (!file) return null;
 
@@ -381,8 +396,12 @@ export default function AnimeUpload() {
           finalStatus = 'Pending';
       }
 
+      // ✅ GENERATE KEYWORDS FOR SEARCH
+      const keywords = generateKeywords(animeTitle);
+
       const animeData = {
         title: animeTitle, 
+        keywords, // ✅ Added here
         totalEpisodes: totalEpisodes || 'Unknown', 
         year: releaseYear || 'N/A', 
         synopsis, 
@@ -415,7 +434,6 @@ export default function AnimeUpload() {
           for (const delEp of deletedEpisodes) {
               try {
                   await deleteDoc(doc(db, 'anime', animeId, 'episodes', delEp.id));
-                  // Only delete from Firebase if it was a firebase URL. R2 cleanup is manual/separate.
                   if (delEp.existingVideoUrl && delEp.existingVideoUrl.includes('firebasestorage')) {
                       await deleteObject(ref(storage, delEp.existingVideoUrl)).catch(e => {});
                   }
