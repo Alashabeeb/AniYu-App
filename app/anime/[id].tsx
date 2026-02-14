@@ -137,19 +137,43 @@ export default function AnimeDetailScreen() {
       }
   }, [player, currentVideoSource]);
 
-  // SAVE PROGRESS
+  // ✅ OPTIMIZED: Helper Function to Save Progress
+  const saveCurrentProgress = useCallback(async () => {
+      if (!anime || !currentEpId || !player) return;
+      // Find the active episode object
+      const activeEp = episodes.find(e => String(e.mal_id) === currentEpId);
+      
+      // Only save if we have an episode and valid time (> 5 seconds to avoid noise)
+      if (activeEp && player.currentTime > 5) {
+          await saveWatchProgress(anime, { ...activeEp, id: currentEpId }, player.currentTime, player.duration || 0);
+      }
+  }, [anime, currentEpId, episodes, player]);
+
+  // ✅ OPTIMIZED: Event-Based Progress Saving (Replaces 5s Interval)
   useEffect(() => {
-      if (!currentEpId || !anime) return;
-      const interval = setInterval(() => {
-          if (player.playing && player.currentTime > 0) {
-              const activeEp = episodes.find(e => String(e.mal_id) === currentEpId);
-              if (activeEp) {
-                  saveWatchProgress(anime, { ...activeEp, id: currentEpId }, player.currentTime, player.duration || 0);
-              }
+      if (!currentEpId || !anime || !player) return;
+
+      // 1. Save when user Pauses
+      const subscription = player.addListener('playingChange', (isPlaying) => {
+          if (!isPlaying) {
+              saveCurrentProgress();
           }
-      }, 5000); 
-      return () => clearInterval(interval);
-  }, [player, currentEpId, anime, episodes]);
+      });
+
+      // 2. Save every 60 seconds (Heartbeat) - Failsafe for crashes
+      const heartbeat = setInterval(() => {
+          if (player.playing) {
+              saveCurrentProgress();
+          }
+      }, 60000); 
+
+      // 3. Save on Unmount (User leaves screen)
+      return () => {
+          saveCurrentProgress();
+          clearInterval(heartbeat);
+          subscription.remove();
+      };
+  }, [player, currentEpId, anime, episodes, saveCurrentProgress]);
 
   // VIDEO SOURCE UPDATE
   useEffect(() => {
@@ -168,6 +192,12 @@ export default function AnimeDetailScreen() {
       const user = auth.currentUser;
       if (!user || !anime || !currentEpId) return;
       try {
+          // Mark completed progress (100%)
+          const activeEp = episodes.find(e => String(e.mal_id) === currentEpId);
+          if (activeEp) {
+             await saveWatchProgress(anime, { ...activeEp, id: currentEpId }, player.duration, player.duration || 0);
+          }
+
           const progressRef = doc(db, 'users', user.uid, 'anime_progress', String(anime.mal_id));
           await setDoc(progressRef, {
               watchedEpisodes: arrayUnion(currentEpId),
