@@ -49,7 +49,7 @@ export default function FeedScreen() {
   const [userInterests, setUserInterests] = useState<string[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   
-  // ✅ PAGINATION STATE
+  // PAGINATION STATE
   const [lastVisible, setLastVisible] = useState<DocumentSnapshot | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
@@ -65,7 +65,6 @@ export default function FeedScreen() {
 
   const [activeTab, setActiveTab] = useState('All'); 
   const flatListRef = useRef<FlatList>(null); 
-  const [selectedGenre, setSelectedGenre] = useState<string | null>(null);
 
   useEffect(() => {
       const loadCache = async () => {
@@ -93,7 +92,6 @@ export default function FeedScreen() {
       return unsub;
   }, []);
 
-  // ✅ 1. INITIAL LOAD (Strict limit 10 for Task #4)
   const loadPosts = async (isRefresh = false) => {
     if (isRefresh) {
         setRefreshing(true);
@@ -105,7 +103,7 @@ export default function FeedScreen() {
           collection(db, 'posts'), 
           where('parentId', '==', null), 
           orderBy('createdAt', 'desc'),
-          limit(10) // ✅ Optimized for cost
+          limit(10)
       );
       
       const snapshot = await getDocs(q);
@@ -122,7 +120,6 @@ export default function FeedScreen() {
     }
   };
 
-  // ✅ 2. LOAD MORE (Strict limit 10)
   const loadMorePosts = async () => {
     if (loadingMore || !hasMore || !lastVisible) return;
     setLoadingMore(true);
@@ -133,7 +130,7 @@ export default function FeedScreen() {
           where('parentId', '==', null), 
           orderBy('createdAt', 'desc'),
           startAfter(lastVisible), 
-          limit(10) // ✅ Optimized for cost
+          limit(10)
       );
 
       const snapshot = await getDocs(q);
@@ -204,36 +201,6 @@ export default function FeedScreen() {
     return cleanPosts; 
   }, [posts, userInterests, blockedUsers]);
 
-  const trendingGroups = useMemo(() => {
-    const groups: Record<string, { name: string, posts: any[], stats: { likes: number, comments: number, reposts: number } }> = {};
-    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    
-    posts.filter(p => !blockedUsers.includes(p.userId)).forEach(post => {
-        let postDate = new Date(); 
-        if (post.createdAt?.seconds) postDate = new Date(post.createdAt.seconds * 1000);
-        if (postDate < yesterday) return;
-
-        const postTags = (post.tags && post.tags.length > 0) ? post.tags : ['General'];
-        postTags.forEach((tag: string) => {
-            const normalizedTag = tag.trim().toUpperCase();
-            if (!groups[normalizedTag]) {
-                groups[normalizedTag] = { name: normalizedTag, posts: [], stats: { likes: 0, comments: 0, reposts: 0 } };
-            }
-            groups[normalizedTag].posts.push(post);
-            
-            // ✅ Task #4: Use Aggregated Counters for performance
-            groups[normalizedTag].stats.likes += (post.likeCount || post.likes?.length || 0);
-            groups[normalizedTag].stats.comments += (post.commentCount || 0);
-            groups[normalizedTag].stats.reposts += (post.repostCount || post.reposts?.length || 0);
-        });
-    });
-    return Object.values(groups).sort((a, b) => {
-        const scoreA = a.stats.likes + a.stats.comments + a.stats.reposts;
-        const scoreB = b.stats.likes + b.stats.comments + b.stats.reposts;
-        return scoreB - scoreA;
-    });
-  }, [posts, blockedUsers]);
-
   const handleTabPress = (tab: string) => {
       setActiveTab(tab);
       if (tab === 'All') flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
@@ -244,19 +211,17 @@ export default function FeedScreen() {
       const offsetX = event.nativeEvent.contentOffset.x;
       const index = Math.round(offsetX / SCREEN_WIDTH);
       if (index === 0) setActiveTab('All');
-      else setActiveTab('Trending');
+      else setActiveTab('Chat'); // ✅ Updated to Chat
   };
 
   const onRefresh = useCallback(() => {
     loadPosts(true); 
   }, []);
 
-  // ✅ FIX: Stable Viewability Config using useRef.current to avoid "red underline" issue
   const viewabilityConfig = useRef({
       itemVisiblePercentThreshold: 50 
   }).current;
 
-  // ✅ FIX: Stable Callback for item views
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
       if (viewableItems.length > 0) {
           const firstVisible = viewableItems[0];
@@ -300,7 +265,6 @@ export default function FeedScreen() {
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.tint} />}
         
-        // ✅ PROPS ARE NOW STABLE
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
         
@@ -323,57 +287,29 @@ export default function FeedScreen() {
     />
   );
 
-  const renderTrendingTab = () => {
-      if (selectedGenre) {
-          const genreGroup = trendingGroups.find(g => g.name === selectedGenre);
-          const genrePosts = genreGroup ? genreGroup.posts : [];
-          return (
-              <View style={{ flex: 1, width: SCREEN_WIDTH }}>
-                  <View style={[styles.genreHeader, { borderBottomColor: theme.border, backgroundColor: theme.background }]}>
-                      <TouchableOpacity onPress={() => setSelectedGenre(null)} style={{ flexDirection: 'row', alignItems: 'center' }}>
-                          <Ionicons name="arrow-back" size={24} color={theme.text} />
-                          <Text style={[styles.genreTitle, { color: theme.text }]}>{selectedGenre}</Text>
-                      </TouchableOpacity>
-                  </View>
-                  {renderFeedList(genrePosts, "No posts in this genre from the last 24h.")}
-              </View>
-          );
-      }
-      return (
-          <FlatList 
-              data={trendingGroups}
-              keyExtractor={item => item.name}
-              contentContainerStyle={{ padding: 15, width: SCREEN_WIDTH, paddingBottom: 100 }}
-              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.tint} />}
-              ListEmptyComponent={
-                  <View style={{ padding: 40, alignItems: 'center', width: SCREEN_WIDTH }}>
-                      <Text style={{ color: theme.subText }}>No trending topics.</Text>
-                  </View>
-              }
-              renderItem={({ item }) => (
-                  <TouchableOpacity 
-                      style={[styles.groupCard, { backgroundColor: theme.card }]}
-                      onPress={() => setSelectedGenre(item.name)}
-                  >
-                      <View style={styles.groupInfo}>
-                          <Text style={[styles.groupName, { color: theme.text }]}>#{item.name}</Text>
-                          <Text style={[styles.groupCount, { color: theme.subText }]}>{item.posts.length} Posts</Text>
-                      </View>
-                      <View style={styles.groupStats}>
-                          <View style={styles.statPill}>
-                              <Ionicons name="heart" size={12} color="#FF6B6B" />
-                              <Text style={[styles.statText, { color: theme.text }]}>{item.stats.likes}</Text>
-                          </View>
-                          <View style={styles.statPill}>
-                              <Ionicons name="chatbubble" size={12} color="#4ECDC4" />
-                              <Text style={[styles.statText, { color: theme.text }]}>{item.stats.comments}</Text>
-                          </View>
-                      </View>
-                  </TouchableOpacity>
-              )}
-          />
-      );
-  };
+  // ✅ NEW: PREMIUM CHAT PLACEHOLDER
+  const renderChatPlaceholder = () => (
+      <View style={[styles.chatPlaceholderContainer, { width: SCREEN_WIDTH }]}>
+          <View style={[styles.chatIconWrapper, { backgroundColor: theme.tint + '15' }]}>
+              <Ionicons name="chatbubbles" size={60} color={theme.tint} />
+          </View>
+          
+          <Text style={[styles.chatTitle, { color: theme.text }]}>
+              Private Messaging
+          </Text>
+          
+          <Text style={[styles.chatSubtitle, { color: theme.subText }]}>
+              Connect, share, and discuss your favorite anime & manga directly with friends and creators.
+          </Text>
+
+          <View style={[styles.premiumBadge, { borderColor: theme.tint, backgroundColor: theme.card }]}>
+              <Ionicons name="sparkles" size={16} color={theme.tint} style={{ marginRight: 6 }} />
+              <Text style={{ color: theme.tint, fontWeight: 'bold', fontSize: 14 }}>
+                  Coming Soon For Premium Users Only
+              </Text>
+          </View>
+      </View>
+  );
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
@@ -383,16 +319,24 @@ export default function FeedScreen() {
                 <TouchableOpacity onPress={() => router.push('/feed-profile')}>
                     <Image source={{ uri: currentUser?.photoURL || 'https://api.dicebear.com/7.x/avataaars/svg?seed=Felix' }} style={styles.headerAvatar} />
                 </TouchableOpacity>
-                <View style={styles.tabContainer}>
-                    <TouchableOpacity onPress={() => handleTabPress('All')} style={styles.tabButton}>
-                        <Text style={[styles.tabText, { color: activeTab === 'All' ? theme.text : theme.subText, fontWeight: activeTab === 'All' ? 'bold' : 'normal' }]}>All</Text>
-                        {activeTab === 'All' && <View style={[styles.activeIndicator, { backgroundColor: theme.tint }]} />}
+
+                {/* ✅ PILL-STYLE TAB SWITCHER */}
+                <View style={[styles.switchContainer, { backgroundColor: theme.border }]}>
+                    <TouchableOpacity 
+                        style={[styles.switchBtn, activeTab === 'All' && { backgroundColor: theme.tint }]}
+                        onPress={() => handleTabPress('All')}
+                    >
+                        <Text style={[styles.switchText, { color: activeTab === 'All' ? 'white' : theme.subText }]}>All</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity onPress={() => handleTabPress('Trending')} style={styles.tabButton}>
-                        <Text style={[styles.tabText, { color: activeTab === 'Trending' ? theme.text : theme.subText, fontWeight: activeTab === 'Trending' ? 'bold' : 'normal' }]}>Trending</Text>
-                        {activeTab === 'Trending' && <View style={[styles.activeIndicator, { backgroundColor: theme.tint }]} />}
+
+                    <TouchableOpacity 
+                        style={[styles.switchBtn, activeTab === 'Chat' && { backgroundColor: theme.tint }]}
+                        onPress={() => handleTabPress('Chat')}
+                    >
+                        <Text style={[styles.switchText, { color: activeTab === 'Chat' ? 'white' : theme.subText }]}>Chat</Text>
                     </TouchableOpacity>
                 </View>
+
                 <TouchableOpacity onPress={() => setShowSearch(true)} style={{ padding: 5 }}>
                     <Ionicons name="search" size={24} color={theme.text} />
                 </TouchableOpacity>
@@ -449,13 +393,14 @@ export default function FeedScreen() {
             initialNumToRender={1}
             renderItem={({ index }) => {
                 if (index === 0) return renderFeedList(allPosts, "No posts yet.");
-                if (index === 1) return renderTrendingTab(); 
+                if (index === 1) return renderChatPlaceholder(); // ✅ Replaced Trending
                 return null;
             }}
           />
       )}
 
-      {!showSearch && (
+      {/* Hide FAB if on Chat tab or Search */}
+      {!showSearch && activeTab === 'All' && (
          <TouchableOpacity style={[styles.fab, { backgroundColor: theme.tint }]} onPress={() => router.push('/create-post')}>
             <Ionicons name="add" size={30} color="white" />
          </TouchableOpacity>
@@ -468,24 +413,59 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   header: { flexDirection: 'row', justifyContent: 'space-between', padding: 15, borderBottomWidth: 0.5, alignItems: 'center', height: 60 },
   headerAvatar: { width: 30, height: 30, borderRadius: 15 },
-  tabContainer: { flexDirection: 'row', gap: 20 },
-  tabButton: { alignItems: 'center', paddingVertical: 5 },
-  tabText: { fontSize: 16 },
-  activeIndicator: { height: 3, width: '100%', borderRadius: 2, marginTop: 4 },
+  
+  // SWITCHER STYLES
+  switchContainer: { flex: 1, flexDirection: 'row', borderRadius: 10, padding: 4, marginHorizontal: 20 },
+  switchBtn: { flex: 1, paddingVertical: 6, alignItems: 'center', borderRadius: 8 },
+  switchText: { fontWeight: '600', fontSize: 14 },
+  
   searchBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, height: 40, borderRadius: 20 },
   searchInput: { flex: 1, marginLeft: 10, fontSize: 16 },
   userCard: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 12, marginBottom: 10 },
   userAvatar: { width: 50, height: 50, borderRadius: 25, marginRight: 15 },
   userName: { fontSize: 16, fontWeight: 'bold' },
   userHandle: { fontSize: 14 },
-  groupCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 15, borderRadius: 12, marginBottom: 10 },
-  groupInfo: { flex: 1 },
-  groupName: { fontSize: 18, fontWeight: 'bold', marginBottom: 4 },
-  groupCount: { fontSize: 12 },
-  groupStats: { flexDirection: 'row', gap: 8 },
-  statPill: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.05)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, gap: 4 },
-  statText: { fontSize: 12, fontWeight: '600' },
-  genreHeader: { padding: 15, borderBottomWidth: 0.5, flexDirection: 'row', alignItems: 'center' },
-  genreTitle: { fontSize: 20, fontWeight: 'bold', marginLeft: 10 },
   fab: { position: 'absolute', bottom: 20, right: 20, width: 56, height: 56, borderRadius: 28, justifyContent: 'center', alignItems: 'center', elevation: 6, shadowColor: "#000", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.3, shadowRadius: 4.65 },
+
+  // ✅ CHAT PLACEHOLDER STYLES
+  chatPlaceholderContainer: { 
+      flex: 1, 
+      justifyContent: 'center', 
+      alignItems: 'center', 
+      paddingHorizontal: 30, 
+      paddingBottom: 80 
+  },
+  chatIconWrapper: { 
+      width: 120, 
+      height: 120, 
+      borderRadius: 60, 
+      justifyContent: 'center', 
+      alignItems: 'center', 
+      marginBottom: 24 
+  },
+  chatTitle: { 
+      fontSize: 24, 
+      fontWeight: 'bold', 
+      marginBottom: 12,
+      textAlign: 'center'
+  },
+  chatSubtitle: { 
+      fontSize: 15, 
+      textAlign: 'center', 
+      lineHeight: 22,
+      marginBottom: 30 
+  },
+  premiumBadge: { 
+      flexDirection: 'row', 
+      alignItems: 'center', 
+      paddingVertical: 12, 
+      paddingHorizontal: 20, 
+      borderRadius: 20, 
+      borderWidth: 1,
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 3,
+      elevation: 3
+  }
 });

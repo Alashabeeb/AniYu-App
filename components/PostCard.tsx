@@ -17,6 +17,7 @@ import {
 import React, { useEffect, useState } from 'react';
 import {
     Alert,
+    Dimensions,
     Modal,
     Pressable,
     Share,
@@ -36,6 +37,9 @@ interface PostCardProps {
 }
 
 const REPORT_REASONS = ["Offensive content", "Abusive behavior", "Spam", "Other"];
+
+// ✅ Get device screen height for dynamic scaling
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function PostCard({ post, isVisible = true }: PostCardProps) {
   const router = useRouter();
@@ -96,7 +100,6 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
     }
     const postRef = doc(db, 'posts', post.id);
     
-    // ✅ Updated: Atomic Increment
     await updateDoc(postRef, { 
         likes: isLiked ? arrayRemove(currentUser.uid) : arrayUnion(currentUser.uid),
         likeCount: increment(isLiked ? -1 : 1) 
@@ -110,7 +113,6 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
     }
     const postRef = doc(db, 'posts', post.id);
     
-    // ✅ Updated: Atomic Increment
     await updateDoc(postRef, { 
         reposts: isReposted ? arrayRemove(currentUser.uid) : arrayUnion(currentUser.uid),
         repostCount: increment(isReposted ? -1 : 1)
@@ -203,11 +205,18 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
 
           {post.text ? <Text style={[styles.text, { color: theme.text }]}>{post.text}</Text> : null}
 
-          {post.mediaUrl && post.mediaType === 'image' && <Image source={{ uri: post.mediaUrl }} style={styles.media} contentFit="cover" />}
+          {/* ✅ DYNAMIC HEIGHT IMPLEMENTED HERE */}
+          {post.mediaUrl && post.mediaType === 'image' && (
+              <Image 
+                  source={{ uri: post.mediaUrl }} 
+                  style={[styles.mediaBase, styles.imageMedia]} 
+                  contentFit="cover" 
+              />
+          )}
           {post.mediaUrl && post.mediaType === 'video' && (
               <VideoView 
                   player={player} 
-                  style={styles.media} 
+                  style={[styles.mediaBase, styles.videoMedia]} 
                   contentFit="cover" 
                   allowsFullscreen={false}
                   allowsPictureInPicture={false}
@@ -218,7 +227,6 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
           <View style={styles.actions}>
             <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleLike(); }}>
               <Ionicons name={isLiked ? "heart" : "heart-outline"} size={18} color={isLiked ? "#FF6B6B" : theme.subText} />
-              {/* ✅ PREFER NUMERIC COUNT */}
               <Text style={[styles.count, { color: isLiked ? "#FF6B6B" : theme.subText }]}>{post.likeCount || post.likes?.length || 0}</Text>
             </TouchableOpacity>
             
@@ -229,7 +237,6 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
             
             <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleRepost(); }}>
               <Ionicons name="repeat-outline" size={18} color={isReposted ? "#00BA7C" : theme.subText} />
-              {/* ✅ PREFER NUMERIC COUNT */}
               <Text style={[styles.count, { color: isReposted ? "#00BA7C" : theme.subText }]}>{post.repostCount || post.reposts?.length || 0}</Text>
             </TouchableOpacity>
             
@@ -289,7 +296,14 @@ const styles = StyleSheet.create({
   handle: { fontSize: 14, flexShrink: 1 },
   dotsButton: { padding: 5, marginTop: -5 },
   text: { fontSize: 15, lineHeight: 22, marginBottom: 8 },
-  media: { width: '100%', height: 250, borderRadius: 12, marginBottom: 10, backgroundColor: '#f0f0f0' },
+  
+  // ✅ Shared media base styles
+  mediaBase: { width: '100%', borderRadius: 12, marginBottom: 10, backgroundColor: '#111' },
+  
+  // ✅ Specific height styles dynamically calculated
+  imageMedia: { height: SCREEN_HEIGHT * 0.4 }, // ~30-40% of screen
+  videoMedia: { height: SCREEN_HEIGHT * 0.65 }, // combined with padding/text, takes ~80% of screen
+  
   actions: { flexDirection: 'row', justifyContent: 'space-between', paddingRight: 10 },
   actionBtn: { flexDirection: 'row', alignItems: 'center', minWidth: 40 },
   count: { fontSize: 12, marginLeft: 4 },
