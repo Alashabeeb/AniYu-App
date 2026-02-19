@@ -10,7 +10,8 @@ import {
   serverTimestamp,
   writeBatch
 } from 'firebase/firestore';
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+// ✅ REMOVED FIREBASE STORAGE IMPORTS
+// import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -20,11 +21,17 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import CustomAlert from '../components/CustomAlert';
-import { auth, db, storage } from '../config/firebaseConfig';
+import { auth, db } from '../config/firebaseConfig'; // Removed storage import from here too
 import { useTheme } from '../context/ThemeContext';
 import { getFriendlyErrorMessage } from '../utils/errorHandler';
+// ✅ IMPORT R2 SERVICE
+import { uploadToR2 } from '../services/r2Storage';
 
 const GENRES = ["Action", "Adventure", "Romance", "Fantasy", "Drama", "Comedy", "Sci-Fi", "Slice of Life", "Sports", "Mystery"];
+
+// ✅ DEFINE SIZE LIMITS (in Bytes)
+const MAX_IMAGE_SIZE = 1 * 1024 * 1024; // 1 MB
+const MAX_VIDEO_SIZE = 5 * 1024 * 1024; // 5 MB
 
 export default function CreatePostScreen() {
   const router = useRouter();
@@ -61,14 +68,33 @@ export default function CreatePostScreen() {
     let result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.All, 
       allowsEditing: true,
-      quality: 0.8,
+      quality: 0.8, // Initial quality setting
     });
-    if (!result.canceled) setMedia(result.assets[0]);
+
+    if (!result.canceled) {
+      const asset = result.assets[0];
+      
+      // ✅ CRITICAL: Pre-check file size before anything else
+      if (asset.fileSize) {
+          const isVideo = asset.type === 'video';
+          const limit = isVideo ? MAX_VIDEO_SIZE : MAX_IMAGE_SIZE;
+          const limitLabel = isVideo ? '5MB' : '1MB';
+
+          if (asset.fileSize > limit) {
+              showAlert('error', 'File Too Large', `Please select a ${isVideo ? 'video' : 'image'} under ${limitLabel}.`);
+              return; // Stop here, do not set media
+          }
+      }
+      
+      setMedia(asset);
+    }
   };
 
   const processMedia = async (uri: string, type: 'image' | 'video') => {
     if (type === 'video') return uri; 
     
+    // Compressor runs only if size passed the initial check in pickMedia
+    console.log("Compressing image...");
     const manipulated = await ImageManipulator.manipulateAsync(
       uri,
       [{ resize: { width: 1080 } }], 
@@ -77,17 +103,18 @@ export default function CreatePostScreen() {
     return manipulated.uri;
   };
 
+  // ✅ UPDATED: Uploads to R2 instead of Firebase Storage
   const uploadMediaToStorage = async (uri: string, type: 'image' | 'video') => {
     if (!user) throw new Error("No user");
     
+    // 1. Process/Compress (if image)
     const processedUri = await processMedia(uri, type);
 
-    const response = await fetch(processedUri);
-    const blob = await response.blob();
-    const filename = `posts/${user.uid}_${Date.now()}.${type === 'video' ? 'mp4' : 'jpg'}`;
-    const storageRef = ref(storage, filename);
-    await uploadBytes(storageRef, blob);
-    return await getDownloadURL(storageRef);
+    // 2. Upload to Cloudflare R2
+    const folder = `user_posts/${user.uid}`;
+    const publicUrl = await uploadToR2(processedUri, folder);
+    
+    return publicUrl;
   };
 
   const toggleTag = (tag: string) => {
@@ -120,6 +147,7 @@ export default function CreatePostScreen() {
       let mediaType = null;
       if (media) {
           mediaType = media.type;
+          // This now calls the R2 version
           mediaUrl = await uploadMediaToStorage(media.uri, mediaType);
       }
 
@@ -138,7 +166,6 @@ export default function CreatePostScreen() {
         createdAt: serverTimestamp(),
         likes: [],
         reposts: [],
-        // ✅ NEW: Initialize Aggregated Counters
         likeCount: 0,
         repostCount: 0,
         commentCount: 0,
@@ -237,6 +264,7 @@ export default function CreatePostScreen() {
                 <Ionicons name="image-outline" size={20} color={theme.tint} />
             </TouchableOpacity>
             
+            {/* Camera button could also use pickMedia logic if implemented later */}
             <TouchableOpacity style={styles.toolIcon}>
                 <Ionicons name="camera-outline" size={20} color={theme.tint} />
             </TouchableOpacity>

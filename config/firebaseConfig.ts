@@ -28,3 +28,12 @@ const db = initializeFirestore(app, {
 const storage = getStorage(app);
 
 export { auth, db, storage };
+
+// ✅ R2 CONFIGURATION EXPORT
+export const R2_CONFIG = {
+    accountId: process.env.EXPO_PUBLIC_R2_ACCOUNT_ID!,
+    accessKeyId: process.env.EXPO_PUBLIC_R2_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.EXPO_PUBLIC_R2_SECRET_ACCESS_KEY!,
+    bucketName: process.env.EXPO_PUBLIC_R2_BUCKET_NAME!,
+    publicDomain: process.env.EXPO_PUBLIC_R2_PUBLIC_DOMAIN!
+};
