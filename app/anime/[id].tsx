@@ -4,7 +4,9 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import { arrayUnion, doc, getDoc, increment, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator, Alert, Image, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View
+    ActivityIndicator, Alert, Image,
+    Linking,
+    Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -39,6 +41,14 @@ const RANKS = [
     { name: 'JONIN', min: 20, max: 49 },      
     { name: 'ANBU', min: 50, max: 99 },       
     { name: 'KAGE', min: 100, max: Infinity },
+];
+
+// ✅ SOCIAL LINKS (Replace with your actual company links)
+const SOCIAL_LINKS = [
+    { id: 'mail', icon: 'mail', url: 'mailto:partnerships@aniyu.com', color: '#EA4335' },
+    { id: 'twitter', icon: 'logo-twitter', url: 'https://twitter.com/aniyu_app', color: '#1DA1F2' },
+    { id: 'linkedin', icon: 'logo-linkedin', url: 'https://linkedin.com/company/aniyu', color: '#0A66C2' },
+    { id: 'whatsapp', icon: 'logo-whatsapp', url: 'https://wa.me/1234567890', color: '#25D366' },
 ];
 
 export default function AnimeDetailScreen() {
@@ -137,37 +147,30 @@ export default function AnimeDetailScreen() {
       }
   }, [player, currentVideoSource]);
 
-  // ✅ OPTIMIZED: Helper Function to Save Progress
   const saveCurrentProgress = useCallback(async () => {
       if (!anime || !currentEpId || !player) return;
-      // Find the active episode object
       const activeEp = episodes.find(e => String(e.mal_id) === currentEpId);
       
-      // Only save if we have an episode and valid time (> 5 seconds to avoid noise)
       if (activeEp && player.currentTime > 5) {
           await saveWatchProgress(anime, { ...activeEp, id: currentEpId }, player.currentTime, player.duration || 0);
       }
   }, [anime, currentEpId, episodes, player]);
 
-  // ✅ OPTIMIZED: Event-Based Progress Saving (Replaces 5s Interval)
   useEffect(() => {
       if (!currentEpId || !anime || !player) return;
 
-      // 1. Save when user Pauses
       const subscription = player.addListener('playingChange', (isPlaying) => {
           if (!isPlaying) {
               saveCurrentProgress();
           }
       });
 
-      // 2. Save every 60 seconds (Heartbeat) - Failsafe for crashes
       const heartbeat = setInterval(() => {
           if (player.playing) {
               saveCurrentProgress();
           }
       }, 60000); 
 
-      // 3. Save on Unmount (User leaves screen)
       return () => {
           saveCurrentProgress();
           clearInterval(heartbeat);
@@ -192,7 +195,6 @@ export default function AnimeDetailScreen() {
       const user = auth.currentUser;
       if (!user || !anime || !currentEpId) return;
       try {
-          // Mark completed progress (100%)
           const activeEp = episodes.find(e => String(e.mal_id) === currentEpId);
           if (activeEp) {
              await saveWatchProgress(anime, { ...activeEp, id: currentEpId }, player.duration, player.duration || 0);
@@ -240,8 +242,6 @@ export default function AnimeDetailScreen() {
       } 
   }, [id]);
 
-  // ✅ NEW: LAZY LOAD SIMILAR ANIME
-  // This hook only fetches data when the user clicks the "Similar" tab.
   useEffect(() => {
     const loadSimilar = async () => {
       if (activeTab === 'Similar' && similarAnime.length === 0 && anime?.genres) {
@@ -285,7 +285,6 @@ export default function AnimeDetailScreen() {
   const loadAllData = async () => {
     try {
       setLoading(true);
-      // ✅ Removed getSimilarAnime from the initial Promise.all for cost savings
       const [detailsData, episodesData] = await Promise.all([
         getAnimeDetails(id as string),
         getAnimeEpisodes(id as string)
@@ -305,8 +304,6 @@ export default function AnimeDetailScreen() {
           const reaction = await getUserReaction(id as string, user.uid);
           setUserReaction(reaction);
       }
-      
-      // ✅ Removed the immediate call to setSimilarAnime here
 
       if (animeData?.views !== undefined) {
           const calculatedRank = await getAnimeRank(animeData.views);
@@ -452,6 +449,11 @@ export default function AnimeDetailScreen() {
       loadAllData(); 
   };
 
+  // ✅ HELPER: OPEN SOCIAL LINKS
+  const openSocial = (url: string) => {
+      Linking.openURL(url).catch(err => console.error("Couldn't load page", err));
+  };
+
   const formatSize = (bytes: number) => {
       if (!bytes || bytes === 0) return 'Unknown Size';
       const mb = bytes / (1024 * 1024);
@@ -574,70 +576,100 @@ export default function AnimeDetailScreen() {
                         </View>
                     </View>
 
-                    <View style={styles.sectionHeader}>
-                        <Text style={[styles.sectionTitle, { color: theme.text, marginLeft: 20, marginBottom: 10 }]}>Episodes ({episodes.length})</Text>
-                    </View>
-                    <View style={styles.episodeList}>
-                        {episodes.map((ep) => {
-                            const epIdStr = String(ep.mal_id);
-                            const isActive = currentEpId === epIdStr;
-                            const isDownloaded = downloadedEpIds.includes(epIdStr);
-                            const isWatched = watchedEpisodeIds.includes(epIdStr); 
-                            const progress = downloadProgress[epIdStr];
-                            const isDownloading = progress !== undefined;
-
-                            return (
-                                <View key={ep.mal_id} style={styles.epRowWrapper}>
+                    {/* ✅ RIGHTS CHECK: conditionally render Episodes vs Missing License Warning */}
+                    {anime.hasStreamingRights === false ? (
+                        <View style={[styles.noLicenseContainer, { backgroundColor: theme.card }]}>
+                            <Ionicons name="lock-closed" size={40} color={theme.subText} style={{ marginBottom: 15 }} />
+                            <Text style={[styles.noLicenseTitle, { color: theme.text }]}>
+                                Content Unavailable
+                            </Text>
+                            <Text style={[styles.noLicenseText, { color: theme.subText }]}>
+                                We currently do not hold the streaming rights or licensing to provide episodes for this anime.
+                            </Text>
+                            <Text style={[styles.noLicenseText, { color: theme.subText, marginTop: 10 }]}>
+                                If you are a licensor or know how we can acquire these rights, your assistance would be greatly appreciated!
+                            </Text>
+                            
+                            <View style={styles.socialRow}>
+                                {SOCIAL_LINKS.map(link => (
                                     <TouchableOpacity 
-                                        style={[styles.epCard, { backgroundColor: theme.card }, isActive && { borderColor: theme.tint, borderWidth: 1 }]}
-                                        onPress={() => handleEpisodePress(ep)}
+                                        key={link.id} 
+                                        style={[styles.socialBtn, { backgroundColor: link.color + '20' }]} 
+                                        onPress={() => openSocial(link.url)}
                                     >
-                                        <Ionicons name={isActive ? "play" : "play-outline"} size={20} color={isActive ? theme.tint : theme.subText} style={{ marginRight: 10 }} />
-                                        <View style={{ flex: 1 }}>
-                                            <View style={{flexDirection:'row', alignItems:'center', gap: 8, marginBottom: 2}}>
-                                                <Text numberOfLines={1} style={[styles.epTitle, { color: isActive ? theme.tint : theme.text, flex: 1 }]}>{ep.title}</Text>
-                                                {isWatched && (
-                                                    <View style={{backgroundColor: 'rgba(76, 175, 80, 0.1)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, borderWidth: 1, borderColor: '#4CAF50'}}>
-                                                        <Text style={{fontSize: 10, color: '#4CAF50', fontWeight:'bold'}}>Watched</Text>
+                                        <Ionicons name={link.icon as any} size={22} color={link.color} />
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+                        </View>
+                    ) : (
+                        <>
+                            <View style={styles.sectionHeader}>
+                                <Text style={[styles.sectionTitle, { color: theme.text, marginLeft: 20, marginBottom: 10 }]}>Episodes ({episodes.length})</Text>
+                            </View>
+                            <View style={styles.episodeList}>
+                                {episodes.map((ep) => {
+                                    const epIdStr = String(ep.mal_id);
+                                    const isActive = currentEpId === epIdStr;
+                                    const isDownloaded = downloadedEpIds.includes(epIdStr);
+                                    const isWatched = watchedEpisodeIds.includes(epIdStr); 
+                                    const progress = downloadProgress[epIdStr];
+                                    const isDownloading = progress !== undefined;
+
+                                    return (
+                                        <View key={ep.mal_id} style={styles.epRowWrapper}>
+                                            <TouchableOpacity 
+                                                style={[styles.epCard, { backgroundColor: theme.card }, isActive && { borderColor: theme.tint, borderWidth: 1 }]}
+                                                onPress={() => handleEpisodePress(ep)}
+                                            >
+                                                <Ionicons name={isActive ? "play" : "play-outline"} size={20} color={isActive ? theme.tint : theme.subText} style={{ marginRight: 10 }} />
+                                                <View style={{ flex: 1 }}>
+                                                    <View style={{flexDirection:'row', alignItems:'center', gap: 8, marginBottom: 2}}>
+                                                        <Text numberOfLines={1} style={[styles.epTitle, { color: isActive ? theme.tint : theme.text, flex: 1 }]}>{ep.title}</Text>
+                                                        {isWatched && (
+                                                            <View style={{backgroundColor: 'rgba(76, 175, 80, 0.1)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, borderWidth: 1, borderColor: '#4CAF50'}}>
+                                                                <Text style={{fontSize: 10, color: '#4CAF50', fontWeight:'bold'}}>Watched</Text>
+                                                            </View>
+                                                        )}
                                                     </View>
+
+                                                    <View style={{flexDirection:'row', alignItems:'center', gap: 5}}>
+                                                        <Text style={{ color: theme.subText, fontSize: 12 }}>
+                                                            {ep.aired ? new Date(ep.aired).toLocaleDateString() : 'Ep ' + ep.number}
+                                                        </Text>
+                                                        <Text style={{ color: theme.subText, fontSize: 12 }}>• {formatSize(ep.size)}</Text>
+                                                        {isDownloaded && <Text style={{ color: theme.tint, fontSize: 10, fontWeight: 'bold' }}> • Downloaded</Text>}
+                                                    </View>
+                                                </View>
+                                            </TouchableOpacity>
+
+                                            <View style={styles.actionContainer}>
+                                                {isDownloading ? (
+                                                    <View style={styles.progressWrapper}>
+                                                        <Text style={{fontSize: 9, color: theme.tint, marginBottom: 2, textAlign:'center'}}>{Math.round(progress * 100)}%</Text>
+                                                        <View style={[styles.progressBarBg, { backgroundColor: theme.border }]}>
+                                                            <View style={[styles.progressBarFill, { width: `${progress * 100}%`, backgroundColor: theme.tint }]} />
+                                                        </View>
+                                                    </View>
+                                                ) : (
+                                                    <TouchableOpacity 
+                                                        style={[styles.downloadBtn, { backgroundColor: theme.card }]} 
+                                                        onPress={() => handleDownload(ep)}
+                                                    >
+                                                        <Ionicons 
+                                                            name={isDownloaded ? "checkmark-done-circle" : "download-outline"} 
+                                                            size={22} 
+                                                            color={isDownloaded ? "#4CAF50" : theme.subText} 
+                                                        />
+                                                    </TouchableOpacity>
                                                 )}
                                             </View>
-
-                                            <View style={{flexDirection:'row', alignItems:'center', gap: 5}}>
-                                                <Text style={{ color: theme.subText, fontSize: 12 }}>
-                                                    {ep.aired ? new Date(ep.aired).toLocaleDateString() : 'Ep ' + ep.number}
-                                                </Text>
-                                                <Text style={{ color: theme.subText, fontSize: 12 }}>• {formatSize(ep.size)}</Text>
-                                                {isDownloaded && <Text style={{ color: theme.tint, fontSize: 10, fontWeight: 'bold' }}> • Downloaded</Text>}
-                                            </View>
                                         </View>
-                                    </TouchableOpacity>
-
-                                    <View style={styles.actionContainer}>
-                                        {isDownloading ? (
-                                            <View style={styles.progressWrapper}>
-                                                <Text style={{fontSize: 9, color: theme.tint, marginBottom: 2, textAlign:'center'}}>{Math.round(progress * 100)}%</Text>
-                                                <View style={[styles.progressBarBg, { backgroundColor: theme.border }]}>
-                                                    <View style={[styles.progressBarFill, { width: `${progress * 100}%`, backgroundColor: theme.tint }]} />
-                                                </View>
-                                            </View>
-                                        ) : (
-                                            <TouchableOpacity 
-                                                style={[styles.downloadBtn, { backgroundColor: theme.card }]} 
-                                                onPress={() => handleDownload(ep)}
-                                            >
-                                                <Ionicons 
-                                                    name={isDownloaded ? "checkmark-done-circle" : "download-outline"} 
-                                                    size={22} 
-                                                    color={isDownloaded ? "#4CAF50" : theme.subText} 
-                                                />
-                                            </TouchableOpacity>
-                                        )}
-                                    </View>
-                                </View>
-                            );
-                        })}
-                    </View>
+                                    );
+                                })}
+                            </View>
+                        </>
+                    )}
                 </>
             ) : (
                 <View style={styles.similarContainer}>
@@ -797,5 +829,12 @@ const styles = StyleSheet.create({
   commentInput: { width: '100%', borderWidth: 1, borderRadius: 8, padding: 10, marginBottom: 20, textAlignVertical: 'top' },
   modalButtons: { flexDirection: 'row', width: '100%', justifyContent: 'space-between', gap: 15 },
   cancelBtn: { padding: 12, flex: 1, alignItems: 'center', backgroundColor: '#f0f0f0', borderRadius: 8 },
-  submitBtn: { padding: 12, flex: 1, alignItems: 'center', borderRadius: 8 }
+  submitBtn: { padding: 12, flex: 1, alignItems: 'center', borderRadius: 8 },
+
+  // ✅ NEW NO LICENSE STYLES
+  noLicenseContainer: { margin: 20, padding: 30, borderRadius: 16, alignItems: 'center' },
+  noLicenseTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 10 },
+  noLicenseText: { textAlign: 'center', lineHeight: 22, fontSize: 14 },
+  socialRow: { flexDirection: 'row', marginTop: 25, gap: 15 },
+  socialBtn: { width: 45, height: 45, borderRadius: 23, justifyContent: 'center', alignItems: 'center' }
 });

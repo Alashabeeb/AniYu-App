@@ -211,7 +211,7 @@ export default function FeedScreen() {
       const offsetX = event.nativeEvent.contentOffset.x;
       const index = Math.round(offsetX / SCREEN_WIDTH);
       if (index === 0) setActiveTab('All');
-      else setActiveTab('Chat'); // ✅ Updated to Chat
+      else setActiveTab('Chat');
   };
 
   const onRefresh = useCallback(() => {
@@ -287,7 +287,6 @@ export default function FeedScreen() {
     />
   );
 
-  // ✅ NEW: PREMIUM CHAT PLACEHOLDER
   const renderChatPlaceholder = () => (
       <View style={[styles.chatPlaceholderContainer, { width: SCREEN_WIDTH }]}>
           <View style={[styles.chatIconWrapper, { backgroundColor: theme.tint + '15' }]}>
@@ -312,94 +311,99 @@ export default function FeedScreen() {
   );
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
+      
+      {/* HEADER SECTION - UPDATED TO MATCH MANGA SCREEN */}
       <View style={[styles.header, { borderBottomColor: theme.border }]}>
         {!showSearch ? (
-            <>
+            <View style={styles.headerTop}>
                 <TouchableOpacity onPress={() => router.push('/feed-profile')}>
                     <Image source={{ uri: currentUser?.photoURL || 'https://api.dicebear.com/7.x/avataaars/svg?seed=Felix' }} style={styles.headerAvatar} />
                 </TouchableOpacity>
-
-                {/* ✅ PILL-STYLE TAB SWITCHER */}
-                <View style={[styles.switchContainer, { backgroundColor: theme.border }]}>
-                    <TouchableOpacity 
-                        style={[styles.switchBtn, activeTab === 'All' && { backgroundColor: theme.tint }]}
-                        onPress={() => handleTabPress('All')}
-                    >
-                        <Text style={[styles.switchText, { color: activeTab === 'All' ? 'white' : theme.subText }]}>All</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity 
-                        style={[styles.switchBtn, activeTab === 'Chat' && { backgroundColor: theme.tint }]}
-                        onPress={() => handleTabPress('Chat')}
-                    >
-                        <Text style={[styles.switchText, { color: activeTab === 'Chat' ? 'white' : theme.subText }]}>Chat</Text>
-                    </TouchableOpacity>
-                </View>
-
+                <Text style={[styles.headerTitle, { color: theme.text }]}>Community</Text>
                 <TouchableOpacity onPress={() => setShowSearch(true)} style={{ padding: 5 }}>
                     <Ionicons name="search" size={24} color={theme.text} />
                 </TouchableOpacity>
-            </>
+            </View>
         ) : (
-            <View style={[styles.searchBar, { backgroundColor: theme.card, flex: 1, marginRight: 10 }]}>
-                <Ionicons name="search" size={20} color={theme.subText} />
-                <TextInput 
-                    style={[styles.searchInput, { color: theme.text }]}
-                    placeholder="Search people..."
-                    placeholderTextColor={theme.subText}
-                    value={searchText}
-                    onChangeText={setSearchText}
-                    autoFocus
-                    autoCapitalize="none"
-                />
+            <View style={styles.searchBarContainer}>
+                <View style={[styles.searchBar, { backgroundColor: theme.card, flex: 1, marginRight: 10 }]}>
+                    <Ionicons name="search" size={20} color={theme.subText} />
+                    <TextInput 
+                        style={[styles.searchInput, { color: theme.text }]}
+                        placeholder="Search people..."
+                        placeholderTextColor={theme.subText}
+                        value={searchText}
+                        onChangeText={setSearchText}
+                        autoFocus
+                        autoCapitalize="none"
+                    />
+                </View>
+                <TouchableOpacity onPress={() => { setShowSearch(false); setSearchText(''); }}>
+                    <Ionicons name="close" size={24} color={theme.text} />
+                </TouchableOpacity>
             </View>
         )}
-        {showSearch && (
-            <TouchableOpacity onPress={() => { setShowSearch(false); setSearchText(''); }}>
-                <Ionicons name="close" size={24} color={theme.text} />
-            </TouchableOpacity>
+
+        {/* PILL-STYLE TAB SWITCHER (Below Header) */}
+        {!showSearch && (
+            <View style={[styles.switchContainer, { backgroundColor: theme.border }]}>
+                <TouchableOpacity 
+                    style={[styles.switchBtn, activeTab === 'All' && { backgroundColor: theme.tint }]}
+                    onPress={() => handleTabPress('All')}
+                >
+                    <Text style={[styles.switchText, { color: activeTab === 'All' ? 'white' : theme.subText }]}>All</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                    style={[styles.switchBtn, activeTab === 'Chat' && { backgroundColor: theme.tint }]}
+                    onPress={() => handleTabPress('Chat')}
+                >
+                    <Text style={[styles.switchText, { color: activeTab === 'Chat' ? 'white' : theme.subText }]}>Chat</Text>
+                </TouchableOpacity>
+            </View>
         )}
       </View>
 
-      {showSearch ? (
-          <View style={{ flex: 1 }}>
-              {searchingUsers ? (
-                  <ActivityIndicator style={{ marginTop: 20 }} color={theme.tint} />
-              ) : (
-                  <FlatList 
-                      data={userResults}
-                      keyExtractor={item => item.id}
-                      renderItem={renderUserItem}
-                      contentContainerStyle={{ padding: 15 }}
-                      ListEmptyComponent={
-                          <Text style={{ textAlign: 'center', color: theme.subText, marginTop: 20 }}>
-                              {searchText ? "No users found." : "Search for people."}
-                          </Text>
-                      }
-                  />
-              )}
-          </View>
-      ) : (
-          <FlatList
-            ref={flatListRef}
-            data={[1, 2]} 
-            keyExtractor={item => item.toString()}
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            onMomentumScrollEnd={handleMomentumScrollEnd}
-            scrollEventThrottle={16}
-            initialNumToRender={1}
-            renderItem={({ index }) => {
-                if (index === 0) return renderFeedList(allPosts, "No posts yet.");
-                if (index === 1) return renderChatPlaceholder(); // ✅ Replaced Trending
-                return null;
-            }}
-          />
-      )}
+      <View style={styles.content}>
+        {showSearch ? (
+            <View style={{ flex: 1 }}>
+                {searchingUsers ? (
+                    <ActivityIndicator style={{ marginTop: 20 }} color={theme.tint} />
+                ) : (
+                    <FlatList 
+                        data={userResults}
+                        keyExtractor={item => item.id}
+                        renderItem={renderUserItem}
+                        contentContainerStyle={{ padding: 15 }}
+                        ListEmptyComponent={
+                            <Text style={{ textAlign: 'center', color: theme.subText, marginTop: 20 }}>
+                                {searchText ? "No users found." : "Search for people."}
+                            </Text>
+                        }
+                    />
+                )}
+            </View>
+        ) : (
+            <FlatList
+                ref={flatListRef}
+                data={[1, 2]} 
+                keyExtractor={item => item.toString()}
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                onMomentumScrollEnd={handleMomentumScrollEnd}
+                scrollEventThrottle={16}
+                initialNumToRender={1}
+                renderItem={({ index }) => {
+                    if (index === 0) return renderFeedList(allPosts, "No posts yet.");
+                    if (index === 1) return renderChatPlaceholder(); 
+                    return null;
+                }}
+            />
+        )}
+      </View>
 
-      {/* Hide FAB if on Chat tab or Search */}
       {!showSearch && activeTab === 'All' && (
          <TouchableOpacity style={[styles.fab, { backgroundColor: theme.tint }]} onPress={() => router.push('/create-post')}>
             <Ionicons name="add" size={30} color="white" />
@@ -411,23 +415,31 @@ export default function FeedScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', padding: 15, borderBottomWidth: 0.5, alignItems: 'center', height: 60 },
-  headerAvatar: { width: 30, height: 30, borderRadius: 15 },
   
-  // SWITCHER STYLES
-  switchContainer: { flex: 1, flexDirection: 'row', borderRadius: 10, padding: 4, marginHorizontal: 20 },
-  switchBtn: { flex: 1, paddingVertical: 6, alignItems: 'center', borderRadius: 8 },
-  switchText: { fontWeight: '600', fontSize: 14 },
+  // HEADER LAYOUT
+  header: { padding: 15, paddingBottom: 10, borderBottomWidth: 0.5 },
+  headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
+  headerTitle: { fontSize: 22, fontWeight: 'bold' },
+  headerAvatar: { width: 35, height: 35, borderRadius: 17.5 },
   
+  searchBarContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
   searchBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, height: 40, borderRadius: 20 },
   searchInput: { flex: 1, marginLeft: 10, fontSize: 16 },
+  
+  // SWITCHER STYLES (Manga Style)
+  switchContainer: { flexDirection: 'row', borderRadius: 10, padding: 4 },
+  switchBtn: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
+  switchText: { fontWeight: '600', fontSize: 14 },
+  
+  content: { flex: 1 },
+
   userCard: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 12, marginBottom: 10 },
   userAvatar: { width: 50, height: 50, borderRadius: 25, marginRight: 15 },
   userName: { fontSize: 16, fontWeight: 'bold' },
   userHandle: { fontSize: 14 },
   fab: { position: 'absolute', bottom: 20, right: 20, width: 56, height: 56, borderRadius: 28, justifyContent: 'center', alignItems: 'center', elevation: 6, shadowColor: "#000", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.3, shadowRadius: 4.65 },
 
-  // ✅ CHAT PLACEHOLDER STYLES
+  // CHAT PLACEHOLDER STYLES
   chatPlaceholderContainer: { 
       flex: 1, 
       justifyContent: 'center', 

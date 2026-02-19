@@ -13,6 +13,7 @@ import {
   Film,
   Image as ImageIcon,
   Loader2,
+  Lock,
   MessageSquare,
   PlayCircle,
   Plus,
@@ -20,6 +21,7 @@ import {
   ThumbsDown,
   ThumbsUp,
   Trash2,
+  Unlock,
   Upload,
   X,
   XCircle
@@ -73,6 +75,9 @@ export default function AnimeUpload() {
   const [selectedGenres, setSelectedGenres] = useState([]);
   const [selectedAge, setSelectedAge] = useState('12+');
   const [animeStatus, setAnimeStatus] = useState('Ongoing'); 
+  
+  // ✅ NEW: STREAMING RIGHTS STATE
+  const [hasStreamingRights, setHasStreamingRights] = useState(true);
 
   // BODY STATE (Episode Form)
   const [episodes, setEpisodes] = useState([]);
@@ -138,20 +143,15 @@ export default function AnimeUpload() {
       } catch (e) { console.error("Notification failed:", e); }
   };
 
-  // ✅ HELPER: Generate Search Keywords
   const generateKeywords = (title) => {
     if (!title) return [];
-    // 1. Split title into words
     const words = title.toLowerCase().split(/\s+/);
-    // 2. Generate partials for better matching (optional, but good for "Naru" -> "Naruto")
-    // For cost saving, we will stick to full words as tokens for now.
     const keywords = [];
     words.forEach(word => {
         if(word.length > 1) keywords.push(word);
     });
-    // 3. Add the full title lowercased
     keywords.push(title.toLowerCase());
-    return [...new Set(keywords)]; // Remove duplicates
+    return [...new Set(keywords)]; 
   };
 
   // --- ACTIONS ---
@@ -188,6 +188,7 @@ export default function AnimeUpload() {
         setAnimeStatus('Ongoing'); 
     }
     
+    setHasStreamingRights(true); // ✅ Reset to true
     setEpisodes([{ id: Date.now(), number: 1, title: '', videoFile: null, thumbFile: null, subtitles: [], isNew: true }]);
     setDeletedEpisodes([]);
     setNotifyUsers(true); 
@@ -207,6 +208,9 @@ export default function AnimeUpload() {
     setAnimeCover(null);
     setNotifyUsers(true); 
     setAnimeStatus(anime.status || 'Ongoing');
+    
+    // ✅ Load rights from db (default to true if old data)
+    setHasStreamingRights(anime.hasStreamingRights !== false);
 
     setDeletedEpisodes([]);
     
@@ -267,8 +271,6 @@ export default function AnimeUpload() {
     if (view === 'details') setView('list');
 
     try {
-      // Note: We cannot programmatically delete from R2 easily without a backend key. 
-      // Manual cleanup on Cloudflare dashboard might be needed for R2 files, or implement a cleanup script.
       if (anime.images?.jpg?.image_url) {
         try { await deleteObject(ref(storage, anime.images.jpg.image_url)); } catch (e) { console.warn("Cover not found"); }
       }
@@ -352,14 +354,12 @@ export default function AnimeUpload() {
   const uploadFile = async (file, path) => {
     if (!file) return null;
 
-    // 1. If it's a VIDEO -> Upload to Cloudflare R2 (Free Bandwidth)
     if (file.type.startsWith('video/')) {
        return await uploadToR2(file, path, (p) => {
            if (path.includes('episodes')) setProgress(p);
        });
     }
 
-    // 2. If it's an IMAGE/SUBTITLE -> Upload to Firebase (Easy Optimization)
     return new Promise((resolve, reject) => {
       const storageRef = ref(storage, `${path}/${Date.now()}_${file.name}`);
       const uploadTask = uploadBytesResumable(storageRef, file);
@@ -396,12 +396,11 @@ export default function AnimeUpload() {
           finalStatus = 'Pending';
       }
 
-      // ✅ GENERATE KEYWORDS FOR SEARCH
       const keywords = generateKeywords(animeTitle);
 
       const animeData = {
         title: animeTitle, 
-        keywords, // ✅ Added here
+        keywords, 
         totalEpisodes: totalEpisodes || 'Unknown', 
         year: releaseYear || 'N/A', 
         synopsis, 
@@ -410,6 +409,7 @@ export default function AnimeUpload() {
         images: { jpg: { image_url: finalCoverUrl } }, 
         type: 'TV', 
         status: finalStatus,
+        hasStreamingRights, // ✅ Saved to Firestore
         uploaderId: currentUser.uid, 
         updatedAt: serverTimestamp()
       };
@@ -768,23 +768,40 @@ export default function AnimeUpload() {
           <div className="card-header blue" style={{justifyContent:'space-between'}}>
               <div style={{display:'flex', alignItems:'center', gap:10}}><Film size={24} /> <span>Header: Anime Details</span></div>
               
-              {/* ✅ HIDE STATUS FOR PRODUCER */}
-              {currentUser?.role !== 'anime_producer' ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, background:'white', padding:'5px 15px', borderRadius:12, border:'1px solid #bfdbfe' }}>
-                      <span style={{fontSize:'0.85rem', fontWeight:700, color:'#9ca3af', textTransform:'uppercase'}}>Status:</span>
-                      <select 
-                        value={animeStatus} 
-                        onChange={(e) => setAnimeStatus(e.target.value)}
-                        style={{border:'none', fontWeight:700, color: animeStatus === 'Completed' ? '#10b981' : animeStatus === 'Upcoming' ? '#eab308' : '#3b82f6', outline:'none', fontSize:'0.95rem'}}
-                      >
-                          {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
+              {/* ✅ STREAMING RIGHTS TOGGLE & STATUS WRAPPER */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 15 }}>
+                  {/* TOGGLE */}
+                  <div 
+                    onClick={() => setHasStreamingRights(!hasStreamingRights)}
+                    style={{
+                        display:'flex', alignItems:'center', gap:8, cursor:'pointer',
+                        background: hasStreamingRights ? '#dcfce7' : '#fee2e2',
+                        padding:'6px 12px', borderRadius:20, border: hasStreamingRights ? '1px solid #bbf7d0' : '1px solid #fecaca'
+                    }}
+                  >
+                      {hasStreamingRights ? <Unlock size={16} color="#166534"/> : <Lock size={16} color="#991b1b"/>}
+                      <span style={{fontWeight:700, fontSize:'0.85rem', color: hasStreamingRights ? '#166534' : '#991b1b'}}>
+                          {hasStreamingRights ? "Streaming Active" : "No License (Hidden)"}
+                      </span>
                   </div>
-              ) : (
-                  <div style={{ background: '#fffbeb', color: '#d97706', padding: '5px 15px', borderRadius: 12, fontWeight: 'bold', fontSize: '0.9rem', border: '1px solid #fcd34d' }}>
-                      {animeStatus === 'Pending' ? "Waiting for Approval" : animeStatus}
-                  </div>
-              )}
+
+                  {currentUser?.role !== 'anime_producer' ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, background:'white', padding:'5px 15px', borderRadius:12, border:'1px solid #bfdbfe' }}>
+                          <span style={{fontSize:'0.85rem', fontWeight:700, color:'#9ca3af', textTransform:'uppercase'}}>Status:</span>
+                          <select 
+                            value={animeStatus} 
+                            onChange={(e) => setAnimeStatus(e.target.value)}
+                            style={{border:'none', fontWeight:700, color: animeStatus === 'Completed' ? '#10b981' : animeStatus === 'Upcoming' ? '#eab308' : '#3b82f6', outline:'none', fontSize:'0.95rem'}}
+                          >
+                              {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                      </div>
+                  ) : (
+                      <div style={{ background: '#fffbeb', color: '#d97706', padding: '5px 15px', borderRadius: 12, fontWeight: 'bold', fontSize: '0.9rem', border: '1px solid #fcd34d' }}>
+                          {animeStatus === 'Pending' ? "Waiting for Approval" : animeStatus}
+                      </div>
+                  )}
+              </div>
           </div>
           <div className="card-body">
             <div className="grid-12">

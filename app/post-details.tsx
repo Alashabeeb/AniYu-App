@@ -16,6 +16,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    Dimensions,
     FlatList, KeyboardAvoidingView, Modal, Platform, Share, StyleSheet,
     Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View, ViewToken
 } from 'react-native';
@@ -26,6 +27,9 @@ import { useTheme } from '../context/ThemeContext';
 import { sendSocialNotification } from '../services/notificationService';
 import { getFriendlyErrorMessage } from '../utils/errorHandler';
 
+// ✅ Dynamically calculate screen height for consistent proportions
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+
 const REPORT_REASONS = [
   "Offensive content",
   "Abusive behavior",
@@ -35,7 +39,7 @@ const REPORT_REASONS = [
   "Other"
 ];
 
-// ✅ GLOBAL CACHE
+// GLOBAL CACHE
 const viewedSessionIds = new Set<string>();
 const viewedCommentSessionIds = new Set<string>();
 
@@ -75,7 +79,7 @@ export default function PostDetailsScreen() {
       }
   });
 
-  // ✅ Safe Pause on Leave
+  // Safe Pause on Leave
   useFocusEffect(
     useCallback(() => {
       return () => {
@@ -133,13 +137,11 @@ export default function PostDetailsScreen() {
       });
   }).current;
 
-  // ✅ UPDATED: Toggle Action with Numeric Counters
   const toggleAction = async (id: string, field: 'likes' | 'reposts', currentArray: string[]) => {
       if (!user) return;
       const ref = doc(db, 'posts', id);
       const isActive = currentArray?.includes(user.uid);
       
-      // Determine counterpart integer field
       const countField = field === 'likes' ? 'likeCount' : 'repostCount';
 
       await updateDoc(ref, { 
@@ -247,7 +249,6 @@ export default function PostDetailsScreen() {
         parentId: postId, 
         likes: [],
         reposts: [],
-        // Initialize counts for comments too
         likeCount: 0,
         repostCount: 0,
         commentCount: 0,
@@ -316,7 +317,6 @@ export default function PostDetailsScreen() {
                 <View style={styles.commentActions}>
                     <TouchableOpacity style={styles.actionButton} onPress={() => toggleAction(item.id, 'likes', item.likes || [])}>
                         <Ionicons name={isLiked ? "heart" : "heart-outline"} size={16} color={isLiked ? "#FF6B6B" : theme.subText} />
-                        {/* ✅ Use Aggregated Counter */}
                         <Text style={[styles.actionText, { color: theme.subText }]}>{item.likeCount || item.likes?.length || 0}</Text>
                     </TouchableOpacity>
                     <TouchableOpacity style={styles.actionButton} onPress={() => goToDetails(item.id)}>
@@ -325,7 +325,6 @@ export default function PostDetailsScreen() {
                     </TouchableOpacity>
                     <TouchableOpacity style={styles.actionButton} onPress={() => toggleAction(item.id, 'reposts', item.reposts || [])}>
                         <Ionicons name="repeat-outline" size={16} color={isReposted ? "#00BA7C" : theme.subText} />
-                         {/* ✅ Use Aggregated Counter */}
                          <Text style={[styles.actionText, { color: theme.subText }]}>{item.repostCount || item.reposts?.length || 0}</Text>
                     </TouchableOpacity>
                     <View style={styles.actionButton}>
@@ -360,7 +359,7 @@ export default function PostDetailsScreen() {
       <KeyboardAvoidingView 
         style={{ flex: 1 }} 
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0} // Accounts for Header
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0} 
       >
           <FlatList
             data={comments}
@@ -379,6 +378,7 @@ export default function PostDetailsScreen() {
                   </View>
                   <Text style={[styles.postText, { color: theme.text }]}>{post.text}</Text>
                   
+                  {/* ✅ SHARED DYNAMIC MEDIA SIZING APPLIED HERE TOO */}
                   {post.mediaUrl && post.mediaType === 'video' && (
                       <VideoView 
                         player={player} 
@@ -386,7 +386,7 @@ export default function PostDetailsScreen() {
                         contentFit="cover"
                         allowsFullscreen={false}
                         allowsPictureInPicture={false}
-                        nativeControls={false} // ✅ Correct Prop
+                        nativeControls={false} 
                       />
                   )}
                   {post.mediaUrl && post.mediaType === 'image' && (
@@ -398,7 +398,6 @@ export default function PostDetailsScreen() {
                   </Text>
                   
                   <View style={[styles.statsRow, { borderTopColor: theme.border, borderBottomColor: theme.border }]}>
-                      {/* ✅ Updated to use Aggregated Counters */}
                       <Text style={{ color: theme.subText }}><Text style={{ fontWeight: 'bold', color: theme.text }}>{post.likeCount || post.likes?.length || 0}</Text> Likes</Text>
                       <Text style={{ color: theme.subText, marginLeft: 15 }}><Text style={{ fontWeight: 'bold', color: theme.text }}>{post.repostCount || post.reposts?.length || 0}</Text> Reposts</Text>
                       <Text style={{ color: theme.subText, marginLeft: 15 }}><Text style={{ fontWeight: 'bold', color: theme.text }}>{post.commentCount || 0}</Text> Comments</Text>
@@ -509,8 +508,11 @@ const styles = StyleSheet.create({
   name: { fontWeight: 'bold', fontSize: 16 },
   handle: { fontSize: 14 },
   postText: { fontSize: 18, marginTop: 10, lineHeight: 26 },
-  postImage: { width: '100%', height: 250, borderRadius: 15, marginTop: 10 },
-  postVideo: { width: '100%', height: 250, borderRadius: 15, marginTop: 10 },
+  
+  // ✅ Dynamically scaled to match PostCard heights
+  postImage: { width: '100%', height: SCREEN_HEIGHT * 0.40, borderRadius: 15, marginTop: 10, backgroundColor: '#111' },
+  postVideo: { width: '100%', height: SCREEN_HEIGHT * 0.50, borderRadius: 15, marginTop: 10, backgroundColor: '#111' },
+  
   statsRow: { flexDirection: 'row', marginTop: 15, paddingVertical: 10, borderTopWidth: 0.5, borderBottomWidth: 0.5 },
   mainActions: { flexDirection: 'row', justifyContent: 'space-around', paddingTop: 10 },
   commentItem: { flexDirection: 'row', padding: 15, borderBottomWidth: 0.5 },

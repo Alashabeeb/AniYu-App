@@ -38,7 +38,7 @@ interface PostCardProps {
 
 const REPORT_REASONS = ["Offensive content", "Abusive behavior", "Spam", "Other"];
 
-// ✅ Get device screen height for dynamic scaling
+// ✅ Dynamically calculate screen height
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function PostCard({ post, isVisible = true }: PostCardProps) {
@@ -205,7 +205,7 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
 
           {post.text ? <Text style={[styles.text, { color: theme.text }]}>{post.text}</Text> : null}
 
-          {/* ✅ DYNAMIC HEIGHT IMPLEMENTED HERE */}
+          {/* DYNAMIC HEIGHT IMPLEMENTED HERE */}
           {post.mediaUrl && post.mediaType === 'image' && (
               <Image 
                   source={{ uri: post.mediaUrl }} 
@@ -297,12 +297,12 @@ const styles = StyleSheet.create({
   dotsButton: { padding: 5, marginTop: -5 },
   text: { fontSize: 15, lineHeight: 22, marginBottom: 8 },
   
-  // ✅ Shared media base styles
+  // Shared media base styles
   mediaBase: { width: '100%', borderRadius: 12, marginBottom: 10, backgroundColor: '#111' },
   
-  // ✅ Specific height styles dynamically calculated
-  imageMedia: { height: SCREEN_HEIGHT * 0.4 }, // ~30-40% of screen
-  videoMedia: { height: SCREEN_HEIGHT * 0.65 }, // combined with padding/text, takes ~80% of screen
+  // Specific height styles dynamically calculated
+  imageMedia: { height: SCREEN_HEIGHT * 0.40 }, // ~40% of screen
+  videoMedia: { height: SCREEN_HEIGHT * 0.50 }, // ✅ Reduced height to 50%
   
   actions: { flexDirection: 'row', justifyContent: 'space-between', paddingRight: 10 },
   actionBtn: { flexDirection: 'row', alignItems: 'center', minWidth: 40 },
