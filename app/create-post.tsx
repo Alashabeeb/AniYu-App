@@ -130,6 +130,11 @@ export default function CreatePostScreen() {
   };
 
   const handlePost = async () => {
+    // ✅ NEW: Strict validation requiring at least 1 tag
+    if (selectedTags.length === 0) {
+        return showAlert('warning', 'Topic Required', 'Please select at least one topic for your post.');
+    }
+
     if (!text.trim() && !media) return;
     setLoading(true);
     try {
@@ -192,6 +197,9 @@ export default function CreatePostScreen() {
     }
   };
 
+  // ✅ NEW: Post button is disabled if no tags are selected
+  const isPostDisabled = (!text.trim() && !media) || selectedTags.length === 0 || loading;
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
       
@@ -208,16 +216,16 @@ export default function CreatePostScreen() {
             headerRight: () => (
                 <TouchableOpacity 
                   onPress={handlePost} 
-                  disabled={(!text.trim() && !media) || loading}
+                  disabled={isPostDisabled}
                   style={{ 
-                    backgroundColor: (!text.trim() && !media) ? theme.card : theme.tint,
+                    backgroundColor: isPostDisabled ? theme.card : theme.tint,
                     paddingHorizontal: 15,
                     paddingVertical: 6,
                     borderRadius: 20
                   }}
                 >
                   {loading ? <ActivityIndicator color="white" size="small" /> : (
-                     <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 14 }}>Post</Text>
+                     <Text style={{ color: isPostDisabled ? theme.subText : 'white', fontWeight: 'bold', fontSize: 14 }}>Post</Text>
                   )}
                 </TouchableOpacity>
             )
@@ -275,8 +283,8 @@ export default function CreatePostScreen() {
          </View>
 
          <View style={{ marginTop: 5, paddingHorizontal: 15 }}>
-            <Text style={{ color: theme.subText, fontSize: 11, marginBottom: 8, fontWeight: 'bold' }}>
-                ADD TOPICS ({selectedTags.length}/3)
+            <Text style={{ color: selectedTags.length === 0 ? '#ef4444' : theme.subText, fontSize: 11, marginBottom: 8, fontWeight: 'bold' }}>
+                {selectedTags.length === 0 ? "⚠️ AT LEAST 1 TOPIC REQUIRED" : `ADD TOPICS (${selectedTags.length}/3)`}
             </Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
                 {GENRES.map(genre => {

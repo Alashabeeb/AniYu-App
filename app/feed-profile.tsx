@@ -8,14 +8,14 @@ import {
     collection,
     doc,
     DocumentSnapshot,
-    getDocs, // ✅ NEW: Use getDocs instead of onSnapshot
-    limit, // ✅ NEW
+    getDocs,
+    limit,
     onSnapshot,
     orderBy,
     query,
     serverTimestamp,
     setDoc,
-    startAfter, // ✅ NEW
+    startAfter,
     updateDoc,
     where
 } from 'firebase/firestore';
@@ -134,7 +134,7 @@ export default function FeedProfileScreen() {
               collection(db, 'posts'), 
               where('userId', '==', targetUserId), 
               orderBy('createdAt', 'desc'),
-              limit(15) // ✅ Limit 15
+              limit(15)
           );
 
           if (!initial && lastPost) {
@@ -147,7 +147,12 @@ export default function FeedProfileScreen() {
           if (initial) {
               setMyPosts(newPosts);
           } else {
-              setMyPosts(prev => [...prev, ...newPosts]);
+              // ✅ Deduplicate state to prevent key errors
+              setMyPosts(prev => {
+                  const existingIds = new Set(prev.map(p => p.id));
+                  const strictlyNew = newPosts.filter(p => !existingIds.has(p.id));
+                  return [...prev, ...strictlyNew];
+              });
           }
 
           setLastPost(snapshot.docs[snapshot.docs.length - 1]);
@@ -166,7 +171,7 @@ export default function FeedProfileScreen() {
               collection(db, 'posts'), 
               where('reposts', 'array-contains', targetUserId), 
               orderBy('createdAt', 'desc'),
-              limit(15) // ✅ Limit 15
+              limit(15)
           );
 
           if (!initial && lastRepost) {
@@ -179,7 +184,12 @@ export default function FeedProfileScreen() {
           if (initial) {
               setRepostedPosts(newPosts);
           } else {
-              setRepostedPosts(prev => [...prev, ...newPosts]);
+              // ✅ Deduplicate state
+              setRepostedPosts(prev => {
+                  const existingIds = new Set(prev.map(p => p.id));
+                  const strictlyNew = newPosts.filter(p => !existingIds.has(p.id));
+                  return [...prev, ...strictlyNew];
+              });
           }
 
           setLastRepost(snapshot.docs[snapshot.docs.length - 1]);
@@ -198,7 +208,7 @@ export default function FeedProfileScreen() {
               collection(db, 'posts'), 
               where('likes', 'array-contains', targetUserId), 
               orderBy('createdAt', 'desc'),
-              limit(15) // ✅ Limit 15
+              limit(15)
           );
 
           if (!initial && lastLike) {
@@ -211,7 +221,12 @@ export default function FeedProfileScreen() {
           if (initial) {
               setLikedPosts(newPosts);
           } else {
-              setLikedPosts(prev => [...prev, ...newPosts]);
+              // ✅ Deduplicate state
+              setLikedPosts(prev => {
+                  const existingIds = new Set(prev.map(p => p.id));
+                  const strictlyNew = newPosts.filter(p => !existingIds.has(p.id));
+                  return [...prev, ...strictlyNew];
+              });
           }
 
           setLastLike(snapshot.docs[snapshot.docs.length - 1]);
@@ -294,12 +309,14 @@ export default function FeedProfileScreen() {
       else if (index === 2) setActiveTab('Likes');
   };
 
-  // ✅ UPDATED LIST RENDERER WITH PAGINATION
+  // ✅ UPDATED LIST RENDERER WITH PAGINATION AND UNIQUE KEYS
   const renderList = (data: any[], emptyMsg: string, loadMoreFunc: () => void) => (
       <FlatList
           data={data}
-          keyExtractor={item => item.id}
+          // Fix 1: Combine ID with Index to guarantee 100% unique keys
+          keyExtractor={(item, index) => item.id ? `${item.id}-${index}` : String(index)}
           contentContainerStyle={{ paddingBottom: 50, width: SCREEN_WIDTH }}
+          showsVerticalScrollIndicator={false}
           renderItem={({ item }) => <PostCard post={item} />}
           
           // Pagination Props
@@ -401,7 +418,6 @@ export default function FeedProfileScreen() {
         showsHorizontalScrollIndicator={false}
         onMomentumScrollEnd={handleMomentumScrollEnd}
         renderItem={({ index }) => {
-            // ✅ PASSING LOAD MORE FUNCTIONS
             if (index === 0) return renderList(sortedMyPosts, "No posts yet.", () => loadPosts(false));
             if (index === 1) return renderList(repostedPosts, "No reposts yet.", () => loadReposts(false));
             if (index === 2) return renderList(likedPosts, "No liked posts yet.", () => loadLikes(false));

@@ -22,6 +22,13 @@ import CustomAlert from '../components/CustomAlert';
 import { auth, db, storage } from '../config/firebaseConfig';
 import { useTheme } from '../context/ThemeContext';
 
+// ✅ NEW: Genres for the user to select their interests
+const GENRES = [
+    "Action", "Adventure", "Romance", "Fantasy", "Drama", "Comedy", 
+    "Sci-Fi", "Slice of Life", "Sports", "Mystery", "Isekai", "Horror", 
+    "Psychological", "Mecha", "Supernatural"
+];
+
 export default function EditProfileScreen() {
   const router = useRouter();
   const { theme } = useTheme();
@@ -34,6 +41,9 @@ export default function EditProfileScreen() {
   const [bio, setBio] = useState('');
   const [avatar, setAvatar] = useState('');
   const [banner, setBanner] = useState('');
+
+  // ✅ NEW: State to hold user interests
+  const [interests, setInterests] = useState<string[]>([]);
 
   const [alertConfig, setAlertConfig] = useState({
     visible: false,
@@ -62,6 +72,8 @@ export default function EditProfileScreen() {
         setBio(data.bio || '');
         setAvatar(data.avatar || '');
         setBanner(data.banner || '');
+        // ✅ NEW: Load existing interests
+        setInterests(data.interests || data.favoriteGenres || []);
     }
   };
 
@@ -123,6 +135,19 @@ export default function EditProfileScreen() {
       }
   };
 
+  // ✅ NEW: Handle toggling interests (max 5)
+  const toggleInterest = (genre: string) => {
+      if (interests.includes(genre)) {
+          setInterests(interests.filter(i => i !== genre));
+      } else {
+          if (interests.length < 5) {
+              setInterests([...interests, genre]);
+          } else {
+              showAlert('warning', 'Limit Reached', 'You can select up to 5 favorite genres.');
+          }
+      }
+  };
+
   // ✅ UPDATED: Handle Save with Unique Username Check
   const handleSave = async () => {
     const user = auth.currentUser;
@@ -154,13 +179,14 @@ export default function EditProfileScreen() {
             }
         }
 
-        // 3. Update Profile
+        // 3. Update Profile (✅ Added interests)
         await updateDoc(userDocRef, {
             displayName: displayName.trim(),
             username: lowerCaseUsername, // Always save as lowercase for consistency
             bio: bio.trim(),
             avatar,
-            banner
+            banner,
+            interests // Saved for the "For You" algorithm
         });
         showAlert('success', 'Profile Updated', 'Your changes have been saved successfully.');
     } catch (error) {
@@ -176,7 +202,7 @@ export default function EditProfileScreen() {
         <Stack.Screen options={{ headerShown: false }} />
 
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
-            <ScrollView contentContainerStyle={{ padding: 20 }}>
+            <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 50 }} showsVerticalScrollIndicator={false}>
                 
                 <View style={styles.header}>
                     <TouchableOpacity onPress={() => router.back()}>
@@ -242,6 +268,37 @@ export default function EditProfileScreen() {
                     />
                 </View>
 
+                {/* ✅ NEW: Favorite Genres Selector */}
+                <View style={styles.interestsSection}>
+                    <View style={styles.interestsHeader}>
+                        <Text style={[styles.label, { color: theme.subText, marginBottom: 0 }]}>Favorite Genres</Text>
+                        <Text style={{ color: theme.tint, fontSize: 12, fontWeight: 'bold' }}>{interests.length}/5</Text>
+                    </View>
+                    <Text style={{ color: theme.subText, fontSize: 12, marginBottom: 15 }}>
+                        Select your favorite genres to personalize your "For You" timeline.
+                    </Text>
+
+                    <View style={styles.chipsContainer}>
+                        {GENRES.map(genre => {
+                            const isSelected = interests.includes(genre);
+                            return (
+                                <TouchableOpacity 
+                                    key={genre}
+                                    onPress={() => toggleInterest(genre)}
+                                    style={[
+                                        styles.chip, 
+                                        { backgroundColor: isSelected ? theme.tint : theme.card, borderColor: isSelected ? theme.tint : theme.border }
+                                    ]}
+                                >
+                                    <Text style={{ color: isSelected ? 'white' : theme.text, fontSize: 13, fontWeight: '600' }}>
+                                        {genre}
+                                    </Text>
+                                </TouchableOpacity>
+                            );
+                        })}
+                    </View>
+                </View>
+
             </ScrollView>
         </KeyboardAvoidingView>
 
@@ -275,4 +332,10 @@ const styles = StyleSheet.create({
   form: { marginTop: 20 },
   label: { marginBottom: 5, fontSize: 12, fontWeight: '600', textTransform: 'uppercase' },
   input: { padding: 15, borderRadius: 8, marginBottom: 20, fontSize: 16 },
+  
+  // ✅ NEW: Interests Styles
+  interestsSection: { marginTop: 10, paddingTop: 20, borderTopWidth: 0.5, borderTopColor: 'rgba(150,150,150,0.3)' },
+  interestsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 },
+  chipsContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  chip: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, borderWidth: 1 }
 });

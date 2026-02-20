@@ -16,7 +16,7 @@ import {
     updateDoc,
     where
 } from 'firebase/firestore';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Dimensions,
@@ -37,7 +37,7 @@ import { useTheme } from '../../context/ThemeContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-const FEED_CACHE_KEY = 'aniyu_feed_cache_v1';
+const FEED_CACHE_KEY = 'aniyu_feed_cache_v2';
 const viewedFeedSession = new Set<string>();
 
 export default function FeedScreen() {
@@ -47,10 +47,14 @@ export default function FeedScreen() {
 
   const [posts, setPosts] = useState<any[]>([]);
   const [userInterests, setUserInterests] = useState<string[]>([]);
+  const [blockedUsers, setBlockedUsers] = useState<string[]>([]);
+  const [interestsLoaded, setInterestsLoaded] = useState(false);
+
   const [refreshing, setRefreshing] = useState(false);
   
-  // PAGINATION STATE
-  const [lastVisible, setLastVisible] = useState<DocumentSnapshot | null>(null);
+  // ✅ DUAL-PAGINATION STATE FOR THE ALGORITHM
+  const [globalLastVisible, setGlobalLastVisible] = useState<DocumentSnapshot | null>(null);
+  const [interestLastVisible, setInterestLastVisible] = useState<DocumentSnapshot | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
 
@@ -59,8 +63,6 @@ export default function FeedScreen() {
   const [userResults, setUserResults] = useState<any[]>([]);
   const [searchingUsers, setSearchingUsers] = useState(false);
 
-  const [blockedUsers, setBlockedUsers] = useState<string[]>([]);
-  
   const [playingPostId, setPlayingPostId] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState('All'); 
@@ -70,88 +72,139 @@ export default function FeedScreen() {
       const loadCache = async () => {
           try {
               const cachedPosts = await AsyncStorage.getItem(FEED_CACHE_KEY);
-              if (cachedPosts) {
-                  setPosts(JSON.parse(cachedPosts));
-              }
+              if (cachedPosts) setPosts(JSON.parse(cachedPosts));
           } catch(e) { console.log("Feed cache error", e); }
       };
       loadCache();
-
-      return () => {
-          viewedFeedSession.clear();
-      };
+      return () => viewedFeedSession.clear();
   }, []);
 
+  // 1. FETCH USER PROFILE FIRST
   useEffect(() => {
       if (!currentUser) return;
       const unsub = onSnapshot(doc(db, 'users', currentUser.uid), (doc) => {
           const data = doc.data();
           setBlockedUsers(data?.blockedUsers || []);
           setUserInterests(data?.interests || data?.favoriteGenres || []);
+          setInterestsLoaded(true); // Signal algorithm to start
       });
       return unsub;
-  }, []);
+  }, [currentUser]);
 
-  const loadPosts = async (isRefresh = false) => {
-    if (isRefresh) {
-        setRefreshing(true);
-        setHasMore(true); 
-    }
-    
-    try {
-      const q = query(
-          collection(db, 'posts'), 
-          where('parentId', '==', null), 
-          orderBy('createdAt', 'desc'),
-          limit(10)
-      );
-      
-      const snapshot = await getDocs(q);
-      const newPosts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  // 2. SCORING ALGORITHM (The "For You" Logic)
+  const calculatePostScore = (post: any, interests: string[]) => {
+      let score = 0;
 
-      setPosts(newPosts);
-      setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
-      
-      AsyncStorage.setItem(FEED_CACHE_KEY, JSON.stringify(newPosts)).catch(err => console.log("Cache save failed", err));
-    } catch (error) {
-      console.log("Error loading feed:", error);
-    } finally {
-      setRefreshing(false);
-    }
-  };
-
-  const loadMorePosts = async () => {
-    if (loadingMore || !hasMore || !lastVisible) return;
-    setLoadingMore(true);
-
-    try {
-      const q = query(
-          collection(db, 'posts'), 
-          where('parentId', '==', null), 
-          orderBy('createdAt', 'desc'),
-          startAfter(lastVisible), 
-          limit(10)
-      );
-
-      const snapshot = await getDocs(q);
-      
-      if (snapshot.empty) {
-        setHasMore(false);
-      } else {
-        const morePosts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setPosts(prev => [...prev, ...morePosts]);
-        setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
+      // A. Interest Matching (Strongest Signal)
+      if (post.tags && Array.isArray(post.tags) && interests.length > 0) {
+          const matches = post.tags.filter((tag: string) => interests.includes(tag));
+          score += (matches.length * 50); // Heavy weight for relevant content
       }
-    } catch (error) {
-      console.log("Error loading more:", error);
-    } finally {
-      setLoadingMore(false);
-    }
+
+      // B. Engagement Metrics (Social Proof)
+      score += (post.likeCount || 0) * 2;
+      score += (post.commentCount || 0) * 3;
+      score += (post.repostCount || 0) * 5;
+
+      // C. Time Decay (Freshness Penalty)
+      if (post.createdAt?.seconds) {
+          const hoursOld = (Date.now() / 1000 - post.createdAt.seconds) / 3600;
+          score -= (hoursOld * 1.5); // Lose 1.5 points every hour it ages
+      }
+
+      return score;
   };
 
+  // 3. CORE FETCH ENGINE
+  const fetchFeedChunk = async (isRefresh = false) => {
+      if (!hasMore && !isRefresh) return;
+      if (isRefresh) {
+          setRefreshing(true);
+          setHasMore(true);
+      } else {
+          setLoadingMore(true);
+      }
+      
+      try {
+          // Prepare to fetch up to 10 of the users interests (Firestore limit for array-contains-any)
+          const safeInterests = userInterests.slice(0, 10);
+          const fetchPromises = [];
+
+          // QUERY 1: Global Fresh Posts (Discovery)
+          let globalQ = query(collection(db, 'posts'), where('parentId', '==', null), orderBy('createdAt', 'desc'), limit(10));
+          if (!isRefresh && globalLastVisible) {
+              globalQ = query(collection(db, 'posts'), where('parentId', '==', null), orderBy('createdAt', 'desc'), startAfter(globalLastVisible), limit(10));
+          }
+          fetchPromises.push(getDocs(globalQ));
+
+          // QUERY 2: Interest-Specific Posts (Relevance)
+          if (safeInterests.length > 0) {
+              let intQ = query(collection(db, 'posts'), where('parentId', '==', null), where('tags', 'array-contains-any', safeInterests), orderBy('createdAt', 'desc'), limit(10));
+              if (!isRefresh && interestLastVisible) {
+                  intQ = query(collection(db, 'posts'), where('parentId', '==', null), where('tags', 'array-contains-any', safeInterests), orderBy('createdAt', 'desc'), startAfter(interestLastVisible), limit(10));
+              }
+              // 🔥 NOTE: If this fails in the console, Firestore will provide a link to generate a Composite Index. Click it!
+              fetchPromises.push(getDocs(intQ).catch(e => {
+                  console.warn("Missing Index for personalized feed. Check Firebase console to build it.", e);
+                  return { docs: [] }; // Fallback gracefully if index is building
+              }));
+          }
+
+          const results = await Promise.all(fetchPromises);
+          
+          const globalSnap = results[0];
+          const interestSnap = results[1];
+
+          // Update Pagination Cursors
+          if (globalSnap.docs.length > 0) setGlobalLastVisible(globalSnap.docs[globalSnap.docs.length - 1]);
+          if (interestSnap && interestSnap.docs?.length > 0) setInterestLastVisible(interestSnap.docs[interestSnap.docs.length - 1]);
+          // Stop pagination if both queries run dry
+          if (globalSnap.docs.length === 0 && (!interestSnap || interestSnap.docs?.length === 0)) {
+                setHasMore(false);
+            }
+
+          // Merge & Deduplicate
+          const postMap = new Map();
+          
+          globalSnap.docs.forEach((doc: any) => { postMap.set(doc.id, { id: doc.id, ...doc.data() }); });
+          if (interestSnap && interestSnap.docs) {
+              interestSnap.docs.forEach((doc: any) => { postMap.set(doc.id, { id: doc.id, ...doc.data() }); });
+          }
+
+          // Convert back to Array, Filter blocked users, Apply Scoring
+          let fetchedChunk = Array.from(postMap.values())
+              .filter(p => !blockedUsers.includes(p.userId))
+              .map(p => ({ ...p, algoScore: calculatePostScore(p, userInterests) }));
+
+          // Sort this specific chunk by highest score first
+          fetchedChunk.sort((a, b) => b.algoScore - a.algoScore);
+
+          if (isRefresh) {
+              setPosts(fetchedChunk);
+              AsyncStorage.setItem(FEED_CACHE_KEY, JSON.stringify(fetchedChunk)).catch(() => {});
+          } else {
+              setPosts(prev => {
+                  // Prevent edge-case duplicates when appending
+                  const existingIds = new Set(prev.map(p => p.id));
+                  const strictlyNew = fetchedChunk.filter(p => !existingIds.has(p.id));
+                  return [...prev, ...strictlyNew];
+              });
+          }
+
+      } catch (error) {
+          console.log("Error loading feed:", error);
+      } finally {
+          setRefreshing(false);
+          setLoadingMore(false);
+      }
+  };
+
+  // Trigger initial fetch ONLY after interests are loaded
   useEffect(() => {
-    loadPosts(); 
-  }, []);
+      if (interestsLoaded) {
+          fetchFeedChunk(true);
+      }
+  }, [interestsLoaded]);
 
   useEffect(() => {
       let isActive = true;
@@ -160,23 +213,11 @@ export default function FeedScreen() {
               if(isActive) setSearchingUsers(true);
               try {
                   const lowerText = searchText.toLowerCase();
-                  const usersRef = collection(db, 'users');
-                  const q = query(
-                      usersRef, 
-                      where('username', '>=', lowerText), 
-                      where('username', '<=', lowerText + '\uf8ff'),
-                      limit(20)
-                  );
+                  const q = query(collection(db, 'users'), where('username', '>=', lowerText), where('username', '<=', lowerText + '\uf8ff'), limit(20));
                   const snapshot = await getDocs(q);
-                  if (isActive) {
-                      const results = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                      setUserResults(results);
-                  }
-              } catch (error) { 
-                  console.error("Search Error:", error); 
-              } finally { 
-                  if (isActive) setSearchingUsers(false); 
-              }
+                  if (isActive) setUserResults(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+              } catch (error) { console.error(error); } 
+              finally { if (isActive) setSearchingUsers(false); }
           } else {
               if (isActive) setUserResults([]);
           }
@@ -185,21 +226,6 @@ export default function FeedScreen() {
       runSearch();
       return () => { isActive = false; };
   }, [searchText, showSearch]);
-
-  const allPosts = useMemo(() => {
-    const cleanPosts = posts.filter(p => !blockedUsers.includes(p.userId));
-
-    if (userInterests.length > 0) {
-        return [...cleanPosts].sort((a, b) => {
-            const aMatches = userInterests.some(interest => a.text?.toLowerCase().includes(interest.toLowerCase()) || a.tags?.includes(interest));
-            const bMatches = userInterests.some(interest => b.text?.toLowerCase().includes(interest.toLowerCase()) || b.tags?.includes(interest));
-            if (aMatches && !bMatches) return -1;
-            if (!aMatches && bMatches) return 1;
-            return 0; 
-        });
-    }
-    return cleanPosts; 
-  }, [posts, userInterests, blockedUsers]);
 
   const handleTabPress = (tab: string) => {
       setActiveTab(tab);
@@ -214,18 +240,13 @@ export default function FeedScreen() {
       else setActiveTab('Chat');
   };
 
-  const onRefresh = useCallback(() => {
-    loadPosts(true); 
-  }, []);
+  const onRefresh = useCallback(() => { fetchFeedChunk(true); }, [interestsLoaded]);
 
-  const viewabilityConfig = useRef({
-      itemVisiblePercentThreshold: 50 
-  }).current;
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
 
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
       if (viewableItems.length > 0) {
-          const firstVisible = viewableItems[0];
-          setPlayingPostId(firstVisible.item.id);
+          setPlayingPostId(viewableItems[0].item.id);
       } else {
           setPlayingPostId(null);
       }
@@ -235,9 +256,7 @@ export default function FeedScreen() {
               const postId = viewToken.item.id;
               if (!viewedFeedSession.has(postId)) {
                   viewedFeedSession.add(postId);
-                  try {
-                      updateDoc(doc(db, 'posts', postId), { views: increment(1) });
-                  } catch (error) { console.log("Error incrementing view:", error); }
+                  try { updateDoc(doc(db, 'posts', postId), { views: increment(1) }); } catch (error) {}
               }
           }
       });
@@ -268,7 +287,7 @@ export default function FeedScreen() {
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
         
-        onEndReached={loadMorePosts}
+        onEndReached={() => fetchFeedChunk()}
         onEndReachedThreshold={0.5}
         ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color={theme.tint} style={{ marginVertical: 20 }} /> : null}
         
@@ -278,10 +297,7 @@ export default function FeedScreen() {
             </View>
         }
         renderItem={({ item }) => (
-            <PostCard 
-                post={item} 
-                isVisible={playingPostId === item.id} 
-            />
+            <PostCard post={item} isVisible={playingPostId === item.id} />
         )}
         extraData={playingPostId}
     />
@@ -292,20 +308,13 @@ export default function FeedScreen() {
           <View style={[styles.chatIconWrapper, { backgroundColor: theme.tint + '15' }]}>
               <Ionicons name="chatbubbles" size={60} color={theme.tint} />
           </View>
-          
-          <Text style={[styles.chatTitle, { color: theme.text }]}>
-              Private Messaging
-          </Text>
-          
+          <Text style={[styles.chatTitle, { color: theme.text }]}>Private Messaging</Text>
           <Text style={[styles.chatSubtitle, { color: theme.subText }]}>
               Connect, share, and discuss your favorite anime & manga directly with friends and creators.
           </Text>
-
           <View style={[styles.premiumBadge, { borderColor: theme.tint, backgroundColor: theme.card }]}>
               <Ionicons name="sparkles" size={16} color={theme.tint} style={{ marginRight: 6 }} />
-              <Text style={{ color: theme.tint, fontWeight: 'bold', fontSize: 14 }}>
-                  Coming Soon For Premium Users Only
-              </Text>
+              <Text style={{ color: theme.tint, fontWeight: 'bold', fontSize: 14 }}>Coming Soon For Premium Users</Text>
           </View>
       </View>
   );
@@ -313,7 +322,7 @@ export default function FeedScreen() {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
       
-      {/* HEADER SECTION - UPDATED TO MATCH MANGA SCREEN */}
+      {/* HEADER SECTION */}
       <View style={[styles.header, { borderBottomColor: theme.border }]}>
         {!showSearch ? (
             <View style={styles.headerTop}>
@@ -345,14 +354,13 @@ export default function FeedScreen() {
             </View>
         )}
 
-        {/* PILL-STYLE TAB SWITCHER (Below Header) */}
         {!showSearch && (
             <View style={[styles.switchContainer, { backgroundColor: theme.border }]}>
                 <TouchableOpacity 
                     style={[styles.switchBtn, activeTab === 'All' && { backgroundColor: theme.tint }]}
                     onPress={() => handleTabPress('All')}
                 >
-                    <Text style={[styles.switchText, { color: activeTab === 'All' ? 'white' : theme.subText }]}>All</Text>
+                    <Text style={[styles.switchText, { color: activeTab === 'All' ? 'white' : theme.subText }]}>For You</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity 
@@ -396,7 +404,7 @@ export default function FeedScreen() {
                 scrollEventThrottle={16}
                 initialNumToRender={1}
                 renderItem={({ index }) => {
-                    if (index === 0) return renderFeedList(allPosts, "No posts yet.");
+                    if (index === 0) return renderFeedList(posts, "No posts yet. Be the first!");
                     if (index === 1) return renderChatPlaceholder(); 
                     return null;
                 }}
@@ -415,69 +423,25 @@ export default function FeedScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  
-  // HEADER LAYOUT
   header: { padding: 15, paddingBottom: 10, borderBottomWidth: 0.5 },
   headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
   headerTitle: { fontSize: 22, fontWeight: 'bold' },
   headerAvatar: { width: 35, height: 35, borderRadius: 17.5 },
-  
   searchBarContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
   searchBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, height: 40, borderRadius: 20 },
   searchInput: { flex: 1, marginLeft: 10, fontSize: 16 },
-  
-  // SWITCHER STYLES (Manga Style)
   switchContainer: { flexDirection: 'row', borderRadius: 10, padding: 4 },
   switchBtn: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
   switchText: { fontWeight: '600', fontSize: 14 },
-  
   content: { flex: 1 },
-
   userCard: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 12, marginBottom: 10 },
   userAvatar: { width: 50, height: 50, borderRadius: 25, marginRight: 15 },
   userName: { fontSize: 16, fontWeight: 'bold' },
   userHandle: { fontSize: 14 },
   fab: { position: 'absolute', bottom: 20, right: 20, width: 56, height: 56, borderRadius: 28, justifyContent: 'center', alignItems: 'center', elevation: 6, shadowColor: "#000", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.3, shadowRadius: 4.65 },
-
-  // CHAT PLACEHOLDER STYLES
-  chatPlaceholderContainer: { 
-      flex: 1, 
-      justifyContent: 'center', 
-      alignItems: 'center', 
-      paddingHorizontal: 30, 
-      paddingBottom: 80 
-  },
-  chatIconWrapper: { 
-      width: 120, 
-      height: 120, 
-      borderRadius: 60, 
-      justifyContent: 'center', 
-      alignItems: 'center', 
-      marginBottom: 24 
-  },
-  chatTitle: { 
-      fontSize: 24, 
-      fontWeight: 'bold', 
-      marginBottom: 12,
-      textAlign: 'center'
-  },
-  chatSubtitle: { 
-      fontSize: 15, 
-      textAlign: 'center', 
-      lineHeight: 22,
-      marginBottom: 30 
-  },
-  premiumBadge: { 
-      flexDirection: 'row', 
-      alignItems: 'center', 
-      paddingVertical: 12, 
-      paddingHorizontal: 20, 
-      borderRadius: 20, 
-      borderWidth: 1,
-      shadowColor: "#000",
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.1,
-      shadowRadius: 3,
-      elevation: 3
-  }
+  chatPlaceholderContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30, paddingBottom: 80 },
+  chatIconWrapper: { width: 120, height: 120, borderRadius: 60, justifyContent: 'center', alignItems: 'center', marginBottom: 24 },
+  chatTitle: { fontSize: 24, fontWeight: 'bold', marginBottom: 12, textAlign: 'center' },
+  chatSubtitle: { fontSize: 15, textAlign: 'center', lineHeight: 22, marginBottom: 30 },
+  premiumBadge: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 20, borderWidth: 1, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 3, elevation: 3 }
 });

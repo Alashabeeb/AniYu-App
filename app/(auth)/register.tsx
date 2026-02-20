@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import { useRouter } from 'expo-router';
@@ -7,13 +8,14 @@ import {
     GoogleAuthProvider,
     OAuthProvider,
     signInWithCredential,
-    signOut, // ✅ Added signOut
+    signOut,
     updateProfile
 } from 'firebase/auth';
 import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
 import React, { useState } from 'react';
 import {
     ActivityIndicator, KeyboardAvoidingView,
+    Modal,
     Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -27,6 +29,16 @@ GoogleSignin.configure({
   webClientId: "891600067276-gd325gpe02fi1ceps35ri17ab7gnlonk.apps.googleusercontent.com", 
 });
 
+// ✅ NATIVE ANTI-BOT CAPTCHA DATABASE
+const EMOJI_DB = [
+    { icon: '🍎', name: 'Red Apple' }, { icon: '🚗', name: 'Car' },
+    { icon: '🏀', name: 'Basketball' }, { icon: '🐶', name: 'Dog' },
+    { icon: '🎸', name: 'Guitar' }, { icon: '📱', name: 'Mobile Phone' },
+    { icon: '🍔', name: 'Burger' }, { icon: '✈️', name: 'Airplane' },
+    { icon: '⌚', name: 'Watch' }, { icon: '🚀', name: 'Rocket' },
+    { icon: '🧸', name: 'Teddy Bear' }, { icon: '🍕', name: 'Pizza' }
+];
+
 export default function SignUpScreen() {
   const router = useRouter();
   const { theme } = useTheme();
@@ -35,6 +47,14 @@ export default function SignUpScreen() {
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // ✅ VERIFICATION STATE
+  const [verificationVisible, setVerificationVisible] = useState(false);
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [targetEmoji, setTargetEmoji] = useState(EMOJI_DB[0]);
+  const [captchaOptions, setCaptchaOptions] = useState<typeof EMOJI_DB>([]);
+  const [captchaFailed, setCaptchaFailed] = useState(false);
+  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
 
   const [alertConfig, setAlertConfig] = useState({
     visible: false,
@@ -47,7 +67,36 @@ export default function SignUpScreen() {
     setAlertConfig({ visible: true, type, title, message });
   };
 
-  const handleSocialSignUp = async (provider: 'google' | 'apple') => {
+  // ✅ GENERATE CAPTCHA CHALLENGE
+  const generateCaptcha = () => {
+      const target = EMOJI_DB[Math.floor(Math.random() * EMOJI_DB.length)];
+      setTargetEmoji(target);
+      const decoys = EMOJI_DB.filter(e => e.icon !== target.icon).sort(() => 0.5 - Math.random()).slice(0, 5);
+      setCaptchaOptions([target, ...decoys].sort(() => 0.5 - Math.random()));
+      setCaptchaFailed(false);
+  };
+
+  // ✅ PROCESS CAPTCHA SELECTION
+  const handleCaptchaSelect = async (selectedIcon: string) => {
+      if (selectedIcon === targetEmoji.icon) {
+          setVerificationVisible(false);
+          await AsyncStorage.setItem('termsAccepted', 'true'); // Save to device
+          if (pendingAction) pendingAction(); // Execute the paused signup function
+      } else {
+          setCaptchaFailed(true);
+          setTimeout(() => generateCaptcha(), 800);
+      }
+  };
+
+  // --- SOCIAL SIGN UP ---
+  const handleSocialSignUpClick = (provider: 'google' | 'apple') => {
+      setPendingAction(() => () => executeFirebaseSocialSignUp(provider));
+      generateCaptcha();
+      setAgreedToTerms(false);
+      setVerificationVisible(true);
+  };
+
+  const executeFirebaseSocialSignUp = async (provider: 'google' | 'apple') => {
     setLoading(true);
     try {
       let credential;
@@ -87,7 +136,7 @@ export default function SignUpScreen() {
             username: generatedUsername,
             displayName: user.displayName || "User",
             email: user.email,
-            role: 'user', // Default role
+            role: 'user', 
             rank: 'GENIN',
             avatar: user.photoURL || 'https://api.dicebear.com/7.x/avataaars/svg?seed=' + generatedUsername,
             bio: "I'm new here!",
@@ -95,14 +144,14 @@ export default function SignUpScreen() {
             following: [],
             createdAt: new Date(),
             lastActiveAt: new Date(),
-            isVerified: false 
+            isVerified: false,
+            hasAcceptedTerms: true // ✅ SAVED VERIFICATION TO DB
         });
         showAlert('success', 'Welcome!', 'Your account has been created successfully.');
       } else {
-        // ✅ FIX: Check Role if user already exists!
         const userData = userDoc.data();
         if (userData?.role !== 'user') {
-            await signOut(auth); // Kick them out immediately
+            await signOut(auth); 
             throw new Error("Access Denied: This account is restricted to the Web Dashboard.");
         }
         router.replace('/(tabs)');
@@ -118,7 +167,8 @@ export default function SignUpScreen() {
     }
   };
 
-  const handleSignUp = async () => {
+  // --- EMAIL SIGN UP ---
+  const handleSignUpClick = async () => {
     if (!email || !password || !username) {
         return showAlert('warning', 'Missing Fields', 'Please fill in all fields to continue.');
     }
@@ -127,8 +177,8 @@ export default function SignUpScreen() {
     }
 
     setLoading(true);
-
     try {
+        // Validate unique username BEFORE showing modal
         const usersRef = collection(db, "users");
         const q = query(usersRef, where("username", "==", username.toLowerCase()));
         const snapshot = await getDocs(q);
@@ -138,33 +188,49 @@ export default function SignUpScreen() {
             return showAlert('error', 'Username Taken', 'This username is already in use. Please choose another.');
         }
 
-        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        const user = userCredential.user;
-
-        await updateProfile(user, { displayName: username });
-
-        await setDoc(doc(db, "users", user.uid), {
-            username: username.toLowerCase(),
-            displayName: username,
-            email: email,
-            role: 'user',
-            rank: 'GENIN',
-            avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=' + username,
-            bio: "I'm new here!",
-            followers: [],
-            following: [],
-            createdAt: new Date(),
-            lastActiveAt: new Date(),
-            isVerified: false 
-        });
-
-        showAlert('success', 'Welcome!', 'Your account has been created successfully.');
+        setLoading(false);
+        // All good -> Show Modal
+        setPendingAction(() => executeFirebaseEmailSignUp);
+        generateCaptcha();
+        setAgreedToTerms(false);
+        setVerificationVisible(true);
 
     } catch (error: any) {
-        showAlert('error', 'Sign Up Failed', getFriendlyErrorMessage(error));
-    } finally {
         setLoading(false);
+        showAlert('error', 'Validation Failed', getFriendlyErrorMessage(error));
     }
+  };
+
+  const executeFirebaseEmailSignUp = async () => {
+      setLoading(true);
+      try {
+          const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+          const user = userCredential.user;
+
+          await updateProfile(user, { displayName: username });
+
+          await setDoc(doc(db, "users", user.uid), {
+              username: username.toLowerCase(),
+              displayName: username,
+              email: email,
+              role: 'user',
+              rank: 'GENIN',
+              avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=' + username,
+              bio: "I'm new here!",
+              followers: [],
+              following: [],
+              createdAt: new Date(),
+              lastActiveAt: new Date(),
+              isVerified: false,
+              hasAcceptedTerms: true // ✅ SAVED VERIFICATION TO DB
+          });
+
+          showAlert('success', 'Welcome!', 'Your account has been created successfully.');
+      } catch (error: any) {
+          showAlert('error', 'Sign Up Failed', getFriendlyErrorMessage(error));
+      } finally {
+          setLoading(false);
+      }
   };
 
   return (
@@ -218,9 +284,10 @@ export default function SignUpScreen() {
                     />
                 </View>
 
+                {/* ✅ TRIGGERS NEW FLOW */}
                 <TouchableOpacity 
                     style={[styles.button, { backgroundColor: theme.tint }]} 
-                    onPress={handleSignUp}
+                    onPress={handleSignUpClick}
                     disabled={loading}
                 >
                     {loading ? <ActivityIndicator color="white" /> : <Text style={styles.buttonText}>Sign Up</Text>}
@@ -234,13 +301,14 @@ export default function SignUpScreen() {
             </View>
 
             <View style={styles.socialRow}>
-                <TouchableOpacity style={[styles.socialBtn, { borderColor: theme.border }]} onPress={() => handleSocialSignUp('google')}>
+                {/* ✅ TRIGGERS NEW FLOW */}
+                <TouchableOpacity style={[styles.socialBtn, { borderColor: theme.border }]} onPress={() => handleSocialSignUpClick('google')}>
                     <Ionicons name="logo-google" size={24} color={theme.text} />
                     <Text style={[styles.socialText, { color: theme.text }]}>Google</Text>
                 </TouchableOpacity>
 
                 {Platform.OS === 'ios' && (
-                    <TouchableOpacity style={[styles.socialBtn, { borderColor: theme.border }]} onPress={() => handleSocialSignUp('apple')}>
+                    <TouchableOpacity style={[styles.socialBtn, { borderColor: theme.border }]} onPress={() => handleSocialSignUpClick('apple')}>
                         <Ionicons name="logo-apple" size={24} color={theme.text} />
                         <Text style={[styles.socialText, { color: theme.text }]}>Apple</Text>
                     </TouchableOpacity>
@@ -253,8 +321,49 @@ export default function SignUpScreen() {
                     <Text style={{ color: theme.tint, fontWeight: 'bold' }}>Log In</Text>
                 </TouchableOpacity>
             </View>
-
         </ScrollView>
+
+        {/* ✅ VERIFICATION MODAL */}
+        <Modal visible={verificationVisible} transparent animationType="slide">
+          <View style={styles.modalOverlay}>
+              <View style={[styles.modalContent, { backgroundColor: theme.card }]}>
+                  <View style={styles.modalHeader}>
+                      <Ionicons name="shield-checkmark" size={28} color={theme.tint} />
+                      <Text style={[styles.modalTitle, { color: theme.text }]}>Security Verification</Text>
+                  </View>
+                  
+                  <TouchableOpacity style={styles.checkboxRow} onPress={() => setAgreedToTerms(!agreedToTerms)} activeOpacity={0.7}>
+                      <Ionicons name={agreedToTerms ? "checkbox" : "square-outline"} size={26} color={agreedToTerms ? theme.tint : theme.subText} />
+                      <Text style={[styles.checkboxText, { color: theme.text }]}>
+                          I agree to the <Text style={{ color: theme.tint, fontWeight: 'bold' }}>Terms & Conditions</Text> and <Text style={{ color: theme.tint, fontWeight: 'bold' }}>Privacy Policy</Text>.
+                      </Text>
+                  </TouchableOpacity>
+
+                  {agreedToTerms ? (
+                      <View style={styles.captchaSection}>
+                          <Text style={[styles.captchaPrompt, { color: theme.text }]}>Prove you are human: Select the <Text style={{ fontWeight: 'bold', color: theme.tint, fontSize: 16 }}>{targetEmoji.name}</Text></Text>
+                          <View style={styles.captchaGrid}>
+                              {captchaOptions.map((item, index) => (
+                                  <TouchableOpacity key={index} style={[styles.emojiBtn, { backgroundColor: theme.background, borderColor: captchaFailed ? '#FF6B6B' : theme.border }]} onPress={() => handleCaptchaSelect(item.icon)}>
+                                      <Text style={styles.emojiText}>{item.icon}</Text>
+                                  </TouchableOpacity>
+                              ))}
+                          </View>
+                          {captchaFailed && <Text style={styles.errorText}>Incorrect selection. Generating new challenge...</Text>}
+                      </View>
+                  ) : (
+                      <View style={styles.captchaPlaceholder}>
+                          <Ionicons name="lock-closed" size={30} color={theme.subText} opacity={0.3} />
+                          <Text style={{ color: theme.subText, fontSize: 12, marginTop: 8, opacity: 0.6 }}>Agree to terms to unlock verification</Text>
+                      </View>
+                  )}
+
+                  <TouchableOpacity style={styles.cancelBtn} onPress={() => setVerificationVisible(false)}>
+                      <Text style={{ color: theme.subText, fontWeight: 'bold', fontSize: 16 }}>Cancel</Text>
+                  </TouchableOpacity>
+              </View>
+          </View>
+        </Modal>
 
         <CustomAlert 
             visible={alertConfig.visible}
@@ -292,4 +401,20 @@ const styles = StyleSheet.create({
   socialRow: { flexDirection: 'row', gap: 15 },
   socialBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 12, borderRadius: 12, borderWidth: 1, gap: 10 },
   socialText: { fontWeight: '600', fontSize: 16 },
+
+  // MODAL STYLES
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  modalContent: { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 25, paddingBottom: 40, elevation: 10 },
+  modalHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 25 },
+  modalTitle: { fontSize: 22, fontWeight: 'bold' },
+  checkboxRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(150,150,150,0.1)', padding: 15, borderRadius: 12, marginBottom: 20 },
+  checkboxText: { flex: 1, marginLeft: 12, fontSize: 14, lineHeight: 20 },
+  captchaSection: { marginTop: 10, paddingBottom: 15 },
+  captchaPrompt: { fontSize: 15, marginBottom: 15, textAlign: 'center' },
+  captchaGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 12 },
+  emojiBtn: { width: 70, height: 70, borderRadius: 35, borderWidth: 1, justifyContent: 'center', alignItems: 'center', elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 3 },
+  emojiText: { fontSize: 35 },
+  errorText: { color: '#FF6B6B', textAlign: 'center', marginTop: 15, fontSize: 12, fontWeight: 'bold' },
+  captchaPlaceholder: { height: 150, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(150,150,150,0.05)', borderRadius: 16, marginTop: 10, marginBottom: 15, borderWidth: 1, borderColor: 'transparent', borderStyle: 'dashed' },
+  cancelBtn: { marginTop: 15, paddingVertical: 15, alignItems: 'center' }
 });
