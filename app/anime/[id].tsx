@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { arrayUnion, doc, getDoc, increment, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
@@ -43,7 +44,6 @@ const RANKS = [
     { name: 'KAGE', min: 100, max: Infinity },
 ];
 
-// ✅ SOCIAL LINKS (Replace with your actual company links)
 const SOCIAL_LINKS = [
     { id: 'mail', icon: 'mail', url: 'mailto:partnerships@aniyu.com', color: '#EA4335' },
     { id: 'twitter', icon: 'logo-twitter', url: 'https://twitter.com/aniyu_app', color: '#1DA1F2' },
@@ -68,7 +68,6 @@ export default function AnimeDetailScreen() {
   const [userRating, setUserRating] = useState(0);
   const [submittingReview, setSubmittingReview] = useState(false);
 
-  // Interaction State
   const [commentText, setCommentText] = useState('');
   const [userReaction, setUserReaction] = useState<'like' | 'dislike' | null>(null);
   const [likesCount, setLikesCount] = useState(0);
@@ -82,7 +81,6 @@ export default function AnimeDetailScreen() {
 
   const resumeTimeRef = useRef<number | null>(null);
 
-  // 1. Initialize Player
   const player = useVideoPlayer(currentVideoSource, player => { 
       player.loop = false; 
   });
@@ -102,7 +100,6 @@ export default function AnimeDetailScreen() {
     }, [loading, currentVideoSource, player])
   );
 
-  // HISTORY CHECK
   useEffect(() => {
       const checkHistory = async () => {
           if (!anime || !currentEpId) return;
@@ -117,7 +114,6 @@ export default function AnimeDetailScreen() {
       checkHistory();
   }, [anime, currentEpId]);
 
-  // FETCH WATCHED STATUS
   useEffect(() => {
       const fetchWatchedStatus = async () => {
           const user = auth.currentUser;
@@ -134,7 +130,6 @@ export default function AnimeDetailScreen() {
       if (anime) fetchWatchedStatus();
   }, [anime]);
 
-  // RESUME PLAYBACK
   useEffect(() => {
       if (player && resumeTimeRef.current !== null) {
           const timer = setTimeout(() => {
@@ -178,14 +173,12 @@ export default function AnimeDetailScreen() {
       };
   }, [player, currentEpId, anime, episodes, saveCurrentProgress]);
 
-  // VIDEO SOURCE UPDATE
   useEffect(() => {
     if (currentVideoSource && !loading) {
       player.replace(currentVideoSource);
     }
   }, [currentVideoSource, loading]);
 
-  // FINISHED HANDLING
   useEffect(() => {
       const subscription = player.addListener('playToEnd', () => handleVideoFinished());
       return () => subscription.remove();
@@ -269,17 +262,22 @@ export default function AnimeDetailScreen() {
       determineSource();
   }, [currentEpId, episodes, downloadedEpIds]); 
 
+  // ✅ COST SAVER 3: Replaced expensive Firestore reads with free local cache
   const checkAndIncrementView = async () => {
       const user = auth.currentUser;
       if (!user || !id) return;
+      
+      const localKey = `viewed_anime_${user.uid}_${id}`;
       try {
-          const viewRef = doc(db, 'users', user.uid, 'viewed_anime', id as string);
-          const viewSnap = await getDoc(viewRef);
-          if (!viewSnap.exists()) {
-              await setDoc(viewRef, { viewedAt: serverTimestamp() });
+          const hasViewedLocally = await AsyncStorage.getItem(localKey);
+          
+          if (!hasViewedLocally) {
+              await AsyncStorage.setItem(localKey, 'true');
               await incrementAnimeView(id as string);
           }
-      } catch (e) {}
+      } catch (e) {
+          console.log("View track error", e);
+      }
   };
 
   const loadAllData = async () => {
@@ -449,7 +447,6 @@ export default function AnimeDetailScreen() {
       loadAllData(); 
   };
 
-  // ✅ HELPER: OPEN SOCIAL LINKS
   const openSocial = (url: string) => {
       Linking.openURL(url).catch(err => console.error("Couldn't load page", err));
   };
@@ -548,7 +545,6 @@ export default function AnimeDetailScreen() {
                             </View>
                         </View>
 
-                        {/* Interaction Row */}
                         <View style={styles.interactionRow}>
                             <TouchableOpacity style={[styles.interactBtn, { backgroundColor: theme.card }]} onPress={() => handleReaction('like')}>
                                 <Ionicons name={userReaction === 'like' ? "thumbs-up" : "thumbs-up-outline"} size={20} color={userReaction === 'like' ? theme.tint : theme.text} />
@@ -576,7 +572,6 @@ export default function AnimeDetailScreen() {
                         </View>
                     </View>
 
-                    {/* ✅ RIGHTS CHECK: conditionally render Episodes vs Missing License Warning */}
                     {anime.hasStreamingRights === false ? (
                         <View style={[styles.noLicenseContainer, { backgroundColor: theme.card }]}>
                             <Ionicons name="lock-closed" size={40} color={theme.subText} style={{ marginBottom: 15 }} />
@@ -831,7 +826,6 @@ const styles = StyleSheet.create({
   cancelBtn: { padding: 12, flex: 1, alignItems: 'center', backgroundColor: '#f0f0f0', borderRadius: 8 },
   submitBtn: { padding: 12, flex: 1, alignItems: 'center', borderRadius: 8 },
 
-  // ✅ NEW NO LICENSE STYLES
   noLicenseContainer: { margin: 20, padding: 30, borderRadius: 16, alignItems: 'center' },
   noLicenseTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 10 },
   noLicenseText: { textAlign: 'center', lineHeight: 22, fontSize: 14 },

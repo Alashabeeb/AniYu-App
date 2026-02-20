@@ -1,15 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { Stack, useRouter } from 'expo-router';
-import { collection, doc, limit, onSnapshot, orderBy, query, updateDoc } from 'firebase/firestore'; // ✅ Added limit
+import { collection, doc, limit, onSnapshot, orderBy, query, updateDoc } from 'firebase/firestore';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-    FlatList,
-    RefreshControl,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  FlatList,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { auth, db } from '../config/firebaseConfig';
@@ -23,10 +23,9 @@ export default function NotificationsScreen() {
 
   const [localNotifs, setLocalNotifs] = useState<AppNotification[]>([]);
   const [socialNotifs, setSocialNotifs] = useState<any[]>([]);
-  const [globalNotifs, setGlobalNotifs] = useState<any[]>([]); // ✅ New State for Global Announcements
+  const [globalNotifs, setGlobalNotifs] = useState<any[]>([]); 
   const [refreshing, setRefreshing] = useState(false);
 
-  // 1. Fetch Local Notifications (Drops)
   useFocusEffect(
     useCallback(() => {
       loadLocalData();
@@ -38,33 +37,31 @@ export default function NotificationsScreen() {
     setLocalNotifs(data);
   };
 
-  // 2. Fetch Notifications (Firestore)
   useEffect(() => {
       if (!currentUser) return;
 
-      // A. Personal Notifications (Bans, Likes, Comments) - Standard
+      // ✅ COST SAVER 5: Limit heavily ensures your database reads stay cheap
       const qPersonal = query(
           collection(db, 'users', currentUser.uid, 'notifications'),
-          orderBy('createdAt', 'desc')
+          orderBy('createdAt', 'desc'),
+          limit(30) 
       );
       const unsubPersonal = onSnapshot(qPersonal, (snapshot) => {
           const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isGlobal: false }));
           setSocialNotifs(data);
       });
 
-      // B. Global Announcements (New Anime/Manga) - ✅ OPTIMIZED & NEW
-      // Listens to the single 'announcements' collection instead of checking user's subcollection
       const qGlobal = query(
           collection(db, 'announcements'),
           orderBy('createdAt', 'desc'),
-          limit(20) // ✅ Limit to 20 to prevent high read costs
+          limit(20) 
       );
       const unsubGlobal = onSnapshot(qGlobal, (snapshot) => {
           const data = snapshot.docs.map(doc => ({ 
               id: doc.id, 
               ...doc.data(), 
-              isGlobal: true, // Flag to prevent "mark as read" writes
-              read: true // Treat as read by default to avoid unread dot complexity without local DB
+              isGlobal: true, 
+              read: true 
           }));
           setGlobalNotifs(data);
       });
@@ -82,39 +79,32 @@ export default function NotificationsScreen() {
   };
 
   const handleMarkRead = async () => {
-      // Mark Firestore Personal Notifications Only
       socialNotifs.forEach(async (item) => {
         if (!item.read && !item.isGlobal) {
            await updateDoc(doc(db, 'users', currentUser!.uid, 'notifications', item.id), { read: true });
         }
       });
-      // Mark Local
       await markAllAsRead();
       loadLocalData();
   };
 
-  // 3. Combine & Sort (Newest First)
   const combinedNotifications = [...socialNotifs, ...globalNotifs, ...localNotifs].sort((a, b) => {
       const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.date || 0);
       const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.date || 0);
       return timeB - timeA;
   });
 
-  // ✅ UPDATED ICON LOGIC: Handle New Admin Types to prevent crashes
   const getIcon = (type: string) => {
       switch(type) {
-          // Standard Social
           case 'like': return { name: 'heart', color: '#FF6B6B' };
           case 'comment': return { name: 'chatbubble', color: '#4ECDC4' };
           case 'repost': return { name: 'repeat', color: '#45B7D1' };
           case 'follow': return { name: 'person-add', color: '#FFD700' };
           
-          // New Admin/Global Types
-          case 'anime_release': return { name: 'play-circle', color: '#8b5cf6' }; // 🟣 Purple for Anime
-          case 'manga_release': return { name: 'book', color: '#ec4899' }; // 🩷 Pink for Manga
-          case 'system_broadcast': return { name: 'megaphone', color: '#FF9F1C' }; // 📢 Orange for Broadcasts
+          case 'anime_release': return { name: 'play-circle', color: '#8b5cf6' }; 
+          case 'manga_release': return { name: 'book', color: '#ec4899' }; 
+          case 'system_broadcast': return { name: 'megaphone', color: '#FF9F1C' }; 
           
-          // Legacy Admin Types
           case 'system': return { name: 'megaphone', color: '#FF9F1C' };
           case 'error': return { name: 'warning', color: '#EF4444' };
           case 'success': return { name: 'checkmark-circle', color: '#10B981' };
@@ -126,8 +116,6 @@ export default function NotificationsScreen() {
   const handlePress = async (item: any) => {
       if (!currentUser) return;
 
-      // 1. Mark as Read (Only if it's a personal notification)
-      // ✅ We skip global announcements because users can't write to that collection
       if (!item.read && !item.isGlobal) {
           try {
               if (item.createdAt) {
@@ -141,12 +129,10 @@ export default function NotificationsScreen() {
           }
       }
 
-      // 2. Navigation Logic - ✅ Added handlers for new types
       if (item.targetId) {
           if (item.type === 'like' || item.type === 'comment' || item.type === 'repost') {
              router.push({ pathname: '/post-details', params: { postId: item.targetId } });
           } 
-          // New Global Types
           else if (item.type === 'anime_release' || item.type === 'anime') {
              router.push({ pathname: '/anime/[id]', params: { id: item.targetId } });
           } 
@@ -169,7 +155,6 @@ export default function NotificationsScreen() {
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: theme.text }]}>Notifications</Text>
         
-        {/* Mark All Read Button */}
         <TouchableOpacity onPress={handleMarkRead} style={{ marginLeft: 'auto', padding: 5 }}>
             <Ionicons name="checkmark-done-outline" size={26} color={theme.tint} />
         </TouchableOpacity>

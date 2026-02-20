@@ -6,14 +6,12 @@ import {
     collection,
     doc,
     DocumentSnapshot,
+    getDoc,
     getDocs,
-    increment,
     limit,
-    onSnapshot,
     orderBy,
     query,
     startAfter,
-    updateDoc,
     where
 } from 'firebase/firestore';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -39,9 +37,6 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const FEED_CACHE_KEY = 'aniyu_feed_cache_v2';
 
-// Tracks viewed posts in memory to prevent spamming Firebase reads/writes per session
-const viewedFeedSession = new Set<string>();
-
 export default function FeedScreen() {
   const router = useRouter();
   const { theme } = useTheme();
@@ -54,7 +49,6 @@ export default function FeedScreen() {
 
   const [refreshing, setRefreshing] = useState(false);
   
-  // DUAL-PAGINATION STATE FOR ALGORITHM
   const [globalLastVisible, setGlobalLastVisible] = useState<DocumentSnapshot | null>(null);
   const [interestLastVisible, setInterestLastVisible] = useState<DocumentSnapshot | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -78,46 +72,59 @@ export default function FeedScreen() {
           } catch(e) { console.log("Feed cache error", e); }
       };
       loadCache();
-      return () => viewedFeedSession.clear();
   }, []);
 
-  // 1. FETCH USER PROFILE PREFERENCES
+  // ✅ COST SAVER 4: Cached profile fetch instead of live onSnapshot listener
   useEffect(() => {
-      if (!currentUser) return;
-      const unsub = onSnapshot(doc(db, 'users', currentUser.uid), (docSnap) => {
-          const data = docSnap.data();
-          setBlockedUsers(data?.blockedUsers || []);
-          setUserInterests(data?.interests || data?.favoriteGenres || []);
-          setInterestsLoaded(true); // Signal algorithm to start
-      });
-      return unsub;
+      let isMounted = true;
+      const loadUserPreferences = async () => {
+          if (!currentUser) return;
+          try {
+              const cacheKey = `prefs_${currentUser.uid}`;
+              const cachedPrefs = await AsyncStorage.getItem(cacheKey);
+              if (cachedPrefs && isMounted) {
+                  const data = JSON.parse(cachedPrefs);
+                  setBlockedUsers(data.blockedUsers || []);
+                  setUserInterests(data.interests || []);
+                  setInterestsLoaded(true);
+              }
+
+              const userSnap = await getDoc(doc(db, 'users', currentUser.uid));
+              if (userSnap.exists() && isMounted) {
+                  const data = userSnap.data();
+                  setBlockedUsers(data?.blockedUsers || []);
+                  setUserInterests(data?.interests || data?.favoriteGenres || []);
+                  setInterestsLoaded(true);
+                  
+                  await AsyncStorage.setItem(cacheKey, JSON.stringify({
+                      blockedUsers: data?.blockedUsers || [],
+                      interests: data?.interests || data?.favoriteGenres || []
+                  }));
+              }
+          } catch (error) {
+              console.log("Failed to load prefs", error);
+          }
+      };
+      loadUserPreferences();
+      return () => { isMounted = false; };
   }, [currentUser]);
 
-  // 2. SCORING ALGORITHM (The "For You" Logic)
   const calculatePostScore = (post: any, interests: string[]) => {
       let score = 0;
-
-      // A. Interest Matching
       if (post.tags && Array.isArray(post.tags) && interests.length > 0) {
           const matches = post.tags.filter((tag: string) => interests.includes(tag));
           score += (matches.length * 50); 
       }
-
-      // B. Engagement Metrics 
       score += (post.likeCount || 0) * 2;
       score += (post.commentCount || 0) * 3;
       score += (post.repostCount || 0) * 5;
-
-      // C. Time Decay 
       if (post.createdAt?.seconds) {
           const hoursOld = (Date.now() / 1000 - post.createdAt.seconds) / 3600;
           score -= (hoursOld * 1.5); 
       }
-
       return score;
   };
 
-  // 3. CORE FETCH ENGINE
   const fetchFeedChunk = async (isRefresh = false) => {
       if (!hasMore && !isRefresh) return;
       if (isRefresh) {
@@ -131,14 +138,12 @@ export default function FeedScreen() {
           const safeInterests = userInterests.slice(0, 10);
           const fetchPromises = [];
 
-          // QUERY 1: Global Fresh Posts 
           let globalQ = query(collection(db, 'posts'), where('parentId', '==', null), orderBy('createdAt', 'desc'), limit(10));
           if (!isRefresh && globalLastVisible) {
               globalQ = query(collection(db, 'posts'), where('parentId', '==', null), orderBy('createdAt', 'desc'), startAfter(globalLastVisible), limit(10));
           }
           fetchPromises.push(getDocs(globalQ));
 
-          // QUERY 2: Interest-Specific Posts 
           if (safeInterests.length > 0) {
               let intQ = query(collection(db, 'posts'), where('parentId', '==', null), where('tags', 'array-contains-any', safeInterests), orderBy('createdAt', 'desc'), limit(10));
               if (!isRefresh && interestLastVisible) {
@@ -236,32 +241,15 @@ export default function FeedScreen() {
 
   const onRefresh = useCallback(() => { fetchFeedChunk(true); }, [interestsLoaded]);
 
-  // ✅ PERFECTED IMPRESSION TRACKING
-  // This says: "Only trigger if 50% of the PostCard is visible on the screen"
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
 
+  // ✅ COST SAVER 2: Removed database writes! Scrolling is now 100% free.
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
       if (viewableItems.length > 0) {
           setPlayingPostId(viewableItems[0].item.id);
       } else {
           setPlayingPostId(null);
       }
-
-      viewableItems.forEach((viewToken) => {
-          if (viewToken.isViewable && viewToken.item?.id) {
-              const postId = viewToken.item.id;
-              
-              // Only log one view per user session to avoid artificial inflation
-              if (!viewedFeedSession.has(postId)) {
-                  viewedFeedSession.add(postId);
-                  try { 
-                      updateDoc(doc(db, 'posts', postId), { views: increment(1) }); 
-                  } catch (error) {
-                      console.log("Failed to update post views", error);
-                  }
-              }
-          }
-      });
   }).current;
 
   const renderUserItem = ({ item }: any) => (
@@ -281,7 +269,7 @@ export default function FeedScreen() {
   const renderFeedList = (data: any[], emptyMessage: string) => (
     <FlatList
         data={data}
-        keyExtractor={(item, index) => item.id ? `${item.id}-${index}` : String(index)} // Strict unique key
+        keyExtractor={(item, index) => item.id ? `${item.id}-${index}` : String(index)}
         contentContainerStyle={{ paddingBottom: 100, width: SCREEN_WIDTH }}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.tint} />}
@@ -301,11 +289,9 @@ export default function FeedScreen() {
         renderItem={({ item }) => (
             <PostCard 
                 post={item} 
-                // ✅ Passes 'activeTab' so video pauses when swiping to Chat
                 isVisible={playingPostId === item.id && activeTab === 'All'} 
             />
         )}
-        // ✅ Ensures list updates immediately when tab changes or video changes
         extraData={{ playingPostId, activeTab }}
     />
   );
@@ -328,8 +314,6 @@ export default function FeedScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
-      
-      {/* HEADER SECTION */}
       <View style={[styles.header, { borderBottomColor: theme.border }]}>
         {!showSearch ? (
             <View style={styles.headerTop}>

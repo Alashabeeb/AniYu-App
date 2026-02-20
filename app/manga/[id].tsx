@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage'; // ✅ Added AsyncStorage
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { doc, DocumentSnapshot, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { DocumentSnapshot } from 'firebase/firestore';
 import React, { useCallback, useState } from 'react';
 import {
     ActivityIndicator, Alert, Image,
@@ -8,7 +9,7 @@ import {
     Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { auth, db } from '../../config/firebaseConfig';
+import { auth } from '../../config/firebaseConfig';
 import { useTheme } from '../../context/ThemeContext';
 import { downloadChapterToFile, getMangaDownloads } from '../../services/downloadService';
 import { getMangaHistory } from '../../services/historyService';
@@ -19,7 +20,6 @@ import {
     incrementMangaView
 } from '../../services/mangaService';
 
-// ✅ SOCIAL LINKS (Replace with actual)
 const SOCIAL_LINKS = [
     { id: 'mail', icon: 'mail', url: 'mailto:partnerships@aniyu.com', color: '#EA4335' },
     { id: 'twitter', icon: 'logo-twitter', url: 'https://twitter.com/aniyu_app', color: '#1DA1F2' },
@@ -36,7 +36,6 @@ export default function MangaDetailScreen() {
   const [chapters, setChapters] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   
-  // PAGINATION STATE
   const [lastVisible, setLastVisible] = useState<DocumentSnapshot | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
@@ -48,6 +47,8 @@ export default function MangaDetailScreen() {
   const [modalVisible, setModalVisible] = useState(false);
   const [userRating, setUserRating] = useState(0);
   const [submittingReview, setSubmittingReview] = useState(false);
+
+  const [activeTab, setActiveTab] = useState('Overview');
 
   useFocusEffect(useCallback(() => { if (id) loadStatus(); }, [id]));
   useFocusEffect(useCallback(() => { if(id) loadData(); }, [id]));
@@ -91,17 +92,22 @@ export default function MangaDetailScreen() {
       setLoadingMore(false);
   };
 
+  // ✅ COST SAVER 3: Replaced expensive Firestore reads with free local cache
   const checkAndIncrementView = async () => {
       const user = auth.currentUser;
       if (!user || !id) return;
+      
+      const localKey = `viewed_manga_${user.uid}_${id}`;
       try {
-          const viewRef = doc(db, 'users', user.uid, 'viewed_manga', id as string);
-          const viewSnap = await getDoc(viewRef);
-          if (!viewSnap.exists()) {
-              await setDoc(viewRef, { viewedAt: serverTimestamp() });
+          const hasViewedLocally = await AsyncStorage.getItem(localKey);
+          
+          if (!hasViewedLocally) {
+              await AsyncStorage.setItem(localKey, 'true');
               await incrementMangaView(id as string);
           }
-      } catch (e) {}
+      } catch (e) {
+          console.log("View track error", e);
+      }
   };
 
   const submitReview = async () => {
@@ -151,9 +157,8 @@ export default function MangaDetailScreen() {
       });
   };
 
-  // ✅ HELPER: OPEN SOCIAL LINKS
   const openSocial = (url: string) => {
-      Linking.openURL(url).catch(err => console.error("Couldn't load page", err));
+      Linking.openURL(url).catch(err => console.error("Couldn't open link", err));
   };
 
   if (loading && !manga) return <View style={[styles.loading, { backgroundColor: theme.background }]}><ActivityIndicator size="large" color={theme.tint} /></View>;
@@ -163,6 +168,7 @@ export default function MangaDetailScreen() {
     <View style={[styles.container, { backgroundColor: theme.background }]}>
       <Stack.Screen options={{ headerTitle: '', headerTransparent: true, headerTintColor: 'white' }} />
       <SafeAreaView edges={['top', 'bottom', 'left', 'right']} style={{ flex: 1 }}>
+        
         <View style={styles.headerContainer}>
             <Image source={{ uri: manga.images?.jpg?.image_url || manga.coverUrl }} style={styles.heroPoster} resizeMode="cover" />
             <View style={styles.headerOverlay} />
@@ -175,85 +181,111 @@ export default function MangaDetailScreen() {
             </View>
         </View>
 
-        <ScrollView style={styles.contentScroll} contentContainerStyle={{ paddingBottom: 20 }}>
-            <View style={styles.detailsContainer}>
-                <Text style={[styles.sectionTitle, { color: theme.text }]}>Synopsis</Text>
-                <Text style={[styles.synopsis, { color: theme.subText }]}>{manga.synopsis}</Text>
-                <View style={[styles.statsGrid, { backgroundColor: theme.card }]}>
-                    <TouchableOpacity style={styles.statBox} onPress={() => setModalVisible(true)}>
-                        <Text style={{ color: theme.subText }}>Rating</Text>
-                        <Text style={[styles.val, { color: theme.text }]}>{manga.score ? Number(manga.score).toFixed(1) : 'N/A'}</Text>
-                    </TouchableOpacity>
-                    <View style={styles.statBox}>
-                        <Text style={{ color: theme.subText }}>Chapters</Text>
-                        <Text style={[styles.val, { color: theme.text }]}>{manga.totalChapters || chapters.length || '?'}</Text>
-                    </View>
-                </View>
-            </View>
+        <View style={[styles.tabBar, { backgroundColor: theme.background, borderBottomColor: theme.border }]}>
+            {['Overview', 'Chapters'].map(tab => (
+                <TouchableOpacity 
+                    key={tab} 
+                    style={[styles.tabItem, activeTab === tab && { borderBottomColor: theme.tint }]}
+                    onPress={() => setActiveTab(tab)}
+                >
+                    <Text style={[styles.tabText, { color: activeTab === tab ? theme.tint : theme.subText }]}>{tab}</Text>
+                </TouchableOpacity>
+            ))}
+        </View>
 
-            {/* ✅ RIGHTS CHECK: Conditionally render Chapters vs Warning */}
-            {manga.hasReadingRights === false ? (
-                <View style={[styles.noLicenseContainer, { backgroundColor: theme.card }]}>
-                    <Ionicons name="lock-closed" size={40} color={theme.subText} style={{ marginBottom: 15 }} />
-                    <Text style={[styles.noLicenseTitle, { color: theme.text }]}>
-                        Content Unavailable
-                    </Text>
-                    <Text style={[styles.noLicenseText, { color: theme.subText }]}>
-                        We currently do not hold the reading rights or licensing to provide chapters for this manga.
-                    </Text>
-                    <Text style={[styles.noLicenseText, { color: theme.subText, marginTop: 10 }]}>
-                        If you are a licensor or know how we can acquire these rights, your assistance would be greatly appreciated!
-                    </Text>
+        <ScrollView style={styles.contentScroll} contentContainerStyle={{ paddingBottom: 20 }}>
+            {activeTab === 'Overview' && (
+                <View style={styles.detailsContainer}>
+                    <Text style={[styles.sectionTitle, { color: theme.text }]}>Synopsis</Text>
+                    <Text style={[styles.synopsis, { color: theme.subText }]}>{manga.synopsis}</Text>
                     
-                    <View style={styles.socialRow}>
-                        {SOCIAL_LINKS.map(link => (
-                            <TouchableOpacity 
-                                key={link.id} 
-                                style={[styles.socialBtn, { backgroundColor: link.color + '20' }]} 
-                                onPress={() => openSocial(link.url)}
-                            >
-                                <Ionicons name={link.icon as any} size={22} color={link.color} />
-                            </TouchableOpacity>
+                    <View style={[styles.statsGrid, { backgroundColor: theme.card }]}>
+                        <TouchableOpacity style={styles.statBox} onPress={() => setModalVisible(true)}>
+                            <Text style={{ color: theme.subText }}>Rating</Text>
+                            <Text style={[styles.val, { color: theme.text }]}>{manga.score ? Number(manga.score).toFixed(1) : 'N/A'}</Text>
+                        </TouchableOpacity>
+                        <View style={styles.statBox}>
+                            <Text style={{ color: theme.subText }}>Chapters</Text>
+                            <Text style={[styles.val, { color: theme.text }]}>{manga.totalChapters || chapters.length || '?'}</Text>
+                        </View>
+                    </View>
+                    
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 15 }}>
+                        {manga.genres?.map((g: string) => (
+                            <View key={g} style={{ backgroundColor: theme.card, padding: 6, borderRadius: 6, marginRight: 8, marginBottom: 8 }}>
+                                <Text style={{ color: theme.subText, fontSize: 12 }}>{g}</Text>
+                            </View>
                         ))}
                     </View>
                 </View>
-            ) : (
-                <>
-                    <View style={styles.sectionHeader}>
-                        <Text style={[styles.sectionTitle, { color: theme.text, marginLeft: 20 }]}>Chapters</Text>
-                    </View>
-                    
-                    <View style={styles.chapterList}>
-                        {chapters.map((ch) => {
-                            const chId = String(ch.id || ch.number);
-                            const isRead = readChapters.includes(chId);
-                            return (
-                                <View key={chId} style={{flexDirection: 'row', alignItems: 'center', marginBottom: 10}}>
-                                    <TouchableOpacity style={[styles.chapterCard, { backgroundColor: theme.card, flex: 1 }]} onPress={() => handleReadChapter(ch)}>
-                                        <View>
-                                            <Text style={[styles.chapterNum, { color: isRead ? theme.subText : theme.tint }]}>
-                                                Chapter {ch.number} {isRead && '✓'}
-                                            </Text>
-                                            <Text numberOfLines={1} style={[styles.chapterTitle, { color: theme.subText }]}>{ch.title}</Text>
+            )}
+
+            {activeTab === 'Chapters' && (
+                <View>
+                    {manga.hasReadingRights === false ? (
+                        <View style={[styles.noLicenseContainer, { backgroundColor: theme.card }]}>
+                            <Ionicons name="lock-closed" size={40} color={theme.subText} style={{ marginBottom: 15 }} />
+                            <Text style={[styles.noLicenseTitle, { color: theme.text }]}>
+                                Content Unavailable
+                            </Text>
+                            <Text style={[styles.noLicenseText, { color: theme.subText }]}>
+                                We currently do not hold the reading rights or licensing to provide chapters for this manga.
+                            </Text>
+                            <Text style={[styles.noLicenseText, { color: theme.subText, marginTop: 10 }]}>
+                                If you are a licensor or know how we can acquire these rights, your assistance would be greatly appreciated!
+                            </Text>
+                            
+                            <View style={styles.socialRow}>
+                                {SOCIAL_LINKS.map(link => (
+                                    <TouchableOpacity 
+                                        key={link.id} 
+                                        style={[styles.socialBtn, { backgroundColor: link.color + '20' }]} 
+                                        onPress={() => openSocial(link.url)}
+                                    >
+                                        <Ionicons name={link.icon as any} size={22} color={link.color} />
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+                        </View>
+                    ) : (
+                        <>
+                            <View style={styles.sectionHeader}>
+                                <Text style={[styles.sectionTitle, { color: theme.text, marginLeft: 20 }]}>Chapters</Text>
+                            </View>
+                            
+                            <View style={styles.chapterList}>
+                                {chapters.map((ch) => {
+                                    const chId = String(ch.id || ch.number);
+                                    const isRead = readChapters.includes(chId);
+                                    return (
+                                        <View key={chId} style={{flexDirection: 'row', alignItems: 'center', marginBottom: 10}}>
+                                            <TouchableOpacity style={[styles.chapterCard, { backgroundColor: theme.card, flex: 1 }]} onPress={() => handleReadChapter(ch)}>
+                                                <View>
+                                                    <Text style={[styles.chapterNum, { color: isRead ? theme.subText : theme.tint }]}>
+                                                        Chapter {ch.number} {isRead && '✓'}
+                                                    </Text>
+                                                    <Text numberOfLines={1} style={[styles.chapterTitle, { color: theme.subText }]}>{ch.title}</Text>
+                                                </View>
+                                            </TouchableOpacity>
+                                            <TouchableOpacity onPress={() => handleDownload(ch)} style={{padding: 10}}>
+                                                <Ionicons name={downloadedChapters.includes(chId) ? "checkmark-circle" : "download-outline"} size={24} color={downloadedChapters.includes(chId) ? "#10b981" : theme.subText} />
+                                            </TouchableOpacity>
                                         </View>
+                                    );
+                                })}
+                                
+                                {hasMore && (
+                                    <TouchableOpacity 
+                                        onPress={handleLoadMore} 
+                                        style={{ padding: 15, alignItems: 'center', backgroundColor: theme.card, borderRadius: 8, marginTop: 10 }}
+                                    >
+                                        {loadingMore ? <ActivityIndicator color={theme.tint} /> : <Text style={{ color: theme.tint, fontWeight: 'bold' }}>Load More Chapters</Text>}
                                     </TouchableOpacity>
-                                    <TouchableOpacity onPress={() => handleDownload(ch)} style={{padding: 10}}>
-                                        <Ionicons name={downloadedChapters.includes(chId) ? "checkmark-circle" : "download-outline"} size={24} color={downloadedChapters.includes(chId) ? "#10b981" : theme.subText} />
-                                    </TouchableOpacity>
-                                </View>
-                            );
-                        })}
-                        
-                        {hasMore && (
-                            <TouchableOpacity 
-                                onPress={handleLoadMore} 
-                                style={{ padding: 15, alignItems: 'center', backgroundColor: theme.card, borderRadius: 8, marginTop: 10 }}
-                            >
-                                {loadingMore ? <ActivityIndicator color={theme.tint} /> : <Text style={{ color: theme.tint, fontWeight: 'bold' }}>Load More Chapters</Text>}
-                            </TouchableOpacity>
-                        )}
-                    </View>
-                </>
+                                )}
+                            </View>
+                        </>
+                    )}
+                </View>
             )}
         </ScrollView>
         
@@ -296,6 +328,11 @@ const styles = StyleSheet.create({
   headerContent: { position: 'absolute', bottom: 20, left: 20, right: 20, flexDirection: 'row', gap: 15 },
   smallPoster: { width: 100, height: 150, borderRadius: 8 },
   title: { fontSize: 22, fontWeight: 'bold' },
+  
+  tabBar: { flexDirection: 'row', borderBottomWidth: 1, paddingHorizontal: 10 },
+  tabItem: { flex: 1, alignItems: 'center', paddingVertical: 15, borderBottomWidth: 3, borderBottomColor: 'transparent' },
+  tabText: { fontWeight: 'bold', fontSize: 14 },
+  
   contentScroll: { flex: 1 },
   detailsContainer: { padding: 20 },
   sectionTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 10 },
@@ -303,7 +340,7 @@ const styles = StyleSheet.create({
   statsGrid: { flexDirection: 'row', justifyContent: 'space-between', padding: 15, borderRadius: 8, marginBottom: 20 },
   statBox: { alignItems: 'center' },
   val: { fontWeight: 'bold', fontSize: 16 },
-  sectionHeader: { marginTop: 10 },
+  sectionHeader: { marginTop: 10, marginBottom: 10 },
   chapterList: { padding: 20, paddingTop: 0 },
   chapterCard: { padding: 15, borderRadius: 10 },
   chapterNum: { fontSize: 16, fontWeight: 'bold', marginBottom: 2 },
@@ -316,7 +353,6 @@ const styles = StyleSheet.create({
   cancelBtn: { padding: 12, flex: 1, alignItems: 'center', backgroundColor: '#f0f0f0', borderRadius: 8 },
   submitBtn: { padding: 12, flex: 1, alignItems: 'center', borderRadius: 8 },
 
-  // ✅ NO LICENSE STYLES
   noLicenseContainer: { margin: 20, padding: 30, borderRadius: 16, alignItems: 'center', marginTop: 10 },
   noLicenseTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 10 },
   noLicenseText: { textAlign: 'center', lineHeight: 22, fontSize: 14 },

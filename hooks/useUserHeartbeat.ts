@@ -1,35 +1,40 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { useEffect } from 'react';
 import { AppState } from 'react-native';
 import { auth, db } from '../config/firebaseConfig';
 
+const HEARTBEAT_CACHE_KEY = 'last_heartbeat_timestamp';
+const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000; // 12 hours
+
 export const useUserHeartbeat = () => {
   useEffect(() => {
-    // 1. Function to update "lastActiveAt"
     const updateHeartbeat = async () => {
       const user = auth.currentUser;
-      if (user) {
-        try {
-          const userRef = doc(db, 'users', user.uid);
-          await updateDoc(userRef, {
-            lastActiveAt: serverTimestamp(), // ✅ Updates time to NOW
-            isOnline: true
-          });
-          console.log("💓 Heartbeat sent");
-        } catch (error) {
-          console.log("Heartbeat error", error);
+      if (!user) return;
+
+      try {
+        // ✅ COST SAVER: Check local storage first
+        const lastHeartbeat = await AsyncStorage.getItem(HEARTBEAT_CACHE_KEY);
+        const now = Date.now();
+
+        if (!lastHeartbeat || now - parseInt(lastHeartbeat) > TWELVE_HOURS_MS) {
+            const userRef = doc(db, 'users', user.uid);
+            await updateDoc(userRef, {
+              lastActiveAt: serverTimestamp(),
+              isOnline: true
+            });
+            
+            await AsyncStorage.setItem(HEARTBEAT_CACHE_KEY, now.toString());
+            console.log("💓 Heartbeat sent (Throttled to 12 hrs)");
         }
+      } catch (error) {
+        console.log("Heartbeat error", error);
       }
     };
 
-    // 2. Run immediately on mount
     updateHeartbeat();
 
-    // 3. Run every 15 minutes (900,000ms) while app is open
-    // ✅ CHANGED from 5 mins to 15 mins to save 66% on database writes
-    const interval = setInterval(updateHeartbeat, 15 * 60 * 1000);
-
-    // 4. Update when app comes to foreground (user switches back to app)
     const subscription = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'active') {
         updateHeartbeat();
@@ -37,7 +42,6 @@ export const useUserHeartbeat = () => {
     });
 
     return () => {
-      clearInterval(interval);
       subscription.remove();
     };
   }, []);
