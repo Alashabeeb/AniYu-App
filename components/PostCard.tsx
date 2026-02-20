@@ -51,17 +51,30 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
   const [menuVisible, setMenuVisible] = useState(false);
   const [reportModalVisible, setReportModalVisible] = useState(false);
 
-  const isLiked = post.likes?.includes(currentUser?.uid);
-  const isReposted = post.reposts?.includes(currentUser?.uid);
+  // ✅ OPTIMISTIC UI STATE: Allows instant visual updates without waiting for Firebase
+  const [localIsLiked, setLocalIsLiked] = useState(post.likes?.includes(currentUser?.uid));
+  const [localLikeCount, setLocalLikeCount] = useState(post.likeCount || post.likes?.length || 0);
+
+  const [localIsReposted, setLocalIsReposted] = useState(post.reposts?.includes(currentUser?.uid));
+  const [localRepostCount, setLocalRepostCount] = useState(post.repostCount || post.reposts?.length || 0);
+
   const isOwner = post.userId === currentUser?.uid;
   const isPinned = post.pinned === true;
+
+  // Sync local state if the feed refreshes and passes down new post props
+  useEffect(() => {
+      setLocalIsLiked(post.likes?.includes(currentUser?.uid));
+      setLocalLikeCount(post.likeCount || post.likes?.length || 0);
+      setLocalIsReposted(post.reposts?.includes(currentUser?.uid));
+      setLocalRepostCount(post.repostCount || post.reposts?.length || 0);
+  }, [post]);
 
   const videoSource = post.mediaType === 'video' && post.mediaUrl ? post.mediaUrl : null;
   
   const player = useVideoPlayer(videoSource, player => { 
       if (videoSource) {
           player.loop = true;
-          player.play(); 
+          // Notice: We don't auto-play here, we let the useEffect handle it safely
       }
   });
 
@@ -95,28 +108,53 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
 
   const handleLike = async () => {
     if (!currentUser) return;
-    if (!isLiked) {
+    
+    // 1. Optimistic Update (Instant UI feedback)
+    const newIsLiked = !localIsLiked;
+    setLocalIsLiked(newIsLiked);
+    setLocalLikeCount((prev: number) => prev + (newIsLiked ? 1 : -1));
+
+    // 2. Notification
+    if (newIsLiked) {
         sendSocialNotification(post.userId, 'like', { uid: currentUser.uid, name: currentUser.displayName || 'User', avatar: currentUser.photoURL || '' }, '', post.id);
     }
-    const postRef = doc(db, 'posts', post.id);
     
-    await updateDoc(postRef, { 
-        likes: isLiked ? arrayRemove(currentUser.uid) : arrayUnion(currentUser.uid),
-        likeCount: increment(isLiked ? -1 : 1) 
-    });
+    // 3. Database Update
+    try {
+        const postRef = doc(db, 'posts', post.id);
+        await updateDoc(postRef, { 
+            likes: newIsLiked ? arrayUnion(currentUser.uid) : arrayRemove(currentUser.uid),
+            likeCount: increment(newIsLiked ? 1 : -1) 
+        });
+    } catch (e) {
+        // Rollback on network failure
+        setLocalIsLiked(!newIsLiked);
+        setLocalLikeCount((prev: number) => prev + (!newIsLiked ? 1 : -1));
+    }
   };
 
   const handleRepost = async () => {
     if (!currentUser) return;
-    if (!isReposted) {
+    
+    // Optimistic Update
+    const newIsReposted = !localIsReposted;
+    setLocalIsReposted(newIsReposted);
+    setLocalRepostCount((prev: number) => prev + (newIsReposted ? 1 : -1));
+
+    if (newIsReposted) {
         sendSocialNotification(post.userId, 'repost', { uid: currentUser.uid, name: currentUser.displayName || 'User', avatar: currentUser.photoURL || '' }, '', post.id);
     }
-    const postRef = doc(db, 'posts', post.id);
     
-    await updateDoc(postRef, { 
-        reposts: isReposted ? arrayRemove(currentUser.uid) : arrayUnion(currentUser.uid),
-        repostCount: increment(isReposted ? -1 : 1)
-    });
+    try {
+        const postRef = doc(db, 'posts', post.id);
+        await updateDoc(postRef, { 
+            reposts: newIsReposted ? arrayUnion(currentUser.uid) : arrayRemove(currentUser.uid),
+            repostCount: increment(newIsReposted ? 1 : -1)
+        });
+    } catch (e) {
+        setLocalIsReposted(!newIsReposted);
+        setLocalRepostCount((prev: number) => prev + (!newIsReposted ? 1 : -1));
+    }
   };
 
   const handleShare = async () => {
@@ -205,13 +243,8 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
 
           {post.text ? <Text style={[styles.text, { color: theme.text }]}>{post.text}</Text> : null}
 
-          {/* DYNAMIC HEIGHT IMPLEMENTED HERE */}
           {post.mediaUrl && post.mediaType === 'image' && (
-              <Image 
-                  source={{ uri: post.mediaUrl }} 
-                  style={[styles.mediaBase, styles.imageMedia]} 
-                  contentFit="cover" 
-              />
+              <Image source={{ uri: post.mediaUrl }} style={[styles.mediaBase, styles.imageMedia]} contentFit="cover" />
           )}
           {post.mediaUrl && post.mediaType === 'video' && (
               <VideoView 
@@ -225,9 +258,10 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
           )}
 
           <View style={styles.actions}>
+            {/* ✅ BOUND TO LOCAL STATE NOW */}
             <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleLike(); }}>
-              <Ionicons name={isLiked ? "heart" : "heart-outline"} size={18} color={isLiked ? "#FF6B6B" : theme.subText} />
-              <Text style={[styles.count, { color: isLiked ? "#FF6B6B" : theme.subText }]}>{post.likeCount || post.likes?.length || 0}</Text>
+              <Ionicons name={localIsLiked ? "heart" : "heart-outline"} size={18} color={localIsLiked ? "#FF6B6B" : theme.subText} />
+              <Text style={[styles.count, { color: localIsLiked ? "#FF6B6B" : theme.subText }]}>{localLikeCount}</Text>
             </TouchableOpacity>
             
             <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleGoToDetails(); }}>
@@ -235,9 +269,10 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
               <Text style={[styles.count, { color: theme.subText }]}>{post.commentCount || 0}</Text>
             </TouchableOpacity>
             
+            {/* ✅ BOUND TO LOCAL STATE NOW */}
             <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleRepost(); }}>
-              <Ionicons name="repeat-outline" size={18} color={isReposted ? "#00BA7C" : theme.subText} />
-              <Text style={[styles.count, { color: isReposted ? "#00BA7C" : theme.subText }]}>{post.repostCount || post.reposts?.length || 0}</Text>
+              <Ionicons name="repeat-outline" size={18} color={localIsReposted ? "#00BA7C" : theme.subText} />
+              <Text style={[styles.count, { color: localIsReposted ? "#00BA7C" : theme.subText }]}>{localRepostCount}</Text>
             </TouchableOpacity>
             
             <View style={styles.actionBtn}>
@@ -296,16 +331,11 @@ const styles = StyleSheet.create({
   handle: { fontSize: 14, flexShrink: 1 },
   dotsButton: { padding: 5, marginTop: -5 },
   text: { fontSize: 15, lineHeight: 22, marginBottom: 8 },
-  
-  // Shared media base styles
   mediaBase: { width: '100%', borderRadius: 12, marginBottom: 10, backgroundColor: '#111' },
-  
-  // Specific height styles dynamically calculated
-  imageMedia: { height: SCREEN_HEIGHT * 0.40 }, // ~40% of screen
-  videoMedia: { height: SCREEN_HEIGHT * 0.50 }, // ✅ Reduced height to 50%
-  
+  imageMedia: { height: SCREEN_HEIGHT * 0.40 },
+  videoMedia: { height: SCREEN_HEIGHT * 0.50 },
   actions: { flexDirection: 'row', justifyContent: 'space-between', paddingRight: 10 },
-  actionBtn: { flexDirection: 'row', alignItems: 'center', minWidth: 40 },
+  actionBtn: { flexDirection: 'row', alignItems: 'center', minWidth: 40, paddingVertical: 5 }, // Added slight padding for touch target
   count: { fontSize: 12, marginLeft: 4 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
   menuContainer: { width: 250, borderRadius: 12, padding: 10, elevation: 5 },

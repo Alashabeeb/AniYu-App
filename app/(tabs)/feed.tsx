@@ -38,6 +38,8 @@ import { useTheme } from '../../context/ThemeContext';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const FEED_CACHE_KEY = 'aniyu_feed_cache_v2';
+
+// Tracks viewed posts in memory to prevent spamming Firebase reads/writes per session
 const viewedFeedSession = new Set<string>();
 
 export default function FeedScreen() {
@@ -52,7 +54,7 @@ export default function FeedScreen() {
 
   const [refreshing, setRefreshing] = useState(false);
   
-  // ✅ DUAL-PAGINATION STATE FOR THE ALGORITHM
+  // DUAL-PAGINATION STATE FOR ALGORITHM
   const [globalLastVisible, setGlobalLastVisible] = useState<DocumentSnapshot | null>(null);
   const [interestLastVisible, setInterestLastVisible] = useState<DocumentSnapshot | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -79,11 +81,11 @@ export default function FeedScreen() {
       return () => viewedFeedSession.clear();
   }, []);
 
-  // 1. FETCH USER PROFILE FIRST
+  // 1. FETCH USER PROFILE PREFERENCES
   useEffect(() => {
       if (!currentUser) return;
-      const unsub = onSnapshot(doc(db, 'users', currentUser.uid), (doc) => {
-          const data = doc.data();
+      const unsub = onSnapshot(doc(db, 'users', currentUser.uid), (docSnap) => {
+          const data = docSnap.data();
           setBlockedUsers(data?.blockedUsers || []);
           setUserInterests(data?.interests || data?.favoriteGenres || []);
           setInterestsLoaded(true); // Signal algorithm to start
@@ -95,21 +97,21 @@ export default function FeedScreen() {
   const calculatePostScore = (post: any, interests: string[]) => {
       let score = 0;
 
-      // A. Interest Matching (Strongest Signal)
+      // A. Interest Matching
       if (post.tags && Array.isArray(post.tags) && interests.length > 0) {
           const matches = post.tags.filter((tag: string) => interests.includes(tag));
-          score += (matches.length * 50); // Heavy weight for relevant content
+          score += (matches.length * 50); 
       }
 
-      // B. Engagement Metrics (Social Proof)
+      // B. Engagement Metrics 
       score += (post.likeCount || 0) * 2;
       score += (post.commentCount || 0) * 3;
       score += (post.repostCount || 0) * 5;
 
-      // C. Time Decay (Freshness Penalty)
+      // C. Time Decay 
       if (post.createdAt?.seconds) {
           const hoursOld = (Date.now() / 1000 - post.createdAt.seconds) / 3600;
-          score -= (hoursOld * 1.5); // Lose 1.5 points every hour it ages
+          score -= (hoursOld * 1.5); 
       }
 
       return score;
@@ -126,27 +128,25 @@ export default function FeedScreen() {
       }
       
       try {
-          // Prepare to fetch up to 10 of the users interests (Firestore limit for array-contains-any)
           const safeInterests = userInterests.slice(0, 10);
           const fetchPromises = [];
 
-          // QUERY 1: Global Fresh Posts (Discovery)
+          // QUERY 1: Global Fresh Posts 
           let globalQ = query(collection(db, 'posts'), where('parentId', '==', null), orderBy('createdAt', 'desc'), limit(10));
           if (!isRefresh && globalLastVisible) {
               globalQ = query(collection(db, 'posts'), where('parentId', '==', null), orderBy('createdAt', 'desc'), startAfter(globalLastVisible), limit(10));
           }
           fetchPromises.push(getDocs(globalQ));
 
-          // QUERY 2: Interest-Specific Posts (Relevance)
+          // QUERY 2: Interest-Specific Posts 
           if (safeInterests.length > 0) {
               let intQ = query(collection(db, 'posts'), where('parentId', '==', null), where('tags', 'array-contains-any', safeInterests), orderBy('createdAt', 'desc'), limit(10));
               if (!isRefresh && interestLastVisible) {
                   intQ = query(collection(db, 'posts'), where('parentId', '==', null), where('tags', 'array-contains-any', safeInterests), orderBy('createdAt', 'desc'), startAfter(interestLastVisible), limit(10));
               }
-              // 🔥 NOTE: If this fails in the console, Firestore will provide a link to generate a Composite Index. Click it!
               fetchPromises.push(getDocs(intQ).catch(e => {
                   console.warn("Missing Index for personalized feed. Check Firebase console to build it.", e);
-                  return { docs: [] }; // Fallback gracefully if index is building
+                  return { docs: [] }; 
               }));
           }
 
@@ -155,28 +155,24 @@ export default function FeedScreen() {
           const globalSnap = results[0];
           const interestSnap = results[1];
 
-          // Update Pagination Cursors
           if (globalSnap.docs.length > 0) setGlobalLastVisible(globalSnap.docs[globalSnap.docs.length - 1]);
           if (interestSnap && interestSnap.docs?.length > 0) setInterestLastVisible(interestSnap.docs[interestSnap.docs.length - 1]);
-          // Stop pagination if both queries run dry
-          if (globalSnap.docs.length === 0 && (!interestSnap || interestSnap.docs?.length === 0)) {
-                setHasMore(false);
-            }
 
-          // Merge & Deduplicate
-          const postMap = new Map();
-          
-          globalSnap.docs.forEach((doc: any) => { postMap.set(doc.id, { id: doc.id, ...doc.data() }); });
-          if (interestSnap && interestSnap.docs) {
-              interestSnap.docs.forEach((doc: any) => { postMap.set(doc.id, { id: doc.id, ...doc.data() }); });
+          if (globalSnap.docs.length === 0 && (!interestSnap || interestSnap.docs?.length === 0)) {
+              setHasMore(false);
           }
 
-          // Convert back to Array, Filter blocked users, Apply Scoring
+          const postMap = new Map();
+          
+          globalSnap.docs.forEach((docSnap: any) => { postMap.set(docSnap.id, { id: docSnap.id, ...docSnap.data() }); });
+          if (interestSnap && interestSnap.docs) {
+              interestSnap.docs.forEach((docSnap: any) => { postMap.set(docSnap.id, { id: docSnap.id, ...docSnap.data() }); });
+          }
+
           let fetchedChunk = Array.from(postMap.values())
               .filter(p => !blockedUsers.includes(p.userId))
               .map(p => ({ ...p, algoScore: calculatePostScore(p, userInterests) }));
 
-          // Sort this specific chunk by highest score first
           fetchedChunk.sort((a, b) => b.algoScore - a.algoScore);
 
           if (isRefresh) {
@@ -184,7 +180,6 @@ export default function FeedScreen() {
               AsyncStorage.setItem(FEED_CACHE_KEY, JSON.stringify(fetchedChunk)).catch(() => {});
           } else {
               setPosts(prev => {
-                  // Prevent edge-case duplicates when appending
                   const existingIds = new Set(prev.map(p => p.id));
                   const strictlyNew = fetchedChunk.filter(p => !existingIds.has(p.id));
                   return [...prev, ...strictlyNew];
@@ -199,7 +194,6 @@ export default function FeedScreen() {
       }
   };
 
-  // Trigger initial fetch ONLY after interests are loaded
   useEffect(() => {
       if (interestsLoaded) {
           fetchFeedChunk(true);
@@ -215,7 +209,7 @@ export default function FeedScreen() {
                   const lowerText = searchText.toLowerCase();
                   const q = query(collection(db, 'users'), where('username', '>=', lowerText), where('username', '<=', lowerText + '\uf8ff'), limit(20));
                   const snapshot = await getDocs(q);
-                  if (isActive) setUserResults(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+                  if (isActive) setUserResults(snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() })));
               } catch (error) { console.error(error); } 
               finally { if (isActive) setSearchingUsers(false); }
           } else {
@@ -242,6 +236,8 @@ export default function FeedScreen() {
 
   const onRefresh = useCallback(() => { fetchFeedChunk(true); }, [interestsLoaded]);
 
+  // ✅ PERFECTED IMPRESSION TRACKING
+  // This says: "Only trigger if 50% of the PostCard is visible on the screen"
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
 
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
@@ -254,9 +250,15 @@ export default function FeedScreen() {
       viewableItems.forEach((viewToken) => {
           if (viewToken.isViewable && viewToken.item?.id) {
               const postId = viewToken.item.id;
+              
+              // Only log one view per user session to avoid artificial inflation
               if (!viewedFeedSession.has(postId)) {
                   viewedFeedSession.add(postId);
-                  try { updateDoc(doc(db, 'posts', postId), { views: increment(1) }); } catch (error) {}
+                  try { 
+                      updateDoc(doc(db, 'posts', postId), { views: increment(1) }); 
+                  } catch (error) {
+                      console.log("Failed to update post views", error);
+                  }
               }
           }
       });
@@ -279,7 +281,7 @@ export default function FeedScreen() {
   const renderFeedList = (data: any[], emptyMessage: string) => (
     <FlatList
         data={data}
-        keyExtractor={item => item.id}
+        keyExtractor={(item, index) => item.id ? `${item.id}-${index}` : String(index)} // Strict unique key
         contentContainerStyle={{ paddingBottom: 100, width: SCREEN_WIDTH }}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.tint} />}
@@ -297,9 +299,14 @@ export default function FeedScreen() {
             </View>
         }
         renderItem={({ item }) => (
-            <PostCard post={item} isVisible={playingPostId === item.id} />
+            <PostCard 
+                post={item} 
+                // ✅ Passes 'activeTab' so video pauses when swiping to Chat
+                isVisible={playingPostId === item.id && activeTab === 'All'} 
+            />
         )}
-        extraData={playingPostId}
+        // ✅ Ensures list updates immediately when tab changes or video changes
+        extraData={{ playingPostId, activeTab }}
     />
   );
 
