@@ -45,10 +45,10 @@ const RANKS = [
 ];
 
 const SOCIAL_LINKS = [
-    { id: 'mail', icon: 'mail', url: 'mailto:partnerships@aniyu.com', color: '#EA4335' },
-    { id: 'twitter', icon: 'logo-twitter', url: 'https://twitter.com/aniyu_app', color: '#1DA1F2' },
-    { id: 'linkedin', icon: 'logo-linkedin', url: 'https://linkedin.com/company/aniyu', color: '#0A66C2' },
-    { id: 'whatsapp', icon: 'logo-whatsapp', url: 'https://wa.me/1234567890', color: '#25D366' },
+    { id: 'mail', icon: 'mail', url: 'mailto:aniyuhq@gmail.com', color: '#EA4335' },
+    { id: 'X', icon: 'logo-X', url: 'https://x.com/AniYuApp', color: '#1DA1F2' },
+    { id: 'linkedin', icon: 'logo-linkedin', url: 'www.linkedin.com/in/abdulhakeem-habeebullah-257438255', color: '#0A66C2' },
+    { id: 'whatsapp', icon: 'logo-whatsapp', url: 'https://wa.me/+2348111542402', color: '#25D366' },
 ];
 
 export default function AnimeDetailScreen() {

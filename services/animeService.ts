@@ -18,10 +18,8 @@ import { getContentRating } from './settingsService';
 
 // ✅ Helper to get allowed ratings based on user settings
 const getAllowedRatings = async () => {
-    const userRating = await getContentRating(); // e.g., '12+', '16+', '18+'
+    const userRating = await getContentRating(); 
     
-    // Logic: If user can see '16+', they can also see '12+' and 'All'.
-    // We explicitly list all allowed rating strings for the 'IN' query.
     switch(userRating) {
         case '18+': return ['All', '12+', '16+', '18+'];
         case '16+': return ['All', '12+', '16+'];
@@ -30,22 +28,19 @@ const getAllowedRatings = async () => {
     }
 };
 
-// Fetch Top 50 Anime (Trending) - Optimized
+// Fetch Top 50 Anime (Trending)
 export const getTopAnime = async () => {
   try {
     const allowed = await getAllowedRatings();
     const animeRef = collection(db, 'anime');
     
-    // ✅ Server-Side Filtering: Only fetch allowed content
-    // Note: You may need a composite index for 'ageRating' + 'views'.
     const q = query(
         animeRef, 
-        where('ageRating', 'in', allowed),
         orderBy('views', 'desc'), 
-        limit(50)
+        limit(100) 
     ); 
     
-    let results = [];
+    let results: any[] = [];
     try {
         const snapshot = await getDocs(q);
         results = snapshot.docs.map(doc => ({ mal_id: doc.id, ...doc.data() }));
@@ -54,27 +49,32 @@ export const getTopAnime = async () => {
         const cachedSnapshot = await getDocsFromCache(q);
         results = cachedSnapshot.docs.map(doc => ({ mal_id: doc.id, ...doc.data() }));
     }
-    return results;
+    
+    // ✅ FIX: Added (a: any) to satisfy TypeScript
+    return results.filter((a: any) => allowed.includes(a.ageRating || 'All')).slice(0, 50);
   } catch (error) {
     console.error("Error fetching anime:", error);
     return [];
   }
 };
 
-// Fetch Upcoming Anime - Optimized
+// Fetch Upcoming Anime
 export const getUpcomingAnime = async () => {
   try {
     const allowed = await getAllowedRatings();
     const animeRef = collection(db, 'anime');
+    
     const q = query(
         animeRef, 
         where('status', '==', 'Upcoming'),
-        where('ageRating', 'in', allowed),
-        limit(15)
+        limit(30)
     );
     
     const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ mal_id: doc.id, ...doc.data() }));
+    const results = snapshot.docs.map(doc => ({ mal_id: doc.id, ...doc.data() }));
+    
+    // ✅ FIX: Added (a: any)
+    return results.filter((a: any) => allowed.includes(a.ageRating || 'All')).slice(0, 15);
   } catch (error) {
     console.error("Error fetching upcoming:", error);
     return [];
@@ -111,7 +111,7 @@ export const getAnimeRank = async (currentViews: number) => {
   }
 };
 
-// Fetch Similar Anime based on Genres - Optimized
+// Fetch Similar Anime based on Genres
 export const getSimilarAnime = async (genres: string[], currentId: string) => {
   try {
     if (!genres || genres.length === 0) return [];
@@ -123,15 +123,16 @@ export const getSimilarAnime = async (genres: string[], currentId: string) => {
     const q = query(
         animeRef, 
         where('genres', 'array-contains-any', searchGenres),
-        where('ageRating', 'in', allowed),
-        limit(20)
+        limit(40)
     );
     
     const snapshot = await getDocs(q);
     
     return snapshot.docs
         .map(doc => ({ mal_id: doc.id, ...doc.data() }))
-        .filter((a: any) => String(a.mal_id) !== String(currentId));
+        // ✅ FIX: Added (a: any)
+        .filter((a: any) => allowed.includes(a.ageRating || 'All') && String(a.mal_id) !== String(currentId))
+        .slice(0, 20);
 
   } catch (error) {
     console.error("Error fetching similar anime:", error);
@@ -139,7 +140,7 @@ export const getSimilarAnime = async (genres: string[], currentId: string) => {
   }
 };
 
-// Get Recommended Anime based on User Genres - Optimized
+// Get Recommended Anime based on User Genres
 export const getRecommendedAnime = async (userGenres: string[]) => {
   try {
     if (!userGenres || userGenres.length === 0) {
@@ -150,21 +151,23 @@ export const getRecommendedAnime = async (userGenres: string[]) => {
     const searchGenres = userGenres.slice(0, 5); 
 
     const animeRef = collection(db, 'anime');
+    
     const q = query(
         animeRef, 
         where('genres', 'array-contains-any', searchGenres), 
-        where('ageRating', 'in', allowed),
-        limit(50)
+        limit(100)
     );
     
     const snapshot = await getDocs(q);
     
-    const results = snapshot.docs.map(doc => ({
+    let results = snapshot.docs.map(doc => ({
         mal_id: doc.id,
         ...doc.data()
     })) as any[];
 
-    return results.sort((a, b) => (b.views || 0) - (a.views || 0));
+    // ✅ FIX: Added (a: any)
+    results = results.filter((a: any) => allowed.includes(a.ageRating || 'All'));
+    return results.sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 50);
 
   } catch (error) {
     console.error("Error fetching recommendations:", error);
@@ -207,7 +210,7 @@ export const getAnimeEpisodes = async (id: string) => {
   }
 };
 
-// ✅ OPTIMIZED: Search using 'keywords' + 'rating' in DB
+// Search Anime
 export const searchAnime = async (queryText: string) => {
   try {
     if(!queryText) return [];
@@ -215,22 +218,23 @@ export const searchAnime = async (queryText: string) => {
     const allowed = await getAllowedRatings();
     const animeRef = collection(db, 'anime');
     
-    // Convert input to lowercase token
     const searchTerm = queryText.toLowerCase().trim().split(/\s+/)[0]; 
 
     const q = query(
         animeRef, 
         where('keywords', 'array-contains', searchTerm),
-        where('ageRating', 'in', allowed),
-        limit(20) // Only pay for 20 reads, not 1000!
+        limit(40) 
     );
     
     const snapshot = await getDocs(q);
     
-    return snapshot.docs.map(doc => ({
+    const results = snapshot.docs.map(doc => ({
       mal_id: doc.id,
       ...doc.data()
     }));
+    
+    // ✅ FIX: Added (a: any)
+    return results.filter((a: any) => allowed.includes(a.ageRating || 'All')).slice(0, 20);
 
   } catch (error) {
     console.error("Search error:", error);
