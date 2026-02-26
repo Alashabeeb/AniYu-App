@@ -1,5 +1,5 @@
 import { collection, getDocs, limit, orderBy, query } from 'firebase/firestore';
-import { BookOpen, PieChart as PieChartIcon, TrendingUp, Users, Video } from 'lucide-react';
+import { BookOpen, PieChart as PieChartIcon, RefreshCw, TrendingUp, Users, Video } from 'lucide-react'; // ✅ IMPORTED REFRESH
 import { useEffect, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { db } from './firebase';
@@ -17,17 +17,37 @@ export default function Analytics() {
         fetchAnalytics();
     }, []);
 
-    const fetchAnalytics = async () => {
+    // ✅ SURGICAL UPDATE: Added Session Caching & Force Refresh
+    const fetchAnalytics = async (forceRefresh = false) => {
+        setLoading(true);
         try {
+            const CACHE_KEY = 'admin_analytics_cache';
+
+            // 1. Return Instant Cache (0 bandwidth, 0 reads)
+            if (!forceRefresh) {
+                const cachedData = sessionStorage.getItem(CACHE_KEY);
+                if (cachedData) {
+                    const parsed = JSON.parse(cachedData);
+                    setTopAnime(parsed.topAnime);
+                    setTopManga(parsed.topManga);
+                    setGenreData(parsed.genreData);
+                    setGrowthData(parsed.growthData);
+                    setLoading(false);
+                    return;
+                }
+            }
+
             // 1. ✅ OPTIMIZED: Fetch Top 5 Anime by Views (Limit 5)
             const animeSnap = await getDocs(query(collection(db, "anime"), orderBy("views", "desc"), limit(5)));
             const animeList = animeSnap.docs.map(d => d.data());
-            setTopAnime(animeList.map(a => ({ name: (a.title || 'Unknown').substring(0, 15) + '...', views: a.views || 0 })));
+            const finalTopAnime = animeList.map(a => ({ name: (a.title || 'Unknown').substring(0, 15) + '...', views: a.views || 0 }));
+            setTopAnime(finalTopAnime);
 
             // 2. ✅ OPTIMIZED: Fetch Top 5 Manga by Views (Limit 5)
             const mangaSnap = await getDocs(query(collection(db, "manga"), orderBy("views", "desc"), limit(5)));
             const mangaList = mangaSnap.docs.map(d => d.data());
-            setTopManga(mangaList.map(m => ({ name: (m.title || 'Unknown').substring(0, 15) + '...', views: m.views || 0 })));
+            const finalTopManga = mangaList.map(m => ({ name: (m.title || 'Unknown').substring(0, 15) + '...', views: m.views || 0 }));
+            setTopManga(finalTopManga);
 
             // 3. ✅ OPTIMIZED: Process Genres (Using only the Top 50 items for sampling instead of ALL)
             // Reading 50 items gives a statistically accurate genre distribution without reading 5,000 items.
@@ -47,7 +67,8 @@ export default function Analytics() {
                 });
             });
             const genreArray = Object.keys(genreCounts).map(key => ({ name: key, value: genreCounts[key] }));
-            setGenreData(genreArray.sort((a, b) => b.value - a.value).slice(0, 6)); // Top 6 Genres
+            const finalGenreData = genreArray.sort((a, b) => b.value - a.value).slice(0, 6);
+            setGenreData(finalGenreData); // Top 6 Genres
 
             // 4. ✅ OPTIMIZED: User Growth (Last 7 Days)
             // Instead of reading ALL users (expensive!), we read the last 100 users to show "Recent Growth Trend".
@@ -65,7 +86,16 @@ export default function Analytics() {
             
             // Fill in missing data points for a smooth chart
             const growthArray = Object.keys(dateMap).map(k => ({ date: k, users: dateMap[k] })).reverse();
-            setGrowthData(growthArray.slice(-7));
+            const finalGrowthData = growthArray.slice(-7);
+            setGrowthData(finalGrowthData);
+
+            // 2. Save new fetch to session cache
+            sessionStorage.setItem(CACHE_KEY, JSON.stringify({
+                topAnime: finalTopAnime,
+                topManga: finalTopManga,
+                genreData: finalGenreData,
+                growthData: finalGrowthData
+            }));
 
         } catch (error) {
             console.error("Error fetching analytics:", error);
@@ -80,8 +110,10 @@ export default function Analytics() {
         <div className="analytics-container">
             <style>{`
                 .analytics-container { padding: 24px; }
-                .analytics-header { margin-bottom: 30px; }
+                .analytics-header { margin-bottom: 30px; display: flex; justify-content: space-between; align-items: flex-start; }
                 .analytics-title { font-size: 1.8rem; font-weight: 800; display: flex; align-items: center; gap: 10px; color: #1e3a8a; margin: 0; }
+                .btn-refresh { display: flex; align-items: center; gap: 6px; padding: 8px 16px; background: white; border: 1px solid #e5e7eb; border-radius: 8px; color: #4b5563; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+                .btn-refresh:hover { background: #f9fafb; color: #2563eb; border-color: #bfdbfe; }
                 
                 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
                 .chart-card { background: white; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
@@ -90,15 +122,22 @@ export default function Analytics() {
                 
                 @media (max-width: 768px) {
                     .analytics-container { padding: 16px; }
+                    .analytics-header { flex-direction: column; gap: 15px; }
                     .grid-2 { grid-template-columns: 1fr; }
                 }
             `}</style>
 
             <div className="analytics-header">
-                <h1 className="analytics-title">
-                    <TrendingUp size={32} /> Advanced Analytics
-                </h1>
-                <p style={{color:'#6b7280', marginTop:5}}>Deep dive into your content performance.</p>
+                <div>
+                    <h1 className="analytics-title">
+                        <TrendingUp size={32} /> Advanced Analytics
+                    </h1>
+                    <p style={{color:'#6b7280', marginTop:5}}>Deep dive into your content performance.</p>
+                </div>
+                {/* ✅ SURGICAL UPDATE: REFRESH BUTTON */}
+                <button onClick={() => fetchAnalytics(true)} className="btn-refresh">
+                    <RefreshCw size={16} /> Refresh Data
+                </button>
             </div>
 
             {/* Row 1: Top Content */}
