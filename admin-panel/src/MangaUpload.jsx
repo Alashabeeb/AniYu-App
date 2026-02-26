@@ -18,6 +18,7 @@ import {
   Loader2,
   Lock,
   Plus,
+  RefreshCw, // ✅ IMPORTED REFRESH ICON
   Trash2,
   Unlock
 } from 'lucide-react';
@@ -87,17 +88,31 @@ export default function MangaUpload() {
     fetchUser();
   }, []);
 
+  // ✅ SURGICAL UPDATE: Removed `libraryTab` dependency so it doesn't fetch on tab switch
   useEffect(() => {
     if (currentUser) {
         fetchMangaList();
     }
-  }, [currentUser, libraryTab]);
+  }, [currentUser]);
 
-  const fetchMangaList = async (isLoadMore = false) => {
+  // ✅ SURGICAL UPDATE: Added Session Caching logic
+  const fetchMangaList = async (isLoadMore = false, forceRefresh = false) => {
     if (isLoadMore) setLoadingMore(true);
     else setLoadingList(true);
 
     try {
+      const CACHE_KEY = `admin_manga_cache_${currentUser.uid}`;
+
+      // 1. Return Instant Cache (0 bandwidth, 0 reads)
+      if (!isLoadMore && !forceRefresh) {
+          const cachedData = sessionStorage.getItem(CACHE_KEY);
+          if (cachedData) {
+              setMangaList(JSON.parse(cachedData));
+              setLoadingList(false);
+              return; 
+          }
+      }
+
       let q;
       const listRef = collection(db, 'manga');
       
@@ -117,12 +132,16 @@ export default function MangaUpload() {
       else setHasMore(true);
 
       setMangaList(prev => {
+          let newList;
           if (isLoadMore) {
               const combined = [...prev, ...list];
-              const unique = Array.from(new Map(combined.map(item => [item.id, item])).values());
-              return unique;
+              newList = Array.from(new Map(combined.map(item => [item.id, item])).values());
+          } else {
+              newList = list;
           }
-          return list;
+          // 2. Save new fetch to session cache
+          sessionStorage.setItem(CACHE_KEY, JSON.stringify(newList));
+          return newList;
       });
     } catch (error) { 
         console.error("Error fetching list:", error); 
@@ -146,7 +165,10 @@ export default function MangaUpload() {
           await updateDoc(doc(db, 'manga', manga.id), { status: 'Ongoing' });
           await sendAutoNotification(`New Manga: ${manga.title}`, `Read ${manga.title} now on AniYu!`, manga.id);
           alert("Approved & Published!");
-          fetchMangaList();
+          
+          // ✅ SURGICAL UPDATE: Wipe cache and force refresh
+          sessionStorage.removeItem(`admin_manga_cache_${currentUser.uid}`);
+          fetchMangaList(false, true);
       } catch (e) { alert(e.message); }
   };
 
@@ -240,8 +262,12 @@ export default function MangaUpload() {
 
       await Promise.all(deletePromises);
       await deleteDoc(doc(db, 'manga', manga.id));
+      
+      // ✅ SURGICAL UPDATE: Wipe cache and force refresh
+      sessionStorage.removeItem(`admin_manga_cache_${currentUser.uid}`);
+      fetchMangaList(false, true);
       alert(`"${manga.title}" has been deleted.`);
-    } catch (e) { fetchMangaList(); }
+    } catch (e) { fetchMangaList(false, true); }
   };
 
   const addChapterForm = () => {
@@ -277,7 +303,6 @@ export default function MangaUpload() {
       setter(file); 
   };
   
-  // ✅ SURGICAL UPDATE: Removed Firebase Storage, all files go to R2.
   const uploadFile = async (file, path) => {
     if (!file) return null;
     return await uploadToR2(file, path, (p) => { 
@@ -293,7 +318,6 @@ export default function MangaUpload() {
     setLoading(true); setStatus('Saving Manga Details...'); setProgress(0);
 
     try {
-      // ✅ SURGICAL UPDATE: Extract URL from R2 object return
       const coverResult = mangaCover ? await uploadFile(mangaCover, 'manga_covers') : null;
       const finalCoverUrl = coverResult?.url || coverResult || existingCoverUrl;
       
@@ -343,7 +367,6 @@ export default function MangaUpload() {
 
         if (ch.chapterFile) {
             const result = await uploadFile(ch.chapterFile, `manga_pages/${mangaId}/ch_${ch.number}`);
-            // ✅ SURGICAL UPDATE: Extract URL from R2 object return
             finalFileUrl = result?.url || result; 
         }
 
@@ -369,6 +392,10 @@ export default function MangaUpload() {
 
       alert(finalStatus === 'Pending' ? "Submitted for Review! Waiting for Admin approval." : "Published!");
       setView('list'); setLibraryTab(finalStatus);
+
+      // ✅ SURGICAL UPDATE: Wipe cache and force refresh
+      sessionStorage.removeItem(`admin_manga_cache_${currentUser.uid}`);
+      fetchMangaList(false, true);
 
     } catch (error) { console.error(error); alert('Error: ' + error.message); } finally { setLoading(false); }
   };
@@ -412,7 +439,8 @@ export default function MangaUpload() {
            </div>
         </div>
 
-        <div style={{ display: 'flex', gap: 10, borderBottom: '2px solid #e5e7eb', paddingBottom: 10, marginBottom: 20 }}>
+        {/* ✅ SURGICAL UPDATE: ADDED REFRESH BUTTON NEXT TO TABS */}
+        <div style={{ display: 'flex', gap: 10, borderBottom: '2px solid #e5e7eb', paddingBottom: 10, marginBottom: 20, alignItems: 'center' }}>
             {STATUS_OPTIONS.map(status => (
                 <button 
                   key={status} onClick={() => setLibraryTab(status)}
@@ -421,6 +449,14 @@ export default function MangaUpload() {
                     {status}
                 </button>
             ))}
+
+            <button 
+                onClick={() => fetchMangaList(false, true)}
+                disabled={loadingList}
+                style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#ec4899', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, fontWeight: 'bold' }}
+            >
+                <RefreshCw size={16} className={loadingList ? "animate-spin" : ""} /> Refresh
+            </button>
         </div>
 
         <div style={{ display: 'grid', gap: 20 }}>
