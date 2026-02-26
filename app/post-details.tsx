@@ -54,7 +54,6 @@ export default function PostDetailsScreen() {
   const [newComment, setNewComment] = useState('');
   const [sending, setSending] = useState(false);
 
-  // Menu State
   const [menuVisible, setMenuVisible] = useState(false);
   const [reportModalVisible, setReportModalVisible] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
@@ -70,7 +69,6 @@ export default function PostDetailsScreen() {
     setAlertConfig({ visible: true, type, title, message });
   };
 
-  // Initialize Video Player
   const videoSource = post?.mediaType === 'video' && post?.mediaUrl ? post.mediaUrl : null;
   const player = useVideoPlayer(videoSource, player => {
       if (videoSource) {
@@ -79,7 +77,6 @@ export default function PostDetailsScreen() {
       }
   });
 
-  // Safe Pause on Leave
   useFocusEffect(
     useCallback(() => {
       return () => {
@@ -378,13 +375,11 @@ export default function PostDetailsScreen() {
                   </View>
                   <Text style={[styles.postText, { color: theme.text }]}>{post.text}</Text>
                   
-                  {/* ✅ SHARED DYNAMIC MEDIA SIZING APPLIED HERE TOO */}
                   {post.mediaUrl && post.mediaType === 'video' && (
                       <VideoView 
                         player={player} 
                         style={styles.postVideo} 
                         contentFit="cover"
-                        allowsFullscreen={false}
                         allowsPictureInPicture={false}
                         nativeControls={false} 
                       />
@@ -509,7 +504,6 @@ const styles = StyleSheet.create({
   handle: { fontSize: 14 },
   postText: { fontSize: 18, marginTop: 10, lineHeight: 26 },
   
-  // ✅ Dynamically scaled to match PostCard heights
   postImage: { width: '100%', height: SCREEN_HEIGHT * 0.40, borderRadius: 15, marginTop: 10, backgroundColor: '#111' },
   postVideo: { width: '100%', height: SCREEN_HEIGHT * 0.50, borderRadius: 15, marginTop: 10, backgroundColor: '#111' },
   

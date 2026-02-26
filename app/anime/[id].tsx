@@ -262,7 +262,6 @@ export default function AnimeDetailScreen() {
       determineSource();
   }, [currentEpId, episodes, downloadedEpIds]); 
 
-  // ✅ COST SAVER 3: Replaced expensive Firestore reads with free local cache
   const checkAndIncrementView = async () => {
       const user = auth.currentUser;
       if (!user || !id) return;
@@ -472,7 +471,6 @@ export default function AnimeDetailScreen() {
                     style={styles.video} 
                     player={player} 
                     allowsPictureInPicture 
-                    allowsFullscreen 
                 />
             ) : (
                 <View style={styles.posterContainer}>

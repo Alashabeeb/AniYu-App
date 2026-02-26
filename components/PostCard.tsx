@@ -251,7 +251,6 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
                   player={player} 
                   style={[styles.mediaBase, styles.videoMedia]} 
                   contentFit="cover" 
-                  allowsFullscreen={false}
                   allowsPictureInPicture={false}
                   nativeControls={false} 
               />
