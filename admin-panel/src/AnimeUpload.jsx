@@ -1,7 +1,7 @@
 import {
   addDoc, collection, deleteDoc, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, startAfter, updateDoc, where
 } from 'firebase/firestore';
-import { deleteObject, getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage';
+import { deleteObject, ref } from 'firebase/storage';
 import {
   ArrowLeft,
   Bell,
@@ -367,30 +367,19 @@ export default function AnimeUpload() {
       setter(file); 
   };
   
+  // ✅ COST SAVER #1: ALL UPLOADS (Images & Videos) ROUTED TO R2 (Zero Firebase Egress)
   const uploadFile = async (file, path) => {
     if (!file) return null;
 
-    if (file.type.startsWith('video/')) {
-       return await uploadToR2(file, path, (p) => {
-           if (path.includes('episodes')) setProgress(p);
-       });
-    }
-
-    return new Promise((resolve, reject) => {
-      const storageRef = ref(storage, `${path}/${Date.now()}_${file.name}`);
-      const uploadTask = uploadBytesResumable(storageRef, file);
-      uploadTask.on('state_changed', 
-        (snapshot) => {
-          const p = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-          if (path.includes('episodes')) setProgress(Math.round(p));
-        },
-        (error) => reject(error),
-        async () => { 
-            const url = await getDownloadURL(uploadTask.snapshot.ref);
-            resolve({ url, size: uploadTask.snapshot.totalBytes });
-        }
-      );
+    const result = await uploadToR2(file, path, (p) => {
+        if (path.includes('episodes') || path.includes('covers')) setProgress(p);
     });
+
+    // Safely structure the return data to match exactly what your code expects
+    if (typeof result === 'string') {
+        return { url: result, size: file.size };
+    }
+    return result; 
   };
 
   const handlePublish = async (e) => {

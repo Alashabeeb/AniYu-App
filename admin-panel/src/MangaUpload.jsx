@@ -5,7 +5,7 @@ import {
   startAfter,
   updateDoc, where
 } from 'firebase/firestore';
-import { deleteObject, getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage';
+import { deleteObject, ref } from 'firebase/storage';
 import {
   ArrowLeft,
   Bell,
@@ -277,26 +277,11 @@ export default function MangaUpload() {
       setter(file); 
   };
   
+  // ✅ SURGICAL UPDATE: Removed Firebase Storage, all files go to R2.
   const uploadFile = async (file, path) => {
     if (!file) return null;
-    const heavyTypes = ['application/pdf', 'application/zip', 'application/x-zip-compressed', 'application/x-cbz'];
-    const isHeavy = heavyTypes.includes(file.type) || file.name.endsWith('.cbz') || file.name.endsWith('.pdf');
-
-    if (isHeavy) {
-       return await uploadToR2(file, path, (p) => { if (path.includes('pages')) setProgress(p); });
-    }
-
-    return new Promise((resolve, reject) => {
-      const storageRef = ref(storage, `${path}/${Date.now()}_${file.name}`);
-      const uploadTask = uploadBytesResumable(storageRef, file);
-      uploadTask.on('state_changed', 
-        (snapshot) => {
-          const p = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-          if (path.includes('pages')) setProgress(Math.round(p));
-        },
-        (error) => reject(error),
-        async () => { resolve(await getDownloadURL(uploadTask.snapshot.ref)); }
-      );
+    return await uploadToR2(file, path, (p) => { 
+        if (path.includes('pages') || path.includes('covers')) setProgress(p); 
     });
   };
 
@@ -308,8 +293,10 @@ export default function MangaUpload() {
     setLoading(true); setStatus('Saving Manga Details...'); setProgress(0);
 
     try {
+      // ✅ SURGICAL UPDATE: Extract URL from R2 object return
       const coverResult = mangaCover ? await uploadFile(mangaCover, 'manga_covers') : null;
-      const finalCoverUrl = coverResult || existingCoverUrl;
+      const finalCoverUrl = coverResult?.url || coverResult || existingCoverUrl;
+      
       let mangaId = createdMangaId;
       let finalStatus = mangaStatus;
       if (currentUser?.role === 'manga_producer' && !isEditMode) finalStatus = 'Pending';
@@ -356,7 +343,8 @@ export default function MangaUpload() {
 
         if (ch.chapterFile) {
             const result = await uploadFile(ch.chapterFile, `manga_pages/${mangaId}/ch_${ch.number}`);
-            finalFileUrl = typeof result === 'object' ? result.url : result;
+            // ✅ SURGICAL UPDATE: Extract URL from R2 object return
+            finalFileUrl = result?.url || result; 
         }
 
         const finalPages = finalFileUrl ? [finalFileUrl] : [];
