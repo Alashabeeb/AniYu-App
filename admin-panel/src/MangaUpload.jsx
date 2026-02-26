@@ -1,5 +1,9 @@
 import {
-  addDoc, collection, deleteDoc, doc, getDoc, getDocs, orderBy, query, serverTimestamp, updateDoc, where
+  addDoc, collection, deleteDoc, doc, getDoc, getDocs,
+  limit,
+  orderBy, query, serverTimestamp,
+  startAfter,
+  updateDoc, where
 } from 'firebase/firestore';
 import { deleteObject, getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage';
 import {
@@ -37,6 +41,11 @@ export default function MangaUpload() {
   const [libraryTab, setLibraryTab] = useState('Ongoing');
   
   const [currentUser, setCurrentUser] = useState(null);
+
+  // Pagination states
+  const [lastVisible, setLastVisible] = useState(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -84,26 +93,42 @@ export default function MangaUpload() {
     }
   }, [currentUser, libraryTab]);
 
-  const fetchMangaList = async () => {
-    setLoadingList(true);
+  const fetchMangaList = async (isLoadMore = false) => {
+    if (isLoadMore) setLoadingMore(true);
+    else setLoadingList(true);
+
     try {
       let q;
       const listRef = collection(db, 'manga');
       
       if (currentUser.role === 'manga_producer') {
-          q = query(listRef, where('uploaderId', '==', currentUser.uid));
+          q = query(listRef, where('uploaderId', '==', currentUser.uid), limit(50));
+          if (isLoadMore && lastVisible) q = query(listRef, where('uploaderId', '==', currentUser.uid), startAfter(lastVisible), limit(50));
       } else {
-          q = query(listRef, orderBy('views', 'desc'));
+          q = query(listRef, orderBy('views', 'desc'), limit(50));
+          if (isLoadMore && lastVisible) q = query(listRef, orderBy('views', 'desc'), startAfter(lastVisible), limit(50));
       }
 
       const snapshot = await getDocs(q);
       let list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      list = list.filter(m => (m.status || 'Ongoing') === libraryTab);
-      setMangaList(list);
+
+      if (snapshot.docs.length > 0) setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
+      if (snapshot.docs.length < 50) setHasMore(false);
+      else setHasMore(true);
+
+      setMangaList(prev => {
+          if (isLoadMore) {
+              const combined = [...prev, ...list];
+              const unique = Array.from(new Map(combined.map(item => [item.id, item])).values());
+              return unique;
+          }
+          return list;
+      });
     } catch (error) { 
         console.error("Error fetching list:", error); 
     } finally { 
-        setLoadingList(false); 
+        setLoadingList(false);
+        setLoadingMore(false);
     }
   };
 
@@ -382,7 +407,11 @@ export default function MangaUpload() {
   );
 
   if (view === 'list') {
-    const filteredMangaList = mangaList.filter(item => (item.status || 'Ongoing') === libraryTab);
+    const filteredMangaList = mangaList.filter(item => {
+        const itemStatus = item.status === 'Released' ? 'Ongoing' : (item.status || 'Ongoing');
+        return itemStatus === libraryTab;
+    });
+    
     return (
       <div className="container">
         <div className="card" style={{ marginBottom: 30, background: 'linear-gradient(135deg, #ec4899 0%, #8b5cf6 100%)', border: 'none' }}>
@@ -433,6 +462,21 @@ export default function MangaUpload() {
             </div>
           ))}
         </div>
+        {/* Load More Button */}
+        {!loadingList && hasMore && (
+            <div style={{ textAlign: 'center', padding: '20px' }}>
+                <button 
+                    onClick={() => fetchMangaList(true)} 
+                    disabled={loadingMore}
+                    style={{
+                        padding: '10px 20px', background: '#f3f4f6', border: '1px solid #e5e7eb',
+                        borderRadius: '8px', color: '#4b5563', fontWeight: 'bold', cursor: 'pointer'
+                    }}
+                >
+                    {loadingMore ? <Loader2 className="animate-spin" size={16}/> : "Load More"}
+                </button>
+            </div>
+        )}
       </div>
     );
   }

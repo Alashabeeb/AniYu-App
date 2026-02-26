@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { createUserWithEmailAndPassword, getAuth, signOut } from 'firebase/auth';
-import { addDoc, arrayRemove, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
+import { addDoc, arrayRemove, collection, deleteDoc, doc, getDoc, getDocs, limit, query, serverTimestamp, setDoc, startAfter, updateDoc, where } from 'firebase/firestore';
 import {
     ArrowLeft, Ban, CheckCircle, Clock, Copy, ExternalLink, Loader2, Mail, Plus, Save, Search, Shield, ShieldAlert, Trash2, User, Users as UsersIcon, X
 } from 'lucide-react';
@@ -45,6 +45,11 @@ export default function Users() {
   const [searchTerm, setSearchTerm] = useState('');
   const [myRole, setMyRole] = useState(null);
 
+  // Pagination states
+  const [lastVisible, setLastVisible] = useState(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newUser, setNewUser] = useState({ email: '', password: '', username: '', role: 'user' });
@@ -80,6 +85,40 @@ export default function Users() {
       } catch (e) { console.error("Error opening user:", e); }
   };
 
+  const fetchUsers = async (isLoadMore = false) => {
+      if (isLoadMore) setLoadingMore(true);
+      else setLoading(true);
+
+      try {
+          let q = query(collection(db, "users"), limit(50));
+          if (isLoadMore && lastVisible) {
+              q = query(collection(db, "users"), startAfter(lastVisible), limit(50));
+          }
+
+          const snapshot = await getDocs(q);
+          const usersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+          if (snapshot.docs.length > 0) setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
+          if (snapshot.docs.length < 50) setHasMore(false);
+          else setHasMore(true);
+
+          setUsers(prev => {
+              const combined = isLoadMore ? [...prev, ...usersData] : usersData;
+              combined.sort((a, b) => {
+                  const timeA = a.lastActiveAt?.toDate ? a.lastActiveAt.toDate() : new Date(0);
+                  const timeB = b.lastActiveAt?.toDate ? b.lastActiveAt.toDate() : new Date(0);
+                  return timeB - timeA; 
+              });
+              return combined;
+          });
+      } catch (error) {
+          console.error("Error fetching users:", error);
+      } finally {
+          setLoading(false);
+          setLoadingMore(false);
+      }
+  };
+
   useEffect(() => {
     const fetchMyRole = async () => {
         if (auth.currentUser) {
@@ -90,24 +129,7 @@ export default function Users() {
         }
     };
     fetchMyRole();
-
-    const unsubscribe = onSnapshot(collection(db, "users"), (snapshot) => {
-        const usersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        
-        usersData.sort((a, b) => {
-            const timeA = a.lastActiveAt?.toDate ? a.lastActiveAt.toDate() : new Date(0);
-            const timeB = b.lastActiveAt?.toDate ? b.lastActiveAt.toDate() : new Date(0);
-            return timeB - timeA; 
-        });
-
-        setUsers(usersData);
-        setLoading(false);
-    }, (error) => {
-        console.error("Error listening to users:", error);
-        setLoading(false);
-    });
-
-    return () => unsubscribe();
+    fetchUsers();
   }, []);
 
   const handleCreateUser = async (e) => {
@@ -144,6 +166,7 @@ export default function Users() {
           alert(`Success! Created ${newUser.role} account for "${newUser.username}".`);
           setShowCreateModal(false);
           setNewUser({ email: '', password: '', username: '', role: 'user' });
+          fetchUsers(); // Refresh
 
       } catch (error) {
           alert("Error creating user: " + error.message);
@@ -248,6 +271,7 @@ export default function Users() {
 
           const updatedUser = { ...selectedUser, ...updates };
           setSelectedUser(updatedUser);
+          setUsers(prev => prev.map(u => u.id === updatedUser.id ? updatedUser : u));
           
           alert("User profile updated successfully!");
       } catch (error) {
@@ -294,7 +318,8 @@ export default function Users() {
 
         await deleteDoc(doc(db, "users", targetUid));
 
-        alert(`User "${selectedUser.username}" has been deleted from the database.`);
+        alert(`User "${selectedUser.username}" has been deleted.`);
+        setUsers(prev => prev.filter(u => u.id !== targetUid));
         setView('list');
 
     } catch (error) {
@@ -391,7 +416,7 @@ export default function Users() {
         .stats-box { background-color: #f9fafb; padding: 20px; border-radius: 12px; border: 1px solid #e5e7eb; display: flex; flex-direction: column; gap: 15px; margin-bottom: 20px; }
         .stat-row { display: flex; justify-content: space-between; }
         .stat-label { font-size: 0.75rem; font-weight: 700; color: #9ca3af; text-transform: uppercase; }
-        .stat-value { font-weight: 600; color: #374151; font-size: 0.9rem; } /* ✅ Updated Font Size */
+        .stat-value { font-weight: 600; color: #374151; font-size: 0.9rem; }
         
         .socials-card { border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden; }
         .socials-tabs { display: flex; border-bottom: 1px solid #e5e7eb; }
@@ -403,7 +428,6 @@ export default function Users() {
         .social-username { font-size: 0.9rem; font-weight: 600; color: #374151; }
         .social-rank { font-size: 0.7rem; color: #9ca3af; }
 
-        /* ✅ MOBILE RESPONSIVE TWEAKS */
         @media (max-width: 768px) {
             .users-page { padding: 16px; }
             .grid-layout { grid-template-columns: 1fr; gap: 20px; }
@@ -554,6 +578,21 @@ export default function Users() {
             )}
           </tbody>
         </table>
+        {/* Load More Button */}
+        {!loading && hasMore && (
+            <div style={{ textAlign: 'center', padding: '20px' }}>
+                <button 
+                    onClick={() => fetchUsers(true)} 
+                    disabled={loadingMore}
+                    style={{
+                        padding: '10px 20px', background: '#f3f4f6', border: '1px solid #e5e7eb',
+                        borderRadius: '8px', color: '#4b5563', fontWeight: 'bold', cursor: 'pointer'
+                    }}
+                >
+                    {loadingMore ? <Loader2 className="animate-spin" size={16}/> : "Load More"}
+                </button>
+            </div>
+        )}
       </div>
       )}
 
