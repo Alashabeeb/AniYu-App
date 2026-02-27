@@ -2,7 +2,7 @@ import { initializeApp } from 'firebase/app';
 import { createUserWithEmailAndPassword, getAuth, signOut } from 'firebase/auth';
 import { addDoc, arrayRemove, collection, deleteDoc, doc, getDoc, getDocs, limit, query, serverTimestamp, setDoc, startAfter, updateDoc, where } from 'firebase/firestore';
 import {
-    ArrowLeft, Ban, CheckCircle, Clock, Copy, ExternalLink, Loader2, Mail, Plus, Save, Search, Shield, ShieldAlert, Trash2, User, Users as UsersIcon, X
+    ArrowLeft, Ban, CheckCircle, Clock, Copy, Download, ExternalLink, History as HistoryIcon, Loader2, Mail, Plus, Save, Search, Shield, ShieldAlert, Smartphone, Trash2, User, Users as UsersIcon, X
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
@@ -43,6 +43,14 @@ export default function Users() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // Filter States
+  const [filterRole, setFilterRole] = useState('all');
+  const [filterStatus, setFilterStatus] = useState('all');
+  // ✅ SURGICAL UPDATE: Added new filter states
+  const [filterLocation, setFilterLocation] = useState('all');
+  const [filterVersion, setFilterVersion] = useState('all');
+
   const [myRole, setMyRole] = useState(null);
 
   // Pagination states
@@ -55,14 +63,18 @@ export default function Users() {
   const [newUser, setNewUser] = useState({ email: '', password: '', username: '', role: 'user' });
 
   const [selectedUser, setSelectedUser] = useState(null);
-  const [editForm, setEditForm] = useState({ username: '', rank: 'GENIN', role: 'user', isBanned: false });
+  const [editForm, setEditForm] = useState({ username: '', bio: '', rank: 'GENIN', role: 'user', isBanned: false });
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   const [followersList, setFollowersList] = useState([]);
   const [followingList, setFollowingList] = useState([]);
+  
+  const [historyList, setHistoryList] = useState([]);
+  const [downloadsList, setDownloadsList] = useState([]);
+
   const [loadingSocials, setLoadingSocials] = useState(false);
-  const [socialTab, setSocialTab] = useState('followers'); 
+  const [socialTab, setSocialTab] = useState('device'); 
 
   // ✅ AUTO-OPEN USER FROM NAVIGATION STATE
   useEffect(() => {
@@ -179,6 +191,7 @@ export default function Users() {
       setSelectedUser(user);
       setEditForm({
           username: user.username || '',
+          bio: user.bio || '',
           rank: user.rank || 'GENIN',
           role: user.role || 'user',
           isBanned: user.isBanned || false
@@ -188,6 +201,9 @@ export default function Users() {
       setLoadingSocials(true);
       setFollowersList([]);
       setFollowingList([]);
+      setHistoryList([]);
+      setDownloadsList([]);
+      setSocialTab('device'); 
       
       try {
           if (user.followers && user.followers.length > 0) {
@@ -211,6 +227,32 @@ export default function Users() {
       }
   };
 
+  useEffect(() => {
+      if (!selectedUser) return;
+      const fetchExtraData = async () => {
+          try {
+              if (socialTab === 'history' && historyList.length === 0) {
+                  setLoadingSocials(true);
+                  const q = query(collection(db, "users", selectedUser.id, "history"), limit(50));
+                  const snap = await getDocs(q);
+                  setHistoryList(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                  setLoadingSocials(false);
+              }
+              if (socialTab === 'downloads' && downloadsList.length === 0) {
+                  setLoadingSocials(true);
+                  const q = query(collection(db, "users", selectedUser.id, "downloads"), limit(50));
+                  const snap = await getDocs(q);
+                  setDownloadsList(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                  setLoadingSocials(false);
+              }
+          } catch (e) {
+              console.error("Error fetching extra data:", e);
+              setLoadingSocials(false);
+          }
+      };
+      fetchExtraData();
+  }, [socialTab, selectedUser]);
+
   const handleSaveChanges = async (e) => {
       e.preventDefault();
       if(!selectedUser) return;
@@ -226,6 +268,7 @@ export default function Users() {
           
           const updates = {
               username: editForm.username,
+              bio: editForm.bio,
               rank: editForm.rank,
               role: editForm.role,
               isBanned: editForm.isBanned
@@ -335,11 +378,29 @@ export default function Users() {
     alert("UID Copied!");
   };
 
-  const filteredUsers = users.filter(user => 
-    user.username?.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    user.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    user.id.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // ✅ SURGICAL UPDATE: Added App Version and Location filtering logic
+  const filteredUsers = users.filter(user => {
+    const matchesSearch = 
+        user.username?.toLowerCase().includes(searchTerm.toLowerCase()) || 
+        user.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        user.id.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    const matchesRole = filterRole === 'all' || user.role === filterRole;
+    
+    const matchesStatus = filterStatus === 'all' || 
+                          (filterStatus === 'banned' && user.isBanned) || 
+                          (filterStatus === 'active' && !user.isBanned);
+
+    const matchesLocation = filterLocation === 'all' || user.deviceInfo?.location === filterLocation;
+    
+    const matchesVersion = filterVersion === 'all' || user.deviceInfo?.appVersion === filterVersion;
+
+    return matchesSearch && matchesRole && matchesStatus && matchesLocation && matchesVersion;
+  });
+
+  // ✅ SURGICAL UPDATE: Dynamically extract unique locations and versions for the dropdown menus
+  const uniqueLocations = [...new Set(users.map(u => u.deviceInfo?.location).filter(Boolean))].sort();
+  const uniqueVersions = [...new Set(users.map(u => u.deviceInfo?.appVersion).filter(Boolean))].sort();
 
   return (
     <>
@@ -352,6 +413,8 @@ export default function Users() {
         .search-icon { position: absolute; left: 12px; top: 10px; color: #9ca3af; }
         .search-input { padding: 8px 8px 8px 36px; border: 1px solid #e5e7eb; border-radius: 8px; width: 250px; outline: none; }
         .search-input:focus { border-color: #2563eb; ring: 2px solid #2563eb; }
+        .filter-select { padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 8px; outline: none; background: white; color: #4b5563; font-weight: 500; cursor: pointer; }
+        
         .btn-create { background-color: #2563eb; color: white; padding: 8px 16px; border-radius: 8px; font-weight: bold; display: flex; align-items: center; gap: 8px; border: none; cursor: pointer; transition: background-color 0.2s; }
         .btn-create:hover { background-color: #1d4ed8; }
 
@@ -414,18 +477,20 @@ export default function Users() {
         .toggle-btn.ban-selected { background-color: #ef4444; color: white; border-color: #ef4444; }
         
         .stats-box { background-color: #f9fafb; padding: 20px; border-radius: 12px; border: 1px solid #e5e7eb; display: flex; flex-direction: column; gap: 15px; margin-bottom: 20px; }
-        .stat-row { display: flex; justify-content: space-between; }
+        .stat-row { display: flex; justify-content: space-between; align-items: center; }
         .stat-label { font-size: 0.75rem; font-weight: 700; color: #9ca3af; text-transform: uppercase; }
-        .stat-value { font-weight: 600; color: #374151; font-size: 0.9rem; }
+        .stat-value { font-weight: 600; color: #374151; font-size: 0.9rem; text-align: right; }
         
         .socials-card { border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden; }
-        .socials-tabs { display: flex; border-bottom: 1px solid #e5e7eb; }
-        .tab-btn { flex: 1; padding: 15px; background: #f9fafb; border: none; font-weight: 700; color: #6b7280; cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; }
+        .socials-tabs { display: flex; border-bottom: 1px solid #e5e7eb; overflow-x: auto; scrollbar-width: none; }
+        .socials-tabs::-webkit-scrollbar { display: none; }
+        .tab-btn { flex: 1; padding: 15px; background: #f9fafb; border: none; font-weight: 700; color: #6b7280; cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; min-width: 90px; }
         .tab-btn.active { background: white; color: #2563eb; border-bottom-color: #2563eb; }
+        
         .socials-list { padding: 0; max-height: 300px; overflow-y: auto; }
         .social-item { display: flex; align-items: center; gap: 10px; padding: 10px 15px; border-bottom: 1px solid #f3f4f6; }
         .mini-avatar { width: 30px; height: 30px; border-radius: 50%; background-color: #eff6ff; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; font-weight: bold; color: #2563eb; overflow: hidden; flex-shrink: 0; }
-        .social-username { font-size: 0.9rem; font-weight: 600; color: #374151; }
+        .social-username { font-size: 0.9rem; font-weight: 600; color: #374151; margin-bottom: 2px; }
         .social-rank { font-size: 0.7rem; color: #9ca3af; }
 
         @media (max-width: 768px) {
@@ -459,6 +524,52 @@ export default function Users() {
                         onChange={(e) => setSearchTerm(e.target.value)}
                     />
                 </div>
+                
+                {/* Role Filter */}
+                <select 
+                    className="filter-select" 
+                    value={filterRole} 
+                    onChange={e => setFilterRole(e.target.value)}
+                >
+                    <option value="all">All Roles</option>
+                    <option value="user">User</option>
+                    <option value="anime_producer">Anime Producer</option>
+                    <option value="manga_producer">Manga Producer</option>
+                    <option value="admin">Admin</option>
+                    <option value="super_admin">Super Admin</option>
+                </select>
+
+                {/* Status Filter */}
+                <select 
+                    className="filter-select" 
+                    value={filterStatus} 
+                    onChange={e => setFilterStatus(e.target.value)}
+                >
+                    <option value="all">All Statuses</option>
+                    <option value="active">Active</option>
+                    <option value="banned">Banned</option>
+                </select>
+
+                {/* ✅ SURGICAL UPDATE: Added Location Filter dynamically extracted */}
+                <select 
+                    className="filter-select" 
+                    value={filterLocation} 
+                    onChange={e => setFilterLocation(e.target.value)}
+                >
+                    <option value="all">All Locations</option>
+                    {uniqueLocations.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+                </select>
+
+                {/* ✅ SURGICAL UPDATE: Added App Version Filter dynamically extracted */}
+                <select 
+                    className="filter-select" 
+                    value={filterVersion} 
+                    onChange={e => setFilterVersion(e.target.value)}
+                >
+                    <option value="all">All Versions</option>
+                    {uniqueVersions.map(ver => <option key={ver} value={ver}>v{ver}</option>)}
+                </select>
+
                 <button 
                     onClick={() => setShowCreateModal(true)} 
                     className="btn-create"
@@ -516,6 +627,10 @@ export default function Users() {
               <th>User Profile</th>
               <th>UID</th>
               <th>Role</th>
+              <th>Device</th>
+              <th>App Version</th>
+              <th>IP Address</th>
+              <th>Location</th>
               <th>Last Active</th>
               <th>Status</th>
               <th>Actions</th>
@@ -523,9 +638,9 @@ export default function Users() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan="6" style={{ padding: '30px', textAlign: 'center', color: '#6b7280' }}>Loading users...</td></tr>
+              <tr><td colSpan="10" style={{ padding: '30px', textAlign: 'center', color: '#6b7280' }}>Loading users...</td></tr>
             ) : filteredUsers.length === 0 ? (
-               <tr><td colSpan="6" style={{ padding: '30px', textAlign: 'center', color: '#6b7280' }}>No users found.</td></tr>
+               <tr><td colSpan="10" style={{ padding: '30px', textAlign: 'center', color: '#6b7280' }}>No users found.</td></tr>
             ) : (
               filteredUsers.map(user => (
                 <tr key={user.id}>
@@ -557,6 +672,27 @@ export default function Users() {
                       </span>
                   </td>
                   
+                  <td>
+                      <span style={{ fontSize: '0.8rem', color: '#4b5563', fontWeight: 500 }}>
+                          {user.deviceInfo?.deviceName || <span style={{ color: '#9ca3af', fontStyle: 'italic' }}>N/A</span>}
+                      </span>
+                  </td>
+                  <td>
+                      <span style={{ fontSize: '0.8rem', color: '#4b5563', fontWeight: 500 }}>
+                          {user.deviceInfo?.appVersion ? `v${user.deviceInfo.appVersion}` : <span style={{ color: '#9ca3af', fontStyle: 'italic' }}>N/A</span>}
+                      </span>
+                  </td>
+                  <td>
+                      <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: '#4b5563', background: '#f3f4f6', padding: '2px 6px', borderRadius: 4 }}>
+                          {user.deviceInfo?.ipAddress || 'N/A'}
+                      </span>
+                  </td>
+                  <td>
+                      <span style={{ fontSize: '0.8rem', color: '#4b5563', fontWeight: 500 }}>
+                          {user.deviceInfo?.location || <span style={{ color: '#9ca3af', fontStyle: 'italic' }}>N/A</span>}
+                      </span>
+                  </td>
+
                   <td style={{ fontSize: '0.875rem', fontWeight: 500, color: '#4b5563' }}>
                       {formatLastActive(user.lastActiveAt)}
                   </td>
@@ -643,6 +779,18 @@ export default function Users() {
                                 </div>
 
                                 <div className="form-group">
+                                    <span className="form-label">User Bio</span>
+                                    <textarea 
+                                        className="form-input" 
+                                        rows="3" 
+                                        style={{ resize: 'vertical' }}
+                                        value={editForm.bio} 
+                                        onChange={(e) => setEditForm({...editForm, bio: e.target.value})}
+                                        placeholder="No bio provided..."
+                                    ></textarea>
+                                </div>
+
+                                <div className="form-group">
                                     <span className="form-label">Rank</span>
                                     <select className="form-input" value={editForm.rank} onChange={(e) => setEditForm({...editForm, rank: e.target.value})}>
                                         {["GENIN", "CHUNIN", "JONIN", "ANBU", "KAGE"].map(r => <option key={r} value={r}>{r}</option>)}
@@ -703,7 +851,7 @@ export default function Users() {
                             {/* Right Column: Stats & Socials */}
                             <div>
                                 <h3 className="section-title">
-                                    <Clock size={20} style={{color: '#6b7280'}}/> Activity & Socials
+                                    <Clock size={20} style={{color: '#6b7280'}}/> Activity & Insights
                                 </h3>
                                 
                                 <div className="stats-box">
@@ -719,30 +867,95 @@ export default function Users() {
 
                                 <div className="socials-card">
                                     <div className="socials-tabs">
-                                        <button type="button" onClick={() => setSocialTab('followers')} className={`tab-btn ${socialTab === 'followers' ? 'active' : ''}`}>Followers ({selectedUser.followers?.length || 0})</button>
-                                        <button type="button" onClick={() => setSocialTab('following')} className={`tab-btn ${socialTab === 'following' ? 'active' : ''}`}>Following ({selectedUser.following?.length || 0})</button>
+                                        <button type="button" onClick={() => setSocialTab('device')} className={`tab-btn ${socialTab === 'device' ? 'active' : ''}`} title="Device Info"><Smartphone size={18} style={{margin:'0 auto'}}/></button>
+                                        <button type="button" onClick={() => setSocialTab('history')} className={`tab-btn ${socialTab === 'history' ? 'active' : ''}`} title="Watch History"><HistoryIcon size={18} style={{margin:'0 auto'}}/></button>
+                                        <button type="button" onClick={() => setSocialTab('downloads')} className={`tab-btn ${socialTab === 'downloads' ? 'active' : ''}`} title="Downloads"><Download size={18} style={{margin:'0 auto'}}/></button>
+                                        <button type="button" onClick={() => setSocialTab('followers')} className={`tab-btn ${socialTab === 'followers' ? 'active' : ''}`} title="Followers"><UsersIcon size={18} style={{margin:'0 auto'}}/></button>
                                     </div>
-                                    <div className="socials-list">
-                                        {loadingSocials ? <div style={{ padding: 30, display:'flex', justifyContent:'center', alignItems:'center', color:'#6b7280', gap:10 }}><Loader2 className="animate-spin"/> Loading profiles...</div> : (
+
+                                    <div className="socials-list" style={{ minHeight: 250 }}>
+                                        {loadingSocials ? <div style={{ padding: 30, display:'flex', justifyContent:'center', alignItems:'center', color:'#6b7280', gap:10 }}><Loader2 className="animate-spin"/> Fetching data...</div> : (
                                             <>
-                                                {socialTab === 'followers' && (followersList.length === 0 ? <div style={{padding:20, textAlign:'center', color:'#9ca3af', fontStyle:'italic'}}>No followers found.</div> : followersList.map(u => (
+                                                {/* 1. DEVICE INFO RENDER */}
+                                                {socialTab === 'device' && (
+                                                    <div style={{ padding: 20 }}>
+                                                        {selectedUser.deviceInfo ? (
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 15 }}>
+                                                                <div className="stat-row" style={{ borderBottom: '1px solid #f3f4f6', paddingBottom: 10 }}>
+                                                                    <span className="stat-label">Device</span>
+                                                                    <span className="stat-value" style={{ color: '#1e3a8a' }}>{selectedUser.deviceInfo.deviceName}</span>
+                                                                </div>
+                                                                <div className="stat-row" style={{ borderBottom: '1px solid #f3f4f6', paddingBottom: 10 }}>
+                                                                    <span className="stat-label">OS Info</span>
+                                                                    <span className="stat-value">{selectedUser.deviceInfo.osName} {selectedUser.deviceInfo.osVersion}</span>
+                                                                </div>
+                                                                <div className="stat-row" style={{ borderBottom: '1px solid #f3f4f6', paddingBottom: 10 }}>
+                                                                    <span className="stat-label">App Build</span>
+                                                                    <span className="stat-value">v{selectedUser.deviceInfo.appVersion} (B{selectedUser.deviceInfo.buildVersion})</span>
+                                                                </div>
+                                                                <div className="stat-row" style={{ borderBottom: '1px solid #f3f4f6', paddingBottom: 10 }}>
+                                                                    <span className="stat-label">IP Address</span>
+                                                                    <span className="stat-value" style={{ fontFamily: 'monospace', color: '#dc2626' }}>{selectedUser.deviceInfo.ipAddress}</span>
+                                                                </div>
+                                                                <div className="stat-row">
+                                                                    <span className="stat-label">Location</span>
+                                                                    <span className="stat-value">{selectedUser.deviceInfo.location || 'N/A'}</span>
+                                                                </div>
+                                                            </div>
+                                                        ) : (
+                                                            <div style={{ textAlign: 'center', color: '#9ca3af', fontStyle: 'italic', padding: 20 }}>
+                                                                <Smartphone size={32} style={{ opacity: 0.2, margin: '0 auto 10px' }} />
+                                                                No device data recorded yet.
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+
+                                                {/* 2. HISTORY RENDER */}
+                                                {socialTab === 'history' && (
+                                                    historyList.length === 0 ? <div style={{padding:40, textAlign:'center', color:'#9ca3af', fontStyle:'italic'}}>No watch/read history.</div> : historyList.map(h => (
+                                                        <div key={h.id} className="social-item" style={{ flexDirection: 'column', alignItems: 'flex-start', borderLeft: h.type === 'anime' ? '3px solid #3b82f6' : '3px solid #ec4899' }}>
+                                                            <div style={{ fontWeight: 700, color: '#1f2937', marginBottom: 4 }}>{h.title || h.animeTitle || h.mangaTitle || 'Unknown Content'}</div>
+                                                            <div style={{ fontSize: '0.75rem', color: '#6b7280', display: 'flex', gap: 10 }}>
+                                                                <span>{h.type === 'anime' ? 'Watched Ep' : 'Read Ch'} {h.lastEpisode || h.lastChapter || h.episodeNumber || h.chapterNumber || '?'}</span>
+                                                                <span>•</span>
+                                                                <span>{formatDate(h.updatedAt || h.createdAt)}</span>
+                                                            </div>
+                                                        </div>
+                                                    ))
+                                                )}
+
+                                                {/* 3. DOWNLOADS RENDER */}
+                                                {socialTab === 'downloads' && (
+                                                    downloadsList.length === 0 ? <div style={{padding:40, textAlign:'center', color:'#9ca3af', fontStyle:'italic'}}>No downloads found.</div> : downloadsList.map(d => (
+                                                        <div key={d.id} className="social-item" style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
+                                                            <div style={{ fontWeight: 700, color: '#1f2937', marginBottom: 4 }}>{d.title || d.animeTitle || d.mangaTitle || 'Unknown File'}</div>
+                                                            <div style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: 600 }}>Downloaded: {formatDate(d.createdAt)}</div>
+                                                        </div>
+                                                    ))
+                                                )}
+
+                                                {/* 4. FOLLOWERS RENDER */}
+                                                {socialTab === 'followers' && (followersList.length === 0 ? <div style={{padding:40, textAlign:'center', color:'#9ca3af', fontStyle:'italic'}}>No followers found.</div> : followersList.map(u => (
                                                     <div key={u.id} className="social-item">
                                                         <div className="mini-avatar">{u.avatar ? <img src={u.avatar} style={{width:'100%', height:'100%', objectFit:'cover'}}/> : u.username?.[0].toUpperCase()}</div>
                                                         <div style={{flex:1}}>
                                                             <div className="social-username">{u.username}</div>
                                                             <div className="social-rank">{u.rank || 'GENIN'}</div>
                                                         </div>
-                                                        <button onClick={() => handleViewUser(u)} style={{background:'none', border:'none', cursor:'pointer', color:'#2563eb'}}><ExternalLink size={14}/></button>
+                                                        <button type="button" onClick={() => handleViewUser(u)} style={{background:'none', border:'none', cursor:'pointer', color:'#2563eb'}}><ExternalLink size={14}/></button>
                                                     </div>
                                                 )))}
-                                                {socialTab === 'following' && (followingList.length === 0 ? <div style={{padding:20, textAlign:'center', color:'#9ca3af', fontStyle:'italic'}}>Not following anyone.</div> : followingList.map(u => (
+
+                                                {/* 5. FOLLOWING RENDER */}
+                                                {socialTab === 'following' && (followingList.length === 0 ? <div style={{padding:40, textAlign:'center', color:'#9ca3af', fontStyle:'italic'}}>Not following anyone.</div> : followingList.map(u => (
                                                     <div key={u.id} className="social-item">
                                                         <div className="mini-avatar">{u.avatar ? <img src={u.avatar} style={{width:'100%', height:'100%', objectFit:'cover'}}/> : u.username?.[0].toUpperCase()}</div>
                                                         <div style={{flex:1}}>
                                                             <div className="social-username">{u.username}</div>
                                                             <div className="social-rank">{u.rank || 'GENIN'}</div>
                                                         </div>
-                                                        <button onClick={() => handleViewUser(u)} style={{background:'none', border:'none', cursor:'pointer', color:'#2563eb'}}><ExternalLink size={14}/></button>
+                                                        <button type="button" onClick={() => handleViewUser(u)} style={{background:'none', border:'none', cursor:'pointer', color:'#2563eb'}}><ExternalLink size={14}/></button>
                                                     </div>
                                                 )))}
                                             </>
