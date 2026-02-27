@@ -7,6 +7,7 @@ import {
     Info,
     Loader2,
     Megaphone,
+    RefreshCw, // ✅ IMPORTED REFRESH ICON
     Search,
     Send,
     Square,
@@ -41,12 +42,29 @@ export default function Notifications() {
       fetchHistory();
   }, []);
 
-  const fetchHistory = async () => {
+  // ✅ SURGICAL UPDATE: Added Session Caching & Force Refresh
+  const fetchHistory = async (forceRefresh = false) => {
       try {
+          const CACHE_KEY = 'admin_notifications_history_cache';
+
+          // 1. Return Instant Cache (0 bandwidth, 0 reads)
+          if (!forceRefresh) {
+              const cachedData = sessionStorage.getItem(CACHE_KEY);
+              if (cachedData) {
+                  setHistory(JSON.parse(cachedData));
+                  return;
+              }
+          }
+
           // Limit history to last 20 items
           const q = query(collection(db, "notification_logs"), orderBy('createdAt', 'desc'), limit(20));
           const snap = await getDocs(q);
-          setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+          const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          
+          setHistory(data);
+          
+          // 2. Save new fetch to session cache
+          sessionStorage.setItem(CACHE_KEY, JSON.stringify(data));
       } catch (e) { console.error(e); }
   };
 
@@ -157,7 +175,11 @@ export default function Notifications() {
           setBody('');
           setTargetUid('');
           setSelectedUsers([]);
-          fetchHistory();
+
+          // ✅ SURGICAL UPDATE: Wipe cache to ensure new log shows up
+          sessionStorage.removeItem('admin_notifications_history_cache');
+          fetchHistory(true);
+          
           setActiveTab('history');
 
       } catch (error) {
@@ -183,9 +205,19 @@ export default function Notifications() {
         <div style={{ gridColumn: 'span 8' }}>
             <div className="card">
                 {/* TABS */}
-                <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb' }}>
+                <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb', position: 'relative' }}>
                     <button onClick={() => setActiveTab('compose')} style={{ flex: 1, padding: 20, background: activeTab === 'compose' ? 'white' : '#f9fafb', border: 'none', borderBottom: activeTab === 'compose' ? '3px solid #2563eb' : 'none', fontWeight: 700, color: activeTab === 'compose' ? '#2563eb' : '#6b7280', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:8 }}><Send size={18}/> Compose New</button>
                     <button onClick={() => setActiveTab('history')} style={{ flex: 1, padding: 20, background: activeTab === 'history' ? 'white' : '#f9fafb', border: 'none', borderBottom: activeTab === 'history' ? '3px solid #2563eb' : 'none', fontWeight: 700, color: activeTab === 'history' ? '#2563eb' : '#6b7280', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:8 }}><History size={18}/> Sent History</button>
+                    
+                    {/* ✅ SURGICAL UPDATE: REFRESH BUTTON (Only visible on history tab) */}
+                    {activeTab === 'history' && (
+                        <button 
+                            onClick={() => fetchHistory(true)}
+                            style={{ position: 'absolute', right: 15, top: 15, background: 'white', border: '1px solid #e5e7eb', borderRadius: 8, padding: '6px 12px', color: '#4b5563', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 'bold' }}
+                        >
+                            <RefreshCw size={14} /> Refresh
+                        </button>
+                    )}
                 </div>
 
                 <div className="card-body" style={{ padding: 30 }}>

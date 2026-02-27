@@ -6,7 +6,7 @@ import {
 } from 'firebase/firestore';
 import {
     Ban, ChevronDown, ChevronUp, Clock, FileText,
-    Loader2, MessageSquare, Search, Trash2, User
+    Loader2, MessageSquare, RefreshCw, Search, Trash2, User // ✅ IMPORTED REFRESH ICON
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -38,14 +38,26 @@ export default function Comments() {
         fetchPosts(true);
     }, []);
 
-    // 1. ✅ OPTIMIZED: Fetch Main Posts (Roots) with Pagination
-    const fetchPosts = async (isFirstLoad = false) => {
+    // 1. ✅ SURGICAL UPDATE: Added Session Caching & Force Refresh
+    const fetchPosts = async (isFirstLoad = false, forceRefresh = false) => {
         if (loading || loadingMore || (!isFirstLoad && !hasMore)) return;
 
         if (isFirstLoad) setLoading(true);
         else setLoadingMore(true);
 
         try {
+            const CACHE_KEY = 'admin_posts_cache';
+
+            // 1. Return Instant Cache (0 bandwidth, 0 reads)
+            if (isFirstLoad && !forceRefresh) {
+                const cachedData = sessionStorage.getItem(CACHE_KEY);
+                if (cachedData) {
+                    setPosts(JSON.parse(cachedData));
+                    setLoading(false);
+                    return;
+                }
+            }
+
             let q = query(
                 collection(db, "posts"), 
                 orderBy("createdAt", "desc"), 
@@ -68,10 +80,15 @@ export default function Comments() {
             // Ideally, your DB query should have where('parentId', '==', null) if possible
             const mainPosts = allItems.filter(item => !item.parentId);
 
-            setPosts(prev => isFirstLoad ? mainPosts : [...prev, ...mainPosts]);
-            setLastVisible(snap.docs[snap.docs.length - 1]);
-            
+            if (snap.docs.length > 0) setLastVisible(snap.docs[snap.docs.length - 1]);
             if (snap.docs.length < 20) setHasMore(false);
+
+            setPosts(prev => {
+                const newList = isFirstLoad ? mainPosts : [...prev, ...mainPosts];
+                // 2. Save new fetch to session cache
+                sessionStorage.setItem(CACHE_KEY, JSON.stringify(newList));
+                return newList;
+            });
 
         } catch (error) {
             console.error("Error fetching posts:", error);
@@ -126,7 +143,11 @@ export default function Comments() {
             await deleteDoc(doc(db, "posts", itemId));
             
             if (isMainPost) {
-                setPosts(prev => prev.filter(p => p.id !== itemId));
+                setPosts(prev => {
+                    const updated = prev.filter(p => p.id !== itemId);
+                    sessionStorage.setItem('admin_posts_cache', JSON.stringify(updated)); // ✅ Sync cache
+                    return updated;
+                });
             } else {
                 setCommentsMap(prev => ({
                     ...prev,
@@ -183,7 +204,11 @@ export default function Comments() {
 
                 // Update UI Manually since we bypassed handleDelete
                 if (isMainPost) {
-                    setPosts(prev => prev.filter(p => p.id !== item.id));
+                    setPosts(prev => {
+                        const updated = prev.filter(p => p.id !== item.id);
+                        sessionStorage.setItem('admin_posts_cache', JSON.stringify(updated)); // ✅ Sync cache
+                        return updated;
+                    });
                 } else {
                     setCommentsMap(prev => ({
                         ...prev,
@@ -195,7 +220,11 @@ export default function Comments() {
                 alert(`User document not found. Deleting content only.`);
                 await deleteDoc(doc(db, "posts", item.id));
                  if (isMainPost) {
-                    setPosts(prev => prev.filter(p => p.id !== item.id));
+                    setPosts(prev => {
+                        const updated = prev.filter(p => p.id !== item.id);
+                        sessionStorage.setItem('admin_posts_cache', JSON.stringify(updated)); // ✅ Sync cache
+                        return updated;
+                    });
                 } else {
                     setCommentsMap(prev => ({
                         ...prev,
@@ -227,6 +256,10 @@ export default function Comments() {
             .search-box { position: relative; width: 300px; max-width: 100%; }
             .search-input { width: 100%; padding: 10px 10px 10px 40px; border: 1px solid #e5e7eb; border-radius: 8px; outline: none; }
             .search-icon { position: absolute; left: 12px; top: 12px; color: #9ca3af; }
+
+            /* ✅ REFRESH BUTTON */
+            .btn-refresh { display: flex; align-items: center; justify-content: center; padding: 10px; background: white; border: 1px solid #e5e7eb; border-radius: 8px; color: #4b5563; cursor: pointer; transition: all 0.2s; }
+            .btn-refresh:hover { background: #f9fafb; color: #2563eb; border-color: #bfdbfe; }
 
             /* POST CARD */
             .post-card { background: white; border-radius: 12px; border: 1px solid #e5e7eb; margin-bottom: 20px; overflow: hidden; transition: box-shadow 0.2s; }
@@ -297,14 +330,26 @@ export default function Comments() {
                 <h1 className="page-title">
                     <MessageSquare size={28} className="text-blue-600" color="#2563eb"/> Moderation Feed
                 </h1>
-                <div className="search-box">
-                    <Search className="search-icon" size={18}/>
-                    <input 
-                        type="text" 
-                        className="search-input" 
-                        placeholder="Search posts or users..." 
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                    />
+                
+                {/* ✅ REFRESH BUTTON ADDED */}
+                <div style={{ display: 'flex', gap: 10, width: '100%', maxWidth: 350 }}>
+                    <div className="search-box" style={{ flex: 1 }}>
+                        <Search className="search-icon" size={18}/>
+                        <input 
+                            type="text" 
+                            className="search-input" 
+                            placeholder="Search posts or users..." 
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                    </div>
+                    <button 
+                        onClick={() => fetchPosts(true, true)} 
+                        className="btn-refresh"
+                        title="Refresh Data"
+                        disabled={loading}
+                    >
+                        <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
+                    </button>
                 </div>
             </div>
 

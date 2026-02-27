@@ -4,6 +4,7 @@ import {
     Clock,
     Loader2,
     MessageSquare,
+    RefreshCw, // ✅ IMPORTED REFRESH ICON
     Shield,
     Trash2,
     User,
@@ -28,13 +29,26 @@ export default function Reports() {
         fetchReports(true);
     }, []);
 
-    const fetchReports = async (isFirstLoad = false) => {
+    // ✅ SURGICAL UPDATE: Added Session Caching & Force Refresh
+    const fetchReports = async (isFirstLoad = false, forceRefresh = false) => {
         if (loading || loadingMore || (!isFirstLoad && !hasMore)) return;
 
         if (isFirstLoad) setLoading(true);
         else setLoadingMore(true);
 
         try {
+            const CACHE_KEY = 'admin_reports_cache';
+
+            // 1. Return Instant Cache (0 bandwidth, 0 reads)
+            if (isFirstLoad && !forceRefresh) {
+                const cachedData = sessionStorage.getItem(CACHE_KEY);
+                if (cachedData) {
+                    setReports(JSON.parse(cachedData));
+                    setLoading(false);
+                    return;
+                }
+            }
+
             let q = query(
                 collection(db, "reports"), 
                 orderBy('createdAt', 'desc'),
@@ -53,10 +67,15 @@ export default function Reports() {
             const snap = await getDocs(q);
             const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
             
-            setReports(prev => isFirstLoad ? data : [...prev, ...data]);
-            setLastVisible(snap.docs[snap.docs.length - 1]);
-            
+            if (snap.docs.length > 0) setLastVisible(snap.docs[snap.docs.length - 1]);
             if (snap.docs.length < 20) setHasMore(false);
+
+            setReports(prev => {
+                const newList = isFirstLoad ? data : [...prev, ...data];
+                // 2. Save new fetch to session cache
+                sessionStorage.setItem(CACHE_KEY, JSON.stringify(newList));
+                return newList;
+            });
 
         } catch (e) { 
             console.error("Error fetching reports:", e); 
@@ -70,8 +89,12 @@ export default function Reports() {
     const handleAction = async (reportId, newStatus) => {
         try {
             await updateDoc(doc(db, "reports", reportId), { status: newStatus });
-            // Update local state to reflect change immediately
-            setReports(prev => prev.map(r => r.id === reportId ? { ...r, status: newStatus } : r));
+            // Update local state AND Cache to reflect change immediately
+            setReports(prev => {
+                const updatedList = prev.map(r => r.id === reportId ? { ...r, status: newStatus } : r);
+                sessionStorage.setItem('admin_reports_cache', JSON.stringify(updatedList)); // ✅ Keeps cache in sync
+                return updatedList;
+            });
         } catch (e) { alert("Error: " + e.message); }
     };
 
@@ -96,7 +119,7 @@ export default function Reports() {
     return (
         <div className="container" style={{ padding: 20 }}>
             {/* HEADER */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 30 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 30, flexWrap: 'wrap', gap: 15 }}>
                 <div>
                     <h1 style={{ fontSize: '2rem', fontWeight: 900, margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
                         <Shield size={32} className="text-red-600"/> Moderation
@@ -104,27 +127,38 @@ export default function Reports() {
                     <p style={{ color: '#6b7280', marginTop: 5 }}>Review user reports.</p>
                 </div>
                 
-                {/* FILTER TABS */}
-                <div style={{ background: 'white', padding: 5, borderRadius: 12, border: '1px solid #e5e7eb', display: 'flex', gap: 5 }}>
-                    {['pending', 'resolved', 'dismissed'].map(f => (
-                        <button 
-                            key={f} 
-                            onClick={() => setFilter(f)}
-                            style={{
-                                padding: '8px 16px',
-                                borderRadius: 8,
-                                border: 'none',
-                                background: filter === f ? (f === 'pending' ? '#fef2f2' : f === 'resolved' ? '#f0fdf4' : '#f3f4f6') : 'transparent',
-                                color: filter === f ? (f === 'pending' ? '#dc2626' : f === 'resolved' ? '#16a34a' : '#4b5563') : '#6b7280',
-                                fontWeight: 700,
-                                textTransform: 'capitalize',
-                                cursor: 'pointer',
-                                transition: 'all 0.2s'
-                            }}
-                        >
-                            {f}
-                        </button>
-                    ))}
+                {/* FILTER TABS & REFRESH BUTTON */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ background: 'white', padding: 5, borderRadius: 12, border: '1px solid #e5e7eb', display: 'flex', gap: 5 }}>
+                        {['pending', 'resolved', 'dismissed'].map(f => (
+                            <button 
+                                key={f} 
+                                onClick={() => setFilter(f)}
+                                style={{
+                                    padding: '8px 16px',
+                                    borderRadius: 8,
+                                    border: 'none',
+                                    background: filter === f ? (f === 'pending' ? '#fef2f2' : f === 'resolved' ? '#f0fdf4' : '#f3f4f6') : 'transparent',
+                                    color: filter === f ? (f === 'pending' ? '#dc2626' : f === 'resolved' ? '#16a34a' : '#4b5563') : '#6b7280',
+                                    fontWeight: 700,
+                                    textTransform: 'capitalize',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s'
+                                }}
+                            >
+                                {f}
+                            </button>
+                        ))}
+                    </div>
+                    
+                    {/* ✅ SURGICAL UPDATE: REFRESH BUTTON */}
+                    <button 
+                        onClick={() => fetchReports(true, true)}
+                        disabled={loading}
+                        style={{ padding: '8px 16px', borderRadius: 12, background: 'white', color: '#4b5563', border: '1px solid #e5e7eb', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 6, height: 42 }}
+                    >
+                        <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+                    </button>
                 </div>
             </div>
 
