@@ -1,10 +1,13 @@
-import { collection, doc, getDocs, limit, orderBy, query, startAfter, updateDoc } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDocs, limit, orderBy, query, startAfter, updateDoc } from 'firebase/firestore';
 import {
+    Bot,
     CheckCircle,
     Clock,
+    Copy, // ✅ IMPORTED COPY ICON
+    FileText,
     Loader2,
     MessageSquare,
-    RefreshCw, // ✅ IMPORTED REFRESH ICON
+    RefreshCw,
     Shield,
     Trash2,
     User,
@@ -29,30 +32,17 @@ export default function Reports() {
         fetchReports(true);
     }, []);
 
-    // ✅ SURGICAL UPDATE: Added Session Caching & Force Refresh
-    const fetchReports = async (isFirstLoad = false, forceRefresh = false) => {
+    const fetchReports = async (isFirstLoad = false) => {
         if (loading || loadingMore || (!isFirstLoad && !hasMore)) return;
 
         if (isFirstLoad) setLoading(true);
         else setLoadingMore(true);
 
         try {
-            const CACHE_KEY = 'admin_reports_cache';
-
-            // 1. Return Instant Cache (0 bandwidth, 0 reads)
-            if (isFirstLoad && !forceRefresh) {
-                const cachedData = sessionStorage.getItem(CACHE_KEY);
-                if (cachedData) {
-                    setReports(JSON.parse(cachedData));
-                    setLoading(false);
-                    return;
-                }
-            }
-
             let q = query(
                 collection(db, "reports"), 
                 orderBy('createdAt', 'desc'),
-                limit(20)
+                limit(50) 
             );
 
             if (!isFirstLoad && lastVisible) {
@@ -60,7 +50,7 @@ export default function Reports() {
                     collection(db, "reports"), 
                     orderBy('createdAt', 'desc'),
                     startAfter(lastVisible),
-                    limit(20)
+                    limit(50)
                 );
             }
 
@@ -68,14 +58,9 @@ export default function Reports() {
             const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
             
             if (snap.docs.length > 0) setLastVisible(snap.docs[snap.docs.length - 1]);
-            if (snap.docs.length < 20) setHasMore(false);
+            if (snap.docs.length < 50) setHasMore(false);
 
-            setReports(prev => {
-                const newList = isFirstLoad ? data : [...prev, ...data];
-                // 2. Save new fetch to session cache
-                sessionStorage.setItem(CACHE_KEY, JSON.stringify(newList));
-                return newList;
-            });
+            setReports(prev => isFirstLoad ? data : [...prev, ...data]);
 
         } catch (e) { 
             console.error("Error fetching reports:", e); 
@@ -89,31 +74,34 @@ export default function Reports() {
     const handleAction = async (reportId, newStatus) => {
         try {
             await updateDoc(doc(db, "reports", reportId), { status: newStatus });
-            // Update local state AND Cache to reflect change immediately
-            setReports(prev => {
-                const updatedList = prev.map(r => r.id === reportId ? { ...r, status: newStatus } : r);
-                sessionStorage.setItem('admin_reports_cache', JSON.stringify(updatedList)); // ✅ Keeps cache in sync
-                return updatedList;
-            });
-        } catch (e) { alert("Error: " + e.message); }
+            setReports(prev => prev.map(r => r.id === reportId ? { ...r, status: newStatus } : r));
+        } catch (e) { 
+            alert("Error: " + e.message); 
+        }
     };
 
-    // Delete the content that was reported
     const handleDeleteContent = async (report) => {
-        if(!window.confirm("⚠️ Are you sure you want to delete this content?")) return;
+        if(!window.confirm("⚠️ DANGER: This will permanently delete the reported content from the database. Are you sure?")) return;
         
         try {
-            // Note: In a real app, you need logic here to delete from 'anime', 'manga', or 'comments'
-            // based on report.targetType and report.targetId
-            console.log("Deleting content for report:", report.id);
-            
-            // For now, we just mark as resolved
+            if (report.targetType === 'post' || report.targetType === 'comment') {
+                await deleteDoc(doc(db, "posts", report.targetId));
+            } else if (report.targetType === 'user') {
+                alert("Please go to the 'Users' tab to safely delete a user account.");
+                return;
+            } else if (report.targetType === 'anime') {
+                await deleteDoc(doc(db, "anime", report.targetId));
+            } else if (report.targetType === 'manga') {
+                await deleteDoc(doc(db, "manga", report.targetId));
+            }
+
             await handleAction(report.id, 'resolved');
-            alert("Report marked as resolved (Content deletion logic needs specific ID).");
-        } catch (e) { alert("Error: " + e.message); }
+            alert(`Success! The ${report.targetType} has been permanently deleted.`);
+        } catch (e) { 
+            alert("Error deleting content: " + e.message); 
+        }
     };
 
-    // Filter the list based on the selected tab
     const filteredReports = reports.filter(r => (r.status || 'pending') === filter);
 
     return (
@@ -124,7 +112,7 @@ export default function Reports() {
                     <h1 style={{ fontSize: '2rem', fontWeight: 900, margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
                         <Shield size={32} className="text-red-600"/> Moderation
                     </h1>
-                    <p style={{ color: '#6b7280', marginTop: 5 }}>Review user reports.</p>
+                    <p style={{ color: '#6b7280', marginTop: 5 }}>Review user reports and AI flags.</p>
                 </div>
                 
                 {/* FILTER TABS & REFRESH BUTTON */}
@@ -151,9 +139,8 @@ export default function Reports() {
                         ))}
                     </div>
                     
-                    {/* ✅ SURGICAL UPDATE: REFRESH BUTTON */}
                     <button 
-                        onClick={() => fetchReports(true, true)}
+                        onClick={() => fetchReports(true)}
                         disabled={loading}
                         style={{ padding: '8px 16px', borderRadius: 12, background: 'white', color: '#4b5563', border: '1px solid #e5e7eb', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 6, height: 42 }}
                     >
@@ -175,25 +162,30 @@ export default function Reports() {
                     </div>
                 ) : (
                     filteredReports.map(report => (
-                        <div key={report.id} className="card" style={{ padding: 20, display: 'flex', flexDirection: 'row', gap: 20, alignItems: 'flex-start', borderLeft: report.reason === 'Spam' ? '5px solid #eab308' : '5px solid #dc2626', background:'white', borderRadius: 12, border: '1px solid #e5e7eb', boxShadow: '0 2px 5px rgba(0,0,0,0.05)' }}>
+                        <div key={report.id} className="card" style={{ padding: 20, display: 'flex', flexDirection: 'row', gap: 20, alignItems: 'flex-start', borderLeft: report.reason?.startsWith('Auto-Flagged') ? '5px solid #9333ea' : report.reason === 'Spam' ? '5px solid #eab308' : '5px solid #dc2626', background:'white', borderRadius: 12, border: '1px solid #e5e7eb', boxShadow: '0 2px 5px rgba(0,0,0,0.05)' }}>
                             
-                            {/* ICON */}
                             <div style={{ width: 50, height: 50, borderRadius: 12, background: '#f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                                 {report.targetType === 'user' ? <User size={24} className="text-gray-500"/> : 
                                  report.targetType === 'comment' ? <MessageSquare size={24} className="text-blue-500"/> : 
+                                 report.targetType === 'post' ? <FileText size={24} className="text-green-500"/> : 
                                  <Video size={24} className="text-purple-500"/>}
                             </div>
 
                             {/* CONTENT */}
                             <div style={{ flex: 1 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 5 }}>
-                                    <span style={{ fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', color: report.reason === 'Spam' ? '#ca8a04' : '#b91c1c', background: report.reason === 'Spam' ? '#fefce8' : '#fef2f2', padding: '2px 8px', borderRadius: 4 }}>
+                                    <span style={{ 
+                                        fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', 
+                                        color: report.reason?.startsWith('Auto-Flagged') ? '#9333ea' : report.reason === 'Spam' ? '#ca8a04' : '#b91c1c', 
+                                        background: report.reason?.startsWith('Auto-Flagged') ? '#faf5ff' : report.reason === 'Spam' ? '#fefce8' : '#fef2f2', 
+                                        padding: '2px 8px', borderRadius: 4 
+                                    }}>
                                         {report.reason || "Report"}
                                     </span>
-                                    {/* ✅ SAFE DATE RENDERING */}
+                                    
                                     <span style={{ fontSize: '0.75rem', color: '#9ca3af', display: 'flex', alignItems: 'center', gap: 4 }}>
                                         <Clock size={12}/> 
-                                        {report.createdAt?.toDate ? report.createdAt.toDate().toLocaleDateString() : 'Just now'}
+                                        {report.createdAt?.toDate ? report.createdAt.toDate().toLocaleString() : 'Just now'}
                                     </span>
                                 </div>
                                 
@@ -201,14 +193,35 @@ export default function Reports() {
                                     Reported: {report.targetContent || "Unknown Content"}
                                 </h3>
                                 
-                                <div style={{ fontSize: '0.85rem', color: '#6b7280' }}>
-                                    Reported by: <span style={{ fontWeight: 600, color: '#374151' }}>{report.reportedBy || "Anonymous"}</span>
+                                <div style={{ fontSize: '0.85rem', color: '#6b7280', display: 'flex', alignItems: 'center', gap: 5 }}>
+                                    Reported by: 
+                                    {report.reportedBy === "Gemini Auto-Mod" ? (
+                                        <span style={{ fontWeight: 800, color: '#9333ea', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                            <Bot size={14}/> Gemini AI
+                                        </span>
+                                    ) : (
+                                        <span style={{ fontWeight: 600, color: '#374151' }}>{report.reportedBy || "Anonymous"}</span>
+                                    )}
                                 </div>
+
+                                {/* ✅ SURGICAL UPDATE: DISPLAY OFFENDER UID WITH COPY BUTTON */}
+                                {report.userId && report.userId !== "Unknown" && (
+                                    <div style={{ fontSize: '0.85rem', color: '#6b7280', display: 'flex', alignItems: 'center', gap: 5, marginTop: 6 }}>
+                                        Offender UID: 
+                                        <span 
+                                            onClick={() => { navigator.clipboard.writeText(report.userId); alert("UID Copied!"); }}
+                                            style={{ fontFamily: 'monospace', color: '#dc2626', background: '#fee2e2', padding: '2px 6px', borderRadius: 4, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                                            title="Click to Copy UID"
+                                        >
+                                            {report.userId} <Copy size={12}/>
+                                        </span>
+                                    </div>
+                                )}
                             </div>
 
                             {/* ACTIONS */}
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                                {filter === 'pending' && (
+                                {filter === 'pending' ? (
                                     <>
                                         <button 
                                             onClick={() => handleAction(report.id, 'resolved')}
@@ -231,10 +244,9 @@ export default function Reports() {
                                             <Trash2 size={14}/> Delete
                                         </button>
                                     </>
-                                )}
-                                {filter !== 'pending' && (
-                                    <div style={{ padding: '5px 10px', background: filter === 'resolved' ? '#dcfce7' : '#f3f4f6', color: filter === 'resolved' ? '#166534' : '#4b5563', borderRadius: 6, fontSize: '0.75rem', fontWeight: 700, textAlign: 'center' }}>
-                                        {filter === 'resolved' ? 'RESOLVED' : 'DISMISSED'}
+                                ) : (
+                                    <div style={{ padding: '5px 10px', background: report.status === 'resolved' ? '#dcfce7' : '#f3f4f6', color: report.status === 'resolved' ? '#166534' : '#4b5563', borderRadius: 6, fontSize: '0.75rem', fontWeight: 700, textAlign: 'center', textTransform: 'uppercase' }}>
+                                        {report.status || filter}
                                     </div>
                                 )}
                             </div>
@@ -243,7 +255,7 @@ export default function Reports() {
                     ))
                 )}
                 
-                {/* ✅ LOAD MORE BUTTON */}
+                {/* LOAD MORE BUTTON */}
                 {hasMore && !loading && (
                     <div style={{padding: 10, textAlign:'center'}}>
                         <button 

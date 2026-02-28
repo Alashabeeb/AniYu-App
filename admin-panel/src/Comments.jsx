@@ -5,8 +5,8 @@ import {
     where, writeBatch
 } from 'firebase/firestore';
 import {
-    Ban, ChevronDown, ChevronUp, Clock, FileText,
-    Loader2, MessageSquare, RefreshCw, Search, Trash2, User // ✅ IMPORTED REFRESH ICON
+    Ban, ChevronDown, ChevronUp, Clock, Copy, FileText, // ✅ IMPORTED COPY ICON
+    Loader2, MessageSquare, RefreshCw, Search, ShieldAlert, Trash2, User
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -29,7 +29,7 @@ export default function Comments() {
     const [searchTerm, setSearchTerm] = useState('');
     const [actionLoading, setActionLoading] = useState(null);
 
-    // ✅ PAGINATION STATE
+    // PAGINATION STATE
     const [lastVisible, setLastVisible] = useState(null);
     const [hasMore, setHasMore] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
@@ -38,30 +38,17 @@ export default function Comments() {
         fetchPosts(true);
     }, []);
 
-    // 1. ✅ SURGICAL UPDATE: Added Session Caching & Force Refresh
-    const fetchPosts = async (isFirstLoad = false, forceRefresh = false) => {
+    const fetchPosts = async (isFirstLoad = false) => {
         if (loading || loadingMore || (!isFirstLoad && !hasMore)) return;
 
         if (isFirstLoad) setLoading(true);
         else setLoadingMore(true);
 
         try {
-            const CACHE_KEY = 'admin_posts_cache';
-
-            // 1. Return Instant Cache (0 bandwidth, 0 reads)
-            if (isFirstLoad && !forceRefresh) {
-                const cachedData = sessionStorage.getItem(CACHE_KEY);
-                if (cachedData) {
-                    setPosts(JSON.parse(cachedData));
-                    setLoading(false);
-                    return;
-                }
-            }
-
             let q = query(
                 collection(db, "posts"), 
                 orderBy("createdAt", "desc"), 
-                limit(20) // Reduced from 50 to 20 for faster initial load
+                limit(20) 
             );
 
             if (!isFirstLoad && lastVisible) {
@@ -76,19 +63,12 @@ export default function Comments() {
             const snap = await getDocs(q);
             const allItems = snap.docs.map(d => ({ id: d.id, ...d.data() }));
             
-            // Filter client-side to ensure we only get roots (in case parentId check needed)
-            // Ideally, your DB query should have where('parentId', '==', null) if possible
             const mainPosts = allItems.filter(item => !item.parentId);
 
             if (snap.docs.length > 0) setLastVisible(snap.docs[snap.docs.length - 1]);
             if (snap.docs.length < 20) setHasMore(false);
 
-            setPosts(prev => {
-                const newList = isFirstLoad ? mainPosts : [...prev, ...mainPosts];
-                // 2. Save new fetch to session cache
-                sessionStorage.setItem(CACHE_KEY, JSON.stringify(newList));
-                return newList;
-            });
+            setPosts(prev => isFirstLoad ? mainPosts : [...prev, ...mainPosts]);
 
         } catch (error) {
             console.error("Error fetching posts:", error);
@@ -98,7 +78,6 @@ export default function Comments() {
         }
     };
 
-    // 2. Fetch Comments for a specific Post (Lazy Load - Good!)
     const fetchCommentsForPost = async (postId) => {
         if (commentsMap[postId]) return; 
         setLoadingComments(true);
@@ -107,7 +86,7 @@ export default function Comments() {
                 collection(db, "posts"), 
                 where("parentId", "==", postId),
                 orderBy("createdAt", "desc"),
-                limit(50) // ✅ Added limit safety
+                limit(50) 
             );
             const snap = await getDocs(q);
             const postComments = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -143,11 +122,7 @@ export default function Comments() {
             await deleteDoc(doc(db, "posts", itemId));
             
             if (isMainPost) {
-                setPosts(prev => {
-                    const updated = prev.filter(p => p.id !== itemId);
-                    sessionStorage.setItem('admin_posts_cache', JSON.stringify(updated)); // ✅ Sync cache
-                    return updated;
-                });
+                setPosts(prev => prev.filter(p => p.id !== itemId));
             } else {
                 setCommentsMap(prev => ({
                     ...prev,
@@ -161,13 +136,12 @@ export default function Comments() {
         }
     };
 
-    // ✅ UPDATED: Used Batch Write for safer banning
     const handleBanUser = async (item, isMainPost, parentId = null) => {
         if (!window.confirm(`Ban user @${item.username || 'unknown'}?`)) return;
         setActionLoading(item.id);
         
         try {
-            const batch = writeBatch(db); // 1. Start Batch
+            const batch = writeBatch(db); 
             
             const userRef = doc(db, "users", item.userId);
             const userSnap = await getDoc(userRef);
@@ -176,14 +150,12 @@ export default function Comments() {
                 const banExpires = new Date();
                 banExpires.setHours(banExpires.getHours() + 24); 
                 
-                // 2. Queue User Update (Ban)
                 batch.update(userRef, {
                     isBanned: true,
                     banExpiresAt: banExpires,
                     banCount: (userSnap.data().banCount || 0) + 1
                 });
 
-                // 3. Queue Notification
                 const notifRef = doc(collection(db, "users", item.userId, "notifications"));
                 batch.set(notifRef, {
                     title: "Account Suspended ⛔",
@@ -193,22 +165,15 @@ export default function Comments() {
                     type: 'system'
                 });
 
-                // 4. Queue Content Deletion
                 const postRef = doc(db, "posts", item.id);
                 batch.delete(postRef);
 
-                // 5. Commit All Changes Together
                 await batch.commit();
 
                 alert(`User @${item.username} has been banned and content removed.`);
 
-                // Update UI Manually since we bypassed handleDelete
                 if (isMainPost) {
-                    setPosts(prev => {
-                        const updated = prev.filter(p => p.id !== item.id);
-                        sessionStorage.setItem('admin_posts_cache', JSON.stringify(updated)); // ✅ Sync cache
-                        return updated;
-                    });
+                    setPosts(prev => prev.filter(p => p.id !== item.id));
                 } else {
                     setCommentsMap(prev => ({
                         ...prev,
@@ -220,11 +185,7 @@ export default function Comments() {
                 alert(`User document not found. Deleting content only.`);
                 await deleteDoc(doc(db, "posts", item.id));
                  if (isMainPost) {
-                    setPosts(prev => {
-                        const updated = prev.filter(p => p.id !== item.id);
-                        sessionStorage.setItem('admin_posts_cache', JSON.stringify(updated)); // ✅ Sync cache
-                        return updated;
-                    });
+                    setPosts(prev => prev.filter(p => p.id !== item.id));
                 } else {
                     setCommentsMap(prev => ({
                         ...prev,
@@ -257,7 +218,6 @@ export default function Comments() {
             .search-input { width: 100%; padding: 10px 10px 10px 40px; border: 1px solid #e5e7eb; border-radius: 8px; outline: none; }
             .search-icon { position: absolute; left: 12px; top: 12px; color: #9ca3af; }
 
-            /* ✅ REFRESH BUTTON */
             .btn-refresh { display: flex; align-items: center; justify-content: center; padding: 10px; background: white; border: 1px solid #e5e7eb; border-radius: 8px; color: #4b5563; cursor: pointer; transition: all 0.2s; }
             .btn-refresh:hover { background: #f9fafb; color: #2563eb; border-color: #bfdbfe; }
 
@@ -279,6 +239,11 @@ export default function Comments() {
             
             .text-content { color: #374151; line-height: 1.5; font-size: 0.95rem; white-space: pre-wrap; margin-bottom: 10px; }
             .media-indicator { font-size: 0.8rem; color: #2563eb; display: flex; align-items: center; gap: 5px; background: #eff6ff; padding: 5px 10px; border-radius: 6px; width: fit-content; }
+
+            /* AI FLAG STYLING */
+            .ai-flag { margin-top: 10px; padding: 6px 10px; background-color: #faf5ff; border: 1px solid #e9d5ff; border-radius: 6px; display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem; color: #9333ea; font-weight: 700; flex-wrap: wrap; }
+            .uid-copy-btn { margin-left: 8px; padding: 2px 6px; background-color: #f3e8ff; border-radius: 4px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; color: #7e22ce; font-family: monospace; font-size: 0.7rem; border: 1px solid #d8b4fe; }
+            .uid-copy-btn:hover { background-color: #e9d5ff; }
 
             .post-footer { background: #f9fafb; padding: 10px 20px; border-top: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center; }
             .comment-toggle { border: none; background: none; font-weight: 600; color: #4b5563; cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 0.9rem; }
@@ -331,7 +296,6 @@ export default function Comments() {
                     <MessageSquare size={28} className="text-blue-600" color="#2563eb"/> Moderation Feed
                 </h1>
                 
-                {/* ✅ REFRESH BUTTON ADDED */}
                 <div style={{ display: 'flex', gap: 10, width: '100%', maxWidth: 350 }}>
                     <div className="search-box" style={{ flex: 1 }}>
                         <Search className="search-icon" size={18}/>
@@ -343,7 +307,7 @@ export default function Comments() {
                         />
                     </div>
                     <button 
-                        onClick={() => fetchPosts(true, true)} 
+                        onClick={() => fetchPosts(true)} 
                         className="btn-refresh"
                         title="Refresh Data"
                         disabled={loading}
@@ -376,8 +340,27 @@ export default function Comments() {
                                     <div className="text-content">
                                         {post.text || <span style={{fontStyle:'italic', color:'#9ca3af'}}>No text content</span>}
                                     </div>
+                                    
+                                    {/* ✅ SURGICAL UPDATE: Display Gemini Flag with Copy UID Button */}
+                                    {post.moderationFlag && (
+                                        <div className="ai-flag">
+                                            <ShieldAlert size={14} /> AI Flagged: {post.moderationFlag}
+                                            <span 
+                                                className="uid-copy-btn"
+                                                onClick={(e) => { 
+                                                    e.stopPropagation(); 
+                                                    navigator.clipboard.writeText(post.flaggedUserUid || post.userId); 
+                                                    alert("UID Copied!"); 
+                                                }}
+                                                title="Copy Offender UID"
+                                            >
+                                                <Copy size={12} /> {post.flaggedUserUid || post.userId}
+                                            </span>
+                                        </div>
+                                    )}
+
                                     {post.mediaUrl && (
-                                        <div className="media-indicator">
+                                        <div className="media-indicator" style={{ marginTop: post.moderationFlag ? 10 : 0 }}>
                                             <FileText size={14}/> Attachment
                                         </div>
                                     )}
@@ -445,6 +428,24 @@ export default function Comments() {
                                                         </div>
                                                     </div>
                                                     <div className="comment-text">{comment.text}</div>
+                                                    
+                                                    {/* ✅ SURGICAL UPDATE: Display Gemini Flag on Comments with Copy UID */}
+                                                    {comment.moderationFlag && (
+                                                        <div className="ai-flag" style={{ marginTop: 6, fontSize: '0.7rem', padding: '4px 8px' }}>
+                                                            <ShieldAlert size={12} /> AI Flagged: {comment.moderationFlag}
+                                                            <span 
+                                                                className="uid-copy-btn"
+                                                                onClick={(e) => { 
+                                                                    e.stopPropagation(); 
+                                                                    navigator.clipboard.writeText(comment.flaggedUserUid || comment.userId); 
+                                                                    alert("UID Copied!"); 
+                                                                }}
+                                                                title="Copy Offender UID"
+                                                            >
+                                                                <Copy size={10} /> {comment.flaggedUserUid || comment.userId}
+                                                            </span>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </div>
                                         ))
@@ -457,7 +458,7 @@ export default function Comments() {
                     ))
                 )}
                 
-                {/* ✅ LOAD MORE BUTTON */}
+                {/* LOAD MORE BUTTON */}
                 {hasMore && !loading && (
                     <div style={{padding: 10}}>
                         <button 
