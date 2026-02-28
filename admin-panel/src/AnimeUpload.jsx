@@ -17,7 +17,8 @@ import {
   MessageSquare,
   PlayCircle,
   Plus,
-  RefreshCw, // ✅ IMPORTED REFRESH ICON
+  RefreshCw,
+  Search, // ✅ IMPORTED SEARCH ICON
   Star,
   ThumbsDown,
   ThumbsUp,
@@ -29,7 +30,6 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { auth, db, storage } from './firebase';
-// ✅ IMPORT R2 UPLOADER
 import { uploadToR2 } from './utils/r2Storage';
 
 const GENRES_LIST = [
@@ -49,6 +49,9 @@ export default function AnimeUpload() {
   const [animeList, setAnimeList] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
   const [libraryTab, setLibraryTab] = useState('Ongoing'); 
+  
+  // ✅ SURGICAL UPDATE: Added Search Term State
+  const [searchTerm, setSearchTerm] = useState('');
   
   // --- USER ROLE STATE ---
   const [currentUser, setCurrentUser] = useState(null);
@@ -82,14 +85,12 @@ export default function AnimeUpload() {
   const [selectedAge, setSelectedAge] = useState('12+');
   const [animeStatus, setAnimeStatus] = useState('Ongoing'); 
   
-  // ✅ NEW: STREAMING RIGHTS STATE
   const [hasStreamingRights, setHasStreamingRights] = useState(true);
 
   // BODY STATE (Episode Form)
   const [episodes, setEpisodes] = useState([]);
   const [deletedEpisodes, setDeletedEpisodes] = useState([]);
 
-  // --- 1. FETCH USER ROLE ON MOUNT ---
   useEffect(() => {
     const fetchUser = async () => {
         if (auth.currentUser) {
@@ -102,15 +103,12 @@ export default function AnimeUpload() {
     fetchUser();
   }, []);
 
-  // --- 2. FETCH LIST ---
-  // ✅ SURGICAL UPDATE: Removed `libraryTab` dependency so it doesn't fetch every time you switch tabs!
   useEffect(() => {
     if (currentUser) {
         fetchAnimeList();
     }
   }, [currentUser]); 
 
-  // ✅ SURGICAL UPDATE: Added Session Caching logic
   const fetchAnimeList = async (isLoadMore = false, forceRefresh = false) => {
     if (isLoadMore) setLoadingMore(true);
     else setLoadingList(true);
@@ -118,7 +116,6 @@ export default function AnimeUpload() {
     try {
       const CACHE_KEY = `admin_anime_cache_${currentUser.uid}`;
 
-      // 1. Return Instant Cache (0 bandwidth, 0 reads)
       if (!isLoadMore && !forceRefresh) {
           const cachedData = sessionStorage.getItem(CACHE_KEY);
           if (cachedData) {
@@ -154,7 +151,6 @@ export default function AnimeUpload() {
           } else {
               newList = list;
           }
-          // 2. Save new fetch to session cache
           sessionStorage.setItem(CACHE_KEY, JSON.stringify(newList));
           return newList;
       });
@@ -189,8 +185,6 @@ export default function AnimeUpload() {
     return [...new Set(keywords)]; 
   };
 
-  // --- ACTIONS ---
-
   const handleApprove = async (anime) => {
       if (!window.confirm(`Approve "${anime.title}"? It will go live immediately.`)) return;
       try {
@@ -203,7 +197,6 @@ export default function AnimeUpload() {
           );
 
           alert("Anime Approved & Published!");
-          // ✅ SURGICAL UPDATE: Wipe cache and force refresh
           sessionStorage.removeItem(`admin_anime_cache_${currentUser.uid}`);
           fetchAnimeList(false, true);
       } catch (e) { alert(e.message); }
@@ -225,7 +218,7 @@ export default function AnimeUpload() {
         setAnimeStatus('Ongoing'); 
     }
     
-    setHasStreamingRights(true); // ✅ Reset to true
+    setHasStreamingRights(true); 
     setEpisodes([{ id: Date.now(), number: 1, title: '', videoFile: null, thumbFile: null, subtitles: [], isNew: true }]);
     setDeletedEpisodes([]);
     setNotifyUsers(true); 
@@ -246,7 +239,6 @@ export default function AnimeUpload() {
     setNotifyUsers(true); 
     setAnimeStatus(anime.status || 'Ongoing');
     
-    // ✅ Load rights from db (default to true if old data)
     setHasStreamingRights(anime.hasStreamingRights !== false);
 
     setDeletedEpisodes([]);
@@ -324,7 +316,6 @@ export default function AnimeUpload() {
       await Promise.all(deletePromises);
       await deleteDoc(doc(db, 'anime', anime.id));
       
-      // ✅ SURGICAL UPDATE: Wipe cache and force refresh
       sessionStorage.removeItem(`admin_anime_cache_${currentUser.uid}`);
       fetchAnimeList(false, true);
       alert(`"${anime.title}" has been deleted.`);
@@ -335,7 +326,6 @@ export default function AnimeUpload() {
     }
   };
 
-  // --- FORM HELPERS ---
   const addEpisodeForm = () => {
     const nextNum = episodes.length > 0 ? Number(episodes[episodes.length - 1].number) + 1 : 1;
     setEpisodes([...episodes, { id: Date.now(), number: nextNum, title: '', videoFile: null, thumbFile: null, subtitles: [], isNew: true }]);
@@ -379,7 +369,6 @@ export default function AnimeUpload() {
       setter(file); 
   };
   
-  // ✅ IMPORT R2 UPLOADER
   const uploadFile = async (file, path) => {
     if (!file) return null;
     const result = await uploadToR2(file, path, (p) => {
@@ -511,7 +500,6 @@ export default function AnimeUpload() {
       setView('list'); 
       setLibraryTab(finalStatus); 
       
-      // ✅ SURGICAL UPDATE: Wipe cache and force refresh
       sessionStorage.removeItem(`admin_anime_cache_${currentUser.uid}`);
       fetchAnimeList(false, true);
 
@@ -655,9 +643,12 @@ export default function AnimeUpload() {
 
   // --- RENDER: LIST VIEW ---
   if (view === 'list') {
+    // ✅ SURGICAL UPDATE: Added Search Filter Logic
     const filteredAnimeList = animeList.filter(item => {
         const itemStatus = item.status === 'Released' ? 'Ongoing' : (item.status || 'Ongoing');
-        return itemStatus === libraryTab;
+        const matchesTab = itemStatus === libraryTab;
+        const matchesSearch = item.title?.toLowerCase().includes(searchTerm.toLowerCase());
+        return matchesTab && matchesSearch;
     });
 
     return (
@@ -672,38 +663,50 @@ export default function AnimeUpload() {
            </div>
         </div>
 
-        {/* TAB SWITCHER */}
-        {/* ✅ SURGICAL UPDATE: ADDED REFRESH BUTTON NEXT TO TABS */}
-        <div style={{ display: 'flex', gap: 10, borderBottom: '2px solid #e5e7eb', paddingBottom: 10, marginBottom: 20, alignItems: 'center' }}>
-            {STATUS_OPTIONS.map(status => (
-                <button 
-                  key={status}
-                  onClick={() => setLibraryTab(status)}
-                  style={{
-                      padding: '8px 20px',
-                      borderRadius: 20,
-                      border: 'none',
-                      background: libraryTab === status ? (status === 'Pending' ? '#f59e0b' : '#4f46e5') : 'transparent',
-                      color: libraryTab === status ? 'white' : '#6b7280',
-                      fontWeight: 700,
-                      cursor: 'pointer'
-                  }}
-                >
-                    {status}
-                </button>
-            ))}
+        {/* ✅ SURGICAL UPDATE: Added Search Bar to UI */}
+        <div style={{ display: 'flex', gap: 15, borderBottom: '2px solid #e5e7eb', paddingBottom: 15, marginBottom: 20, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                {STATUS_OPTIONS.map(status => (
+                    <button 
+                      key={status}
+                      onClick={() => setLibraryTab(status)}
+                      style={{
+                          padding: '8px 20px',
+                          borderRadius: 20,
+                          border: 'none',
+                          background: libraryTab === status ? (status === 'Pending' ? '#f59e0b' : '#4f46e5') : 'transparent',
+                          color: libraryTab === status ? 'white' : '#6b7280',
+                          fontWeight: 700,
+                          cursor: 'pointer'
+                      }}
+                    >
+                        {status}
+                    </button>
+                ))}
+            </div>
+
+            <div style={{ position: 'relative', flex: 1, minWidth: '200px', maxWidth: '300px', marginLeft: 'auto' }}>
+                <Search size={18} style={{ position: 'absolute', left: 12, top: 9, color: '#9ca3af' }} />
+                <input 
+                    type="text" 
+                    placeholder="Search anime..." 
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    style={{ width: '100%', padding: '9px 10px 9px 36px', borderRadius: 8, border: '1px solid #e5e7eb', outline: 'none', boxSizing: 'border-box', fontSize: '0.9rem' }}
+                />
+            </div>
             
             <button 
                 onClick={() => fetchAnimeList(false, true)}
                 disabled={loadingList}
-                style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#4f46e5', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, fontWeight: 'bold' }}
+                style={{ background: 'none', border: 'none', color: '#4f46e5', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, fontWeight: 'bold' }}
             >
                 <RefreshCw size={16} className={loadingList ? "animate-spin" : ""} /> Refresh
             </button>
         </div>
 
         <div style={{ display: 'grid', gap: 20 }}>
-          {filteredAnimeList.length === 0 && <div style={{textAlign:'center', color:'#9ca3af', padding:40}}>No anime found in {libraryTab}.</div>}
+          {filteredAnimeList.length === 0 && <div style={{textAlign:'center', color:'#9ca3af', padding:40}}>No anime found.</div>}
           
           {filteredAnimeList.map((anime, index) => (
             <div key={anime.id} className="card" style={{ marginBottom: 0 }}>
@@ -730,7 +733,6 @@ export default function AnimeUpload() {
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 10 }}>
-                   {/* ✅ ADMIN APPROVAL BUTTONS */}
                    {libraryTab === 'Pending' && currentUser?.role !== 'anime_producer' && (
                        <>
                            <button onClick={() => handleApprove(anime)} style={{ padding: '8px 12px', borderRadius: 8, background: '#dcfce7', color: '#166534', fontWeight: 'bold', border: '1px solid #bbf7d0', display:'flex', gap:5, cursor:'pointer' }}><CheckCircle size={16}/> Approve</button>
@@ -746,7 +748,6 @@ export default function AnimeUpload() {
             </div>
           ))}
         </div>
-        {/* Load More Button */}
         {!loadingList && hasMore && (
             <div style={{ textAlign: 'center', padding: '20px' }}>
                 <button 
@@ -785,7 +786,6 @@ export default function AnimeUpload() {
                    <span style={{fontWeight:700, fontSize:'0.9rem', color: notifyUsers ? '#2563eb' : '#6b7280'}}>Notify Users</span>
                </div>
 
-               {/* ✅ BUTTON TEXT FOR PRODUCER */}
                <button onClick={handlePublish} className="btn-publish" style={{ width: 'auto', padding: '12px 30px', fontSize: '1rem' }}>
                    {currentUser?.role === 'anime_producer' ? "Submit for Review" : "Save All Changes"}
                </button>
@@ -799,9 +799,7 @@ export default function AnimeUpload() {
           <div className="card-header blue" style={{justifyContent:'space-between'}}>
               <div style={{display:'flex', alignItems:'center', gap:10}}><Film size={24} /> <span>Header: Anime Details</span></div>
               
-              {/* ✅ STREAMING RIGHTS TOGGLE & STATUS WRAPPER */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 15 }}>
-                  {/* TOGGLE */}
                   <div 
                     onClick={() => setHasStreamingRights(!hasStreamingRights)}
                     style={{

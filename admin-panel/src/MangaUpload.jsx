@@ -18,7 +18,8 @@ import {
   Loader2,
   Lock,
   Plus,
-  RefreshCw, // ✅ IMPORTED REFRESH ICON
+  RefreshCw,
+  Search, // ✅ IMPORTED SEARCH ICON
   Trash2,
   Unlock
 } from 'lucide-react';
@@ -40,6 +41,9 @@ export default function MangaUpload() {
   const [mangaList, setMangaList] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
   const [libraryTab, setLibraryTab] = useState('Ongoing');
+  
+  // ✅ SURGICAL UPDATE: Added Search Term State
+  const [searchTerm, setSearchTerm] = useState('');
   
   const [currentUser, setCurrentUser] = useState(null);
 
@@ -69,7 +73,6 @@ export default function MangaUpload() {
   const [selectedGenres, setSelectedGenres] = useState([]);
   const [mangaStatus, setMangaStatus] = useState('Ongoing'); 
   
-  // ✅ NEW: READING RIGHTS STATE
   const [hasReadingRights, setHasReadingRights] = useState(true);
 
   // BODY STATE
@@ -88,14 +91,12 @@ export default function MangaUpload() {
     fetchUser();
   }, []);
 
-  // ✅ SURGICAL UPDATE: Removed `libraryTab` dependency so it doesn't fetch on tab switch
   useEffect(() => {
     if (currentUser) {
         fetchMangaList();
     }
   }, [currentUser]);
 
-  // ✅ SURGICAL UPDATE: Added Session Caching logic
   const fetchMangaList = async (isLoadMore = false, forceRefresh = false) => {
     if (isLoadMore) setLoadingMore(true);
     else setLoadingList(true);
@@ -103,7 +104,6 @@ export default function MangaUpload() {
     try {
       const CACHE_KEY = `admin_manga_cache_${currentUser.uid}`;
 
-      // 1. Return Instant Cache (0 bandwidth, 0 reads)
       if (!isLoadMore && !forceRefresh) {
           const cachedData = sessionStorage.getItem(CACHE_KEY);
           if (cachedData) {
@@ -139,7 +139,6 @@ export default function MangaUpload() {
           } else {
               newList = list;
           }
-          // 2. Save new fetch to session cache
           sessionStorage.setItem(CACHE_KEY, JSON.stringify(newList));
           return newList;
       });
@@ -166,7 +165,6 @@ export default function MangaUpload() {
           await sendAutoNotification(`New Manga: ${manga.title}`, `Read ${manga.title} now on AniYu!`, manga.id);
           alert("Approved & Published!");
           
-          // ✅ SURGICAL UPDATE: Wipe cache and force refresh
           sessionStorage.removeItem(`admin_manga_cache_${currentUser.uid}`);
           fetchMangaList(false, true);
       } catch (e) { alert(e.message); }
@@ -183,7 +181,7 @@ export default function MangaUpload() {
     setMangaTitle(''); setAuthor(''); setReleaseYear(''); setSynopsis(''); setSelectedGenres([]); setExistingCoverUrl(''); setMangaCover(null);
     
     if (currentUser?.role === 'manga_producer') setMangaStatus('Pending'); else setMangaStatus('Ongoing'); 
-    setHasReadingRights(true); // ✅ Set default to true
+    setHasReadingRights(true); 
     setChapters([{ id: Date.now(), number: 1, title: '', chapterFile: null, existingFileUrl: null, isNew: true }]);
     setDeletedChapters([]);
     setNotifyUsers(true);
@@ -203,7 +201,6 @@ export default function MangaUpload() {
     setNotifyUsers(true);
     setMangaStatus(manga.status || 'Ongoing');
     
-    // ✅ Load existing reading rights status
     setHasReadingRights(manga.hasReadingRights !== false);
 
     setDeletedChapters([]);
@@ -263,7 +260,6 @@ export default function MangaUpload() {
       await Promise.all(deletePromises);
       await deleteDoc(doc(db, 'manga', manga.id));
       
-      // ✅ SURGICAL UPDATE: Wipe cache and force refresh
       sessionStorage.removeItem(`admin_manga_cache_${currentUser.uid}`);
       fetchMangaList(false, true);
       alert(`"${manga.title}" has been deleted.`);
@@ -339,7 +335,7 @@ export default function MangaUpload() {
         images: { jpg: { image_url: finalCoverUrl } }, 
         type: 'Manga', 
         status: finalStatus,
-        hasReadingRights, // ✅ Write reading rights status to DB
+        hasReadingRights,
         uploaderId: currentUser.uid,
         updatedAt: serverTimestamp()
       };
@@ -393,7 +389,6 @@ export default function MangaUpload() {
       alert(finalStatus === 'Pending' ? "Submitted for Review! Waiting for Admin approval." : "Published!");
       setView('list'); setLibraryTab(finalStatus);
 
-      // ✅ SURGICAL UPDATE: Wipe cache and force refresh
       sessionStorage.removeItem(`admin_manga_cache_${currentUser.uid}`);
       fetchMangaList(false, true);
 
@@ -422,9 +417,12 @@ export default function MangaUpload() {
   );
 
   if (view === 'list') {
+    // ✅ SURGICAL UPDATE: Added Search Filter Logic
     const filteredMangaList = mangaList.filter(item => {
         const itemStatus = item.status === 'Released' ? 'Ongoing' : (item.status || 'Ongoing');
-        return itemStatus === libraryTab;
+        const matchesTab = itemStatus === libraryTab;
+        const matchesSearch = item.title?.toLowerCase().includes(searchTerm.toLowerCase());
+        return matchesTab && matchesSearch;
     });
     
     return (
@@ -439,21 +437,34 @@ export default function MangaUpload() {
            </div>
         </div>
 
-        {/* ✅ SURGICAL UPDATE: ADDED REFRESH BUTTON NEXT TO TABS */}
-        <div style={{ display: 'flex', gap: 10, borderBottom: '2px solid #e5e7eb', paddingBottom: 10, marginBottom: 20, alignItems: 'center' }}>
-            {STATUS_OPTIONS.map(status => (
-                <button 
-                  key={status} onClick={() => setLibraryTab(status)}
-                  style={{ padding: '8px 20px', borderRadius: 20, border: 'none', background: libraryTab === status ? (status === 'Pending' ? '#f59e0b' : '#ec4899') : 'transparent', color: libraryTab === status ? 'white' : '#6b7280', fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s' }}
-                >
-                    {status}
-                </button>
-            ))}
+        {/* ✅ SURGICAL UPDATE: Added Search Bar to UI */}
+        <div style={{ display: 'flex', gap: 15, borderBottom: '2px solid #e5e7eb', paddingBottom: 15, marginBottom: 20, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                {STATUS_OPTIONS.map(status => (
+                    <button 
+                      key={status} onClick={() => setLibraryTab(status)}
+                      style={{ padding: '8px 20px', borderRadius: 20, border: 'none', background: libraryTab === status ? (status === 'Pending' ? '#f59e0b' : '#ec4899') : 'transparent', color: libraryTab === status ? 'white' : '#6b7280', fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s' }}
+                    >
+                        {status}
+                    </button>
+                ))}
+            </div>
+
+            <div style={{ position: 'relative', flex: 1, minWidth: '200px', maxWidth: '300px', marginLeft: 'auto' }}>
+                <Search size={18} style={{ position: 'absolute', left: 12, top: 9, color: '#9ca3af' }} />
+                <input 
+                    type="text" 
+                    placeholder="Search manga..." 
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    style={{ width: '100%', padding: '9px 10px 9px 36px', borderRadius: 8, border: '1px solid #e5e7eb', outline: 'none', boxSizing: 'border-box', fontSize: '0.9rem' }}
+                />
+            </div>
 
             <button 
                 onClick={() => fetchMangaList(false, true)}
                 disabled={loadingList}
-                style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#ec4899', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, fontWeight: 'bold' }}
+                style={{ background: 'none', border: 'none', color: '#ec4899', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, fontWeight: 'bold' }}
             >
                 <RefreshCw size={16} className={loadingList ? "animate-spin" : ""} /> Refresh
             </button>
@@ -531,7 +542,6 @@ export default function MangaUpload() {
           <div className="card-header blue" style={{justifyContent:'space-between', background:'#fce7f3', color:'#831843'}}>
               <div style={{display:'flex', alignItems:'center', gap:10}}><BookOpen size={24} /> <span>Header: Manga Details</span></div>
               
-              {/* ✅ READING RIGHTS TOGGLE & STATUS */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 15 }}>
                   <div 
                     onClick={() => setHasReadingRights(!hasReadingRights)}
