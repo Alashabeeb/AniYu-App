@@ -6,7 +6,7 @@ import {
 } from 'firebase/firestore';
 import {
     Bell, BookOpen, ChevronDown, Edit, Eye, Flag,
-    LayoutDashboard, LogOut, Menu, MessageSquare,
+    LayoutDashboard, LifeBuoy, LogOut, Menu, MessageSquare, // ✅ IMPORTED LifeBuoy
     Settings, ThumbsUp, TrendingUp, Users as UsersIcon, Video, X
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -22,6 +22,7 @@ import MangaUpload from './MangaUpload';
 import Notifications from './Notifications';
 import Reports from './Reports';
 import SettingsPage from './Settings';
+import Support from './Support'; // ✅ IMPORTED SUPPORT PAGE
 import Users from './Users';
 import { auth, db } from './firebase';
 
@@ -45,7 +46,7 @@ function Dashboard({ role, userId }) {
   const navigate = useNavigate();
   const [metric, setMetric] = useState('activity'); 
   const [timeRange, setTimeRange] = useState('24h'); 
-  const [recentUsers, setRecentUsers] = useState([]); // ✅ Renamed to recentUsers to be clear
+  const [recentUsers, setRecentUsers] = useState([]); 
   const [chartData, setChartData] = useState([]); 
   const [contentList, setContentList] = useState([]); 
   const [stats, setStats] = useState({ users: 0, activeUsers: 0, anime: 0, manga: 0, reports: 0, totalViews: 0, totalLikes: 0 });
@@ -58,10 +59,8 @@ function Dashboard({ role, userId }) {
     const fetchData = async () => {
       try {
         if (isAdmin) {
-            // ✅ 1. CHEAP COUNTS (Accurate Totals without reading docs)
             const usersCountSnap = await getCountFromServer(collection(db, "users"));
             
-            // Active users in last 24h
             const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
             const activeCountSnap = await getCountFromServer(query(collection(db, "users"), where("lastActiveAt", ">=", yesterday)));
 
@@ -78,8 +77,6 @@ function Dashboard({ role, userId }) {
                 reports: rSnap.data().count 
             }));
 
-            // ✅ 2. LIMITED FETCH FOR CHART (Prevents 100k read bomb)
-            // We only fetch the last 500 users to generate the "Recent Trend" graph.
             const usersQ = query(collection(db, "users"), orderBy("createdAt", "desc"), limit(500));
             const usersSnapshot = await getDocs(usersQ);
             
@@ -109,7 +106,6 @@ function Dashboard({ role, userId }) {
     if (role && userId) fetchData();
   }, [role, userId]); 
 
-  // Filter Logic (Updated to work with recentUsers)
   useEffect(() => {
     if (!isAdmin || recentUsers.length === 0) return;
     const now = new Date();
@@ -129,8 +125,6 @@ function Dashboard({ role, userId }) {
         startTime = new Date(0); 
         for (let i = 5; i >= 0; i--) { const d = new Date(); d.setDate(now.getDate() - (i * 5)); buckets.push({ date: d, label: formatDateLabel(d, 'month') }); }
     }
-
-    // NOTE: We don't overwrite 'stats.users' here anymore because we fetched the REAL total count above safely.
     
     const processChart = buckets.map((bucket, index) => {
         const nextBucketDate = buckets[index + 1]?.date || new Date(); 
@@ -144,7 +138,6 @@ function Dashboard({ role, userId }) {
 
   // --- RENDER PRODUCER ---
   if (isProducer) {
-      // ... (Keep existing Producer Render exactly the same)
       return (
         <div className="dashboard-container">
             <h1 className="page-title"><Video className="text-blue"/> Studio Dashboard</h1>
@@ -450,15 +443,18 @@ function Layout({ logout, role, userId }) {
                 <Link to="/users" className={isActive('/users')}>
                     <UsersIcon size={20} /> <span>Users</span>
                 </Link>
-                {/* ✅ COMMENTS LINK */}
                 <Link to="/comments" className={isActive('/comments')}>
                     <MessageSquare size={20} /> <span>Comments</span>
                 </Link>
-                {/* ✅ ANALYTICS LINK */}
+
+                {/* ✅ SUPPORT DESK LINK ADDED HERE */}
+                <Link to="/support" className={isActive('/support')}>
+                    <LifeBuoy size={20} /> <span>Support Desk</span>
+                </Link>
+
                 <Link to="/analytics" className={isActive('/analytics')}>
                     <TrendingUp size={20} /> <span>Analytics</span>
                 </Link>
-                {/* ✅ SETTINGS LINK */}
                 <Link to="/settings" className={isActive('/settings')}>
                     <Settings size={20} /> <span>Settings</span>
                 </Link>
@@ -516,21 +512,25 @@ function Layout({ logout, role, userId }) {
                     </ProtectedRoute>
                 } />
 
-                {/* ✅ COMMENTS ROUTE */}
                 <Route path="/comments" element={
                     <ProtectedRoute role={role} allowedRoles={['admin', 'super_admin']}>
                         <Comments />
                     </ProtectedRoute>
                 } />
 
-                {/* ✅ ANALYTICS ROUTE */}
+                {/* ✅ SUPPORT DESK ROUTE ADDED HERE */}
+                <Route path="/support" element={
+                    <ProtectedRoute role={role} allowedRoles={['admin', 'super_admin']}>
+                        <Support />
+                    </ProtectedRoute>
+                } />
+
                 <Route path="/analytics" element={
                     <ProtectedRoute role={role} allowedRoles={['admin', 'super_admin']}>
                         <Analytics />
                     </ProtectedRoute>
                 } />
 
-                {/* ✅ SETTINGS ROUTE */}
                 <Route path="/settings" element={
                     <ProtectedRoute role={role} allowedRoles={['admin', 'super_admin']}>
                         <SettingsPage />

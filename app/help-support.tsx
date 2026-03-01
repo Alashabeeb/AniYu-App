@@ -16,8 +16,6 @@ export default function HelpSupportScreen() {
   const router = useRouter();
   const { theme } = useTheme();
 
-  // ✅ UPDATED: Open link directly without "canOpenURL" check
-  // This fixes the issue on Android 11+ where canOpenURL returns false
   const openLink = async (url: string) => {
     try {
       await Linking.openURL(url);
@@ -27,9 +25,9 @@ export default function HelpSupportScreen() {
     }
   };
 
+  // ✅ SURGICAL UPDATE: Navigate to the new Live Chat screen
   const handleLiveChat = () => {
-      // Future integration for Intercom, Zendesk, or custom chat
-      Alert.alert("Live Chat", "Connecting you to a support agent...");
+      router.push('/live-chat');
   };
 
   return (
