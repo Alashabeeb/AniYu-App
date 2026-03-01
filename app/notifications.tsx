@@ -40,37 +40,41 @@ export default function NotificationsScreen() {
   useEffect(() => {
       if (!currentUser) return;
 
-      // ✅ COST SAVER 5: Limit heavily ensures your database reads stay cheap
+      let unsubPersonal: () => void;
+      let unsubGlobal: () => void;
+
+      // 1. Fetch Personal Notifications (Likes, Replies, Direct Admin Messages)
       const qPersonal = query(
           collection(db, 'users', currentUser.uid, 'notifications'),
           orderBy('createdAt', 'desc'),
           limit(30) 
       );
-      const unsubPersonal = onSnapshot(qPersonal, (snapshot) => {
+      unsubPersonal = onSnapshot(qPersonal, (snapshot) => {
           const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), isGlobal: false }));
           setSocialNotifs(data);
       });
 
+      // 2. Fetch Global Announcements (Broadcasts, New Anime/Manga Releases)
       const qGlobal = query(
           collection(db, 'announcements'),
           orderBy('createdAt', 'desc'),
           limit(20) 
       );
-      const unsubGlobal = onSnapshot(qGlobal, (snapshot) => {
+      unsubGlobal = onSnapshot(qGlobal, (snapshot) => {
           const data = snapshot.docs.map(doc => ({ 
               id: doc.id, 
               ...doc.data(), 
               isGlobal: true, 
-              read: true 
+              read: true // Global broadcasts are always marked as read
           }));
           setGlobalNotifs(data);
       });
 
       return () => {
-          unsubPersonal();
-          unsubGlobal();
+          if (unsubPersonal) unsubPersonal();
+          if (unsubGlobal) unsubGlobal();
       };
-  }, []);
+  }, [currentUser]);
 
   const handleRefresh = async () => {
       setRefreshing(true);
@@ -88,6 +92,7 @@ export default function NotificationsScreen() {
       loadLocalData();
   };
 
+  // Merge all 3 arrays and sort them strictly by Date (Newest first)
   const combinedNotifications = [...socialNotifs, ...globalNotifs, ...localNotifs].sort((a, b) => {
       const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.date || 0);
       const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.date || 0);
@@ -96,18 +101,19 @@ export default function NotificationsScreen() {
 
   const getIcon = (type: string) => {
       switch(type) {
-          case 'like': return { name: 'heart', color: '#FF6B6B' };
-          case 'comment': return { name: 'chatbubble', color: '#4ECDC4' };
-          case 'repost': return { name: 'repeat', color: '#45B7D1' };
-          case 'follow': return { name: 'person-add', color: '#FFD700' };
+          case 'like': return { name: 'heart', color: '#ef4444' };
+          case 'comment': return { name: 'chatbubble-ellipses', color: '#3b82f6' };
+          case 'repost': return { name: 'repeat', color: '#10b981' };
+          case 'follow': return { name: 'person-add', color: '#f59e0b' };
           
-          case 'anime_release': return { name: 'play-circle', color: '#8b5cf6' }; 
+          case 'anime_release': return { name: 'film', color: '#8b5cf6' }; 
           case 'manga_release': return { name: 'book', color: '#ec4899' }; 
-          case 'system_broadcast': return { name: 'megaphone', color: '#FF9F1C' }; 
           
-          case 'system': return { name: 'megaphone', color: '#FF9F1C' };
-          case 'error': return { name: 'warning', color: '#EF4444' };
-          case 'success': return { name: 'checkmark-circle', color: '#10B981' };
+          case 'system_broadcast': return { name: 'megaphone', color: '#d946ef' }; 
+          case 'system': return { name: 'information-circle', color: '#3b82f6' };
+          
+          case 'error': return { name: 'warning', color: '#ef4444' };
+          case 'success': return { name: 'checkmark-circle', color: '#10b981' };
           
           default: return { name: 'notifications', color: theme.tint };
       }
@@ -116,6 +122,7 @@ export default function NotificationsScreen() {
   const handlePress = async (item: any) => {
       if (!currentUser) return;
 
+      // 1. Mark as read
       if (!item.read && !item.isGlobal) {
           try {
               if (item.createdAt) {
@@ -129,16 +136,17 @@ export default function NotificationsScreen() {
           }
       }
 
-      if (item.targetId) {
+      // 2. Route to the correct screen
+      if (item.type === 'anime_release' && item.targetId) {
+          router.push({ pathname: '/anime/[id]', params: { id: item.targetId } });
+      } 
+      else if (item.type === 'manga_release' && item.targetId) {
+          router.push({ pathname: '/manga/[id]', params: { id: item.targetId } });
+      }
+      else if (item.targetId) {
           if (item.type === 'like' || item.type === 'comment' || item.type === 'repost') {
              router.push({ pathname: '/post-details', params: { postId: item.targetId } });
           } 
-          else if (item.type === 'anime_release' || item.type === 'anime') {
-             router.push({ pathname: '/anime/[id]', params: { id: item.targetId } });
-          } 
-          else if (item.type === 'manga_release' || item.type === 'manga') {
-             router.push({ pathname: '/manga/[id]', params: { id: item.targetId } });
-          }
       }
       else if (item.actorId && item.type === 'follow') {
           router.push({ pathname: '/feed-profile', params: { userId: item.actorId } });
@@ -167,7 +175,7 @@ export default function NotificationsScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={theme.tint} />}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <Ionicons name="notifications-off-outline" size={64} color={theme.subText} />
+            <Ionicons name="notifications-off-outline" size={64} color={theme.subText} style={{ opacity: 0.5 }} />
             <Text style={[styles.emptyText, { color: theme.subText }]}>No notifications yet.</Text>
           </View>
         }
@@ -179,23 +187,27 @@ export default function NotificationsScreen() {
                 onPress={() => handlePress(item)}
                 style={[
                   styles.card, 
-                  { backgroundColor: theme.card, borderLeftColor: item.read ? 'transparent' : iconData.color }
+                  { 
+                      backgroundColor: theme.card, 
+                      borderLeftColor: item.read ? 'transparent' : iconData.color,
+                      opacity: item.read ? 0.8 : 1
+                  }
                 ]}
               >
-                <View style={[styles.iconBox, { backgroundColor: `${iconData.color}20` }]}>
-                    <Ionicons name={iconData.name as any} size={24} color={iconData.color} />
+                <View style={[styles.iconBox, { backgroundColor: `${iconData.color}15` }]}>
+                    <Ionicons name={iconData.name as any} size={22} color={iconData.color} />
                 </View>
                 <View style={styles.info}>
-                  <Text style={[styles.title, { color: theme.text, fontWeight: item.read ? 'normal' : '800' }]}>
+                  <Text style={[styles.title, { color: theme.text, fontWeight: item.read ? '600' : '800' }]}>
                       {item.title}
                   </Text>
                   <Text style={[styles.body, { color: theme.subText }]} numberOfLines={3}>
                       {item.body}
                   </Text>
-                  <Text style={[styles.date, { color: theme.subText }]}>
+                  <Text style={[styles.date, { color: theme.subText, marginTop: 4 }]}>
                     {item.createdAt?.seconds 
-                        ? new Date(item.createdAt.seconds * 1000).toLocaleDateString() 
-                        : (item.date ? new Date(item.date).toLocaleDateString() : '')}
+                        ? new Date(item.createdAt.seconds * 1000).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit' }) 
+                        : (item.date ? new Date(item.date).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit' }) : '')}
                   </Text>
                 </View>
                 {!item.read && <View style={[styles.dot, { backgroundColor: theme.tint }]} />}
@@ -213,13 +225,13 @@ const styles = StyleSheet.create({
   backBtn: { marginRight: 15 },
   headerTitle: { fontSize: 20, fontWeight: 'bold' },
   emptyContainer: { alignItems: 'center', marginTop: 100 },
-  emptyText: { marginTop: 10, fontSize: 16 },
+  emptyText: { marginTop: 10, fontSize: 16, fontWeight: '600' },
   
-  card: { flexDirection: 'row', padding: 15, borderRadius: 12, marginBottom: 10, borderLeftWidth: 4, alignItems: 'center', elevation: 1 },
-  iconBox: { width: 45, height: 45, borderRadius: 22.5, justifyContent: 'center', alignItems: 'center', marginRight: 15 },
+  card: { flexDirection: 'row', padding: 15, borderRadius: 16, marginBottom: 10, borderLeftWidth: 4, alignItems: 'center', elevation: 1, shadowColor: '#000', shadowOffset: {width: 0, height: 1}, shadowOpacity: 0.05, shadowRadius: 3 },
+  iconBox: { width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center', marginRight: 15 },
   info: { flex: 1 },
-  title: { fontSize: 16, marginBottom: 4 },
-  body: { fontSize: 14, marginBottom: 6, lineHeight: 20 },
-  date: { fontSize: 10 },
-  dot: { width: 8, height: 8, borderRadius: 4, marginLeft: 10 }
+  title: { fontSize: 15, marginBottom: 4 },
+  body: { fontSize: 13, lineHeight: 18 },
+  date: { fontSize: 11, fontWeight: '500' },
+  dot: { width: 10, height: 10, borderRadius: 5, marginLeft: 10, marginTop: 2 }
 });

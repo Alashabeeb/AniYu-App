@@ -1,4 +1,4 @@
-import { addDoc, collection, getDocs, limit, orderBy, query, serverTimestamp, startAfter } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, startAfter, where } from 'firebase/firestore';
 import {
     Bell,
     CheckCircle,
@@ -7,7 +7,7 @@ import {
     Info,
     Loader2,
     Megaphone,
-    RefreshCw, // ✅ IMPORTED REFRESH ICON
+    RefreshCw,
     Search,
     Send,
     Square,
@@ -18,15 +18,56 @@ import {
 import { useEffect, useState } from 'react';
 import { db } from './firebase';
 
+// ✅ HELPER: EXPO PUSH API
+// This function takes an array of push tokens, chunks them into batches of 100, and sends them.
+const sendPushNotifications = async (expoPushTokens, title, body) => {
+    if (!expoPushTokens || expoPushTokens.length === 0) return;
+
+    // Filter out any undefined or null tokens
+    const validTokens = expoPushTokens.filter(token => token);
+    if (validTokens.length === 0) return;
+
+    // Expo Push API requires messages to be an array of objects
+    const messages = validTokens.map(token => ({
+        to: token,
+        sound: 'default',
+        title: title,
+        body: body,
+    }));
+
+    // Chunk into batches of 100 (Expo's limit per request)
+    const chunks = [];
+    for (let i = 0; i < messages.length; i += 100) {
+        chunks.push(messages.slice(i, i + 100));
+    }
+
+    // Send all chunks to Expo
+    for (let chunk of chunks) {
+        try {
+            await fetch('https://exp.host/--/api/v2/push/send', {
+                method: 'POST',
+                headers: {
+                    Accept: 'application/json',
+                    'Accept-encoding': 'gzip, deflate',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(chunk),
+            });
+        } catch (error) {
+            console.error("Error sending push notification chunk:", error);
+        }
+    }
+};
+
 export default function Notifications() {
-  const [activeTab, setActiveTab] = useState('compose'); // 'compose' | 'history'
+  const [activeTab, setActiveTab] = useState('compose'); 
   const [loading, setLoading] = useState(false);
   const [history, setHistory] = useState([]);
   
   // Form State
-  const [targetType, setTargetType] = useState('specific'); // 'specific' | 'multiple' | 'all'
-  const [targetUid, setTargetUid] = useState(''); // For 'specific'
-  const [selectedUsers, setSelectedUsers] = useState([]); // For 'multiple'
+  const [targetType, setTargetType] = useState('specific'); 
+  const [targetUid, setTargetUid] = useState(''); 
+  const [selectedUsers, setSelectedUsers] = useState([]); 
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
 
@@ -42,12 +83,10 @@ export default function Notifications() {
       fetchHistory();
   }, []);
 
-  // ✅ SURGICAL UPDATE: Added Session Caching & Force Refresh
   const fetchHistory = async (forceRefresh = false) => {
       try {
           const CACHE_KEY = 'admin_notifications_history_cache';
 
-          // 1. Return Instant Cache (0 bandwidth, 0 reads)
           if (!forceRefresh) {
               const cachedData = sessionStorage.getItem(CACHE_KEY);
               if (cachedData) {
@@ -56,14 +95,11 @@ export default function Notifications() {
               }
           }
 
-          // Limit history to last 20 items
           const q = query(collection(db, "notification_logs"), orderBy('createdAt', 'desc'), limit(20));
           const snap = await getDocs(q);
           const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
           
           setHistory(data);
-          
-          // 2. Save new fetch to session cache
           sessionStorage.setItem(CACHE_KEY, JSON.stringify(data));
       } catch (e) { console.error(e); }
   };
@@ -88,13 +124,11 @@ export default function Notifications() {
       finally { setLoadingUsers(false); }
   };
 
-  // Open modal and load users
   const openUserPicker = () => {
       setShowUserPicker(true);
       if (userList.length === 0) fetchUsers(true);
   };
 
-  // --- SELECTION LOGIC ---
   const toggleUserSelection = (user) => {
       if (selectedUsers.some(u => u.id === user.id)) {
           setSelectedUsers(prev => prev.filter(u => u.id !== user.id));
@@ -103,7 +137,6 @@ export default function Notifications() {
       }
   };
 
-  // Client-side search for loaded users (At scale, this should be server-side or Algolia)
   const filteredUsers = userList.filter(u => 
       (u.username || '').toLowerCase().includes(userSearch.toLowerCase()) || 
       (u.email || '').toLowerCase().includes(userSearch.toLowerCase())
@@ -119,35 +152,48 @@ export default function Notifications() {
       try {
           let recipientCount = 0;
           let targetLabel = '';
+          let tokensToPush = []; // Store tokens we find
 
-          // CASE 1: BROADCAST TO ALL (Optimized)
+          // CASE 1: BROADCAST TO ALL
           if (targetType === 'all') {
-              // ✅ Write single document to global_announcements
+              // 1a. Write to global feed
               await addDoc(collection(db, "announcements"), {
-                  title,
-                  body,
-                  type: 'system_broadcast',
-                  targetId: 'all',
-                  createdAt: serverTimestamp()
+                  title, body, type: 'system_broadcast', targetId: 'all', createdAt: serverTimestamp()
               });
+              
+              // 1b. Fetch all users who have an expoPushToken
+              const tokenQuery = query(collection(db, "users"), where("expoPushToken", "!=", null));
+              const tokenSnap = await getDocs(tokenQuery);
+              tokensToPush = tokenSnap.docs.map(doc => doc.data().expoPushToken);
+
               targetLabel = 'All Users (Global Broadcast)';
               recipientCount = 'All'; 
           } 
           
-          // CASE 2: SPECIFIC USER (Direct Write)
+          // CASE 2: SPECIFIC USER
           else if (targetType === 'specific') {
               if (!targetUid) throw new Error("Please enter a User UID.");
+              
+              // 2a. Write to their feed
               await addDoc(collection(db, "users", targetUid, "notifications"), {
                   title, body, read: false, createdAt: serverTimestamp(), type: 'system'
               });
+
+              // 2b. Fetch their specific push token
+              const userDoc = await getDoc(doc(db, "users", targetUid));
+              if (userDoc.exists() && userDoc.data().expoPushToken) {
+                  tokensToPush.push(userDoc.data().expoPushToken);
+              }
+
               targetLabel = `User: ${targetUid}`;
               recipientCount = 1;
           } 
           
-          // CASE 3: SELECTED GROUP (Direct Write Loop - OK for small groups)
+          // CASE 3: SELECTED GROUP
           else if (targetType === 'multiple') {
               if (selectedUsers.length === 0) throw new Error("Please select at least one user.");
               
+              // 3a. Write to their feeds
               const promises = selectedUsers.map(user => 
                   addDoc(collection(db, "users", user.id, "notifications"), {
                       title, body, read: false, createdAt: serverTimestamp(), type: 'system'
@@ -155,20 +201,24 @@ export default function Notifications() {
               );
               await Promise.all(promises);
               
+              // 3b. Extract their tokens (since we already have their user data in memory)
+              tokensToPush = selectedUsers.map(u => u.expoPushToken).filter(Boolean);
+
               targetLabel = `Group (${selectedUsers.length} users)`;
               recipientCount = selectedUsers.length;
           }
 
+          // 🚀 SEND THE ACTUAL PUSH NOTIFICATION TO PHONES
+          if (tokensToPush.length > 0) {
+              await sendPushNotifications(tokensToPush, title, body);
+          }
+
           // Log the action
           await addDoc(collection(db, "notification_logs"), {
-              title,
-              body,
-              target: targetLabel,
-              recipientCount: recipientCount,
-              createdAt: serverTimestamp()
+              title, body, target: targetLabel, recipientCount: recipientCount, createdAt: serverTimestamp()
           });
 
-          alert(`Successfully sent!`);
+          alert(`Successfully sent! Triggered push notification to ${tokensToPush.length} devices.`);
           
           // Reset Form
           setTitle('');
@@ -176,10 +226,8 @@ export default function Notifications() {
           setTargetUid('');
           setSelectedUsers([]);
 
-          // ✅ SURGICAL UPDATE: Wipe cache to ensure new log shows up
           sessionStorage.removeItem('admin_notifications_history_cache');
           fetchHistory(true);
-          
           setActiveTab('history');
 
       } catch (error) {
@@ -189,27 +237,24 @@ export default function Notifications() {
       }
   };
 
+  // --- RENDER (Unchanged CSS) ---
   return (
     <div className="container" style={{ position: 'relative' }}>
       
-      {/* HEADER */}
       <div style={{ marginBottom: 30 }}>
             <h1 style={{ fontSize: '2rem', fontWeight: 900, margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
                 <Megaphone size={32} className="text-blue-600" /> Notification Center
             </h1>
-            <p style={{ color: '#6b7280', marginTop: 5 }}>Send alerts, updates, and messages to your app users.</p>
+            <p style={{ color: '#6b7280', marginTop: 5 }}>Send alerts, updates, and push notifications to your app users.</p>
       </div>
 
       <div className="grid-12">
-        {/* LEFT COLUMN: MAIN INTERFACE */}
         <div style={{ gridColumn: 'span 8' }}>
             <div className="card">
-                {/* TABS */}
                 <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb', position: 'relative' }}>
                     <button onClick={() => setActiveTab('compose')} style={{ flex: 1, padding: 20, background: activeTab === 'compose' ? 'white' : '#f9fafb', border: 'none', borderBottom: activeTab === 'compose' ? '3px solid #2563eb' : 'none', fontWeight: 700, color: activeTab === 'compose' ? '#2563eb' : '#6b7280', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:8 }}><Send size={18}/> Compose New</button>
                     <button onClick={() => setActiveTab('history')} style={{ flex: 1, padding: 20, background: activeTab === 'history' ? 'white' : '#f9fafb', border: 'none', borderBottom: activeTab === 'history' ? '3px solid #2563eb' : 'none', fontWeight: 700, color: activeTab === 'history' ? '#2563eb' : '#6b7280', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:8 }}><History size={18}/> Sent History</button>
                     
-                    {/* ✅ SURGICAL UPDATE: REFRESH BUTTON (Only visible on history tab) */}
                     {activeTab === 'history' && (
                         <button 
                             onClick={() => fetchHistory(true)}
@@ -224,11 +269,9 @@ export default function Notifications() {
                     {activeTab === 'compose' ? (
                         <form onSubmit={handleSend}>
                             
-                            {/* AUDIENCE SELECTOR */}
                             <div className="form-group">
                                 <span className="form-label">Who is this for?</span>
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 15 }}>
-                                    {/* Option 1: Specific */}
                                     <div 
                                         onClick={() => setTargetType('specific')}
                                         style={{ padding: 15, borderRadius: 12, border: targetType === 'specific' ? '2px solid #2563eb' : '2px solid #e5e7eb', background: targetType === 'specific' ? '#eff6ff' : 'white', cursor: 'pointer', textAlign: 'center' }}
@@ -238,7 +281,6 @@ export default function Notifications() {
                                         </div>
                                     </div>
 
-                                    {/* Option 2: Multiple (New) */}
                                     <div 
                                         onClick={() => setTargetType('multiple')}
                                         style={{ padding: 15, borderRadius: 12, border: targetType === 'multiple' ? '2px solid #059669' : '2px solid #e5e7eb', background: targetType === 'multiple' ? '#ecfdf5' : 'white', cursor: 'pointer', textAlign: 'center' }}
@@ -248,7 +290,6 @@ export default function Notifications() {
                                         </div>
                                     </div>
 
-                                    {/* Option 3: All */}
                                     <div 
                                         onClick={() => setTargetType('all')}
                                         style={{ padding: 15, borderRadius: 12, border: targetType === 'all' ? '2px solid #7c3aed' : '2px solid #e5e7eb', background: targetType === 'all' ? '#f5f3ff' : 'white', cursor: 'pointer', textAlign: 'center' }}
@@ -260,9 +301,6 @@ export default function Notifications() {
                                 </div>
                             </div>
 
-                            {/* CONDITIONAL INPUTS */}
-                            
-                            {/* 1. Single User Input */}
                             {targetType === 'specific' && (
                                 <div className="form-group" style={{ animation: 'fadeIn 0.3s ease' }}>
                                     <span className="form-label">User UID</span>
@@ -270,7 +308,6 @@ export default function Notifications() {
                                 </div>
                             )}
 
-                            {/* 2. Multiple User Selector */}
                             {targetType === 'multiple' && (
                                 <div className="form-group" style={{ animation: 'fadeIn 0.3s ease' }}>
                                     <span className="form-label">Selected Users ({selectedUsers.length})</span>
@@ -297,7 +334,6 @@ export default function Notifications() {
 
                             <div style={{ height: 1, background: '#e5e7eb', margin: '20px 0' }}></div>
 
-                            {/* CONTENT INPUTS */}
                             <div className="form-group">
                                 <span className="form-label">Notification Title</span>
                                 <input type="text" className="input-field" style={{ fontWeight: 700 }} placeholder="e.g. 🎉 Special Update Available!" value={title} onChange={e => setTitle(e.target.value)} />
@@ -310,13 +346,12 @@ export default function Notifications() {
 
                             <button type="submit" className="btn-publish" disabled={loading} style={{ marginTop: 10 }}>
                                 {loading ? <Loader2 className="animate-spin" /> : <Send size={20} />}
-                                {loading ? "Sending..." : "Send Notification"}
+                                {loading ? "Sending Push..." : "Send Notification"}
                             </button>
 
                         </form>
                     ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 15 }}>
-                            {/* HISTORY LIST */}
                             {history.length === 0 ? (
                                 <div style={{ textAlign: 'center', padding: 40, color: '#9ca3af' }}><History size={40} style={{ opacity: 0.2, marginBottom: 10 }} /><p>No notifications sent yet.</p></div>
                             ) : (
@@ -345,7 +380,7 @@ export default function Notifications() {
             <div className="card" style={{ background: '#eff6ff', border: '1px solid #bfdbfe', padding: 25 }}>
                 <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#1e3a8a', display: 'flex', alignItems: 'center', gap: 10, margin: '0 0 15px 0' }}><Info size={20}/> Best Practices</h3>
                 <ul style={{ paddingLeft: 20, color: '#1e40af', fontSize: '0.9rem', lineHeight: '1.6', margin: 0 }}>
-                    <li style={{ marginBottom: 10 }}><b>Use "Everyone" sparingly.</b> It sends a push to every installed device.</li>
+                    <li style={{ marginBottom: 10 }}><b>Use "Everyone" sparingly.</b> It sends a physical push notification to every installed device.</li>
                     <li style={{ marginBottom: 10 }}>For critical alerts (maintenance, updates), use <b>Broadcast</b>.</li>
                     <li>Individual warnings should always use <b>Single User</b> mode.</li>
                 </ul>
@@ -353,7 +388,6 @@ export default function Notifications() {
         </div>
       </div>
 
-      {/* ✅ USER PICKER MODAL (Paginated) */}
       {showUserPicker && (
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
               <div style={{ background: 'white', borderRadius: 16, width: '90%', maxWidth: 500, maxHeight: '80vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 50px rgba(0,0,0,0.2)' }}>
@@ -399,7 +433,6 @@ export default function Notifications() {
                           );
                       })}
                       
-                      {/* Load More Button inside Modal */}
                       <button 
                         type="button" 
                         onClick={() => fetchUsers(false)} 

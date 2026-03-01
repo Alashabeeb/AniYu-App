@@ -18,7 +18,7 @@ import {
   PlayCircle,
   Plus,
   RefreshCw,
-  Search, // ✅ IMPORTED SEARCH ICON
+  Search,
   Star,
   ThumbsDown,
   ThumbsUp,
@@ -43,17 +43,49 @@ const AGE_RATINGS = ["All", "12+", "16+", "18+"];
 const LANGUAGES = ["English", "Spanish", "Portuguese", "French", "German", "Indonesian", "Arabic", "Russian", "Japanese", "Chinese"];
 const STATUS_OPTIONS = ["Pending", "Ongoing", "Completed", "Upcoming"];
 
+// ✅ HELPER: EXPO PUSH API
+const sendPushNotifications = async (expoPushTokens, title, body) => {
+    if (!expoPushTokens || expoPushTokens.length === 0) return;
+
+    const validTokens = expoPushTokens.filter(token => token);
+    if (validTokens.length === 0) return;
+
+    const messages = validTokens.map(token => ({
+        to: token,
+        sound: 'default',
+        title: title,
+        body: body,
+    }));
+
+    const chunks = [];
+    for (let i = 0; i < messages.length; i += 100) {
+        chunks.push(messages.slice(i, i + 100));
+    }
+
+    for (let chunk of chunks) {
+        try {
+            await fetch('https://exp.host/--/api/v2/push/send', {
+                method: 'POST',
+                headers: {
+                    Accept: 'application/json',
+                    'Accept-encoding': 'gzip, deflate',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(chunk),
+            });
+        } catch (error) {
+            console.error("Error sending push notification chunk:", error);
+        }
+    }
+};
+
 export default function AnimeUpload() {
   // --- GLOBAL STATE ---
   const [view, setView] = useState('list');
   const [animeList, setAnimeList] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
   const [libraryTab, setLibraryTab] = useState('Ongoing'); 
-  
-  // ✅ SURGICAL UPDATE: Added Search Term State
   const [searchTerm, setSearchTerm] = useState('');
-  
-  // --- USER ROLE STATE ---
   const [currentUser, setCurrentUser] = useState(null);
 
   // Pagination states
@@ -162,8 +194,10 @@ export default function AnimeUpload() {
     }
   };
 
+  // ✅ SURGICAL UPDATE: Added Push Notification Blast
   const sendAutoNotification = async (title, body, targetId = null) => {
       try {
+          // 1. Save to database for in-app feed
           await addDoc(collection(db, "announcements"), {
               title,
               body,
@@ -171,6 +205,17 @@ export default function AnimeUpload() {
               type: 'anime_release',
               createdAt: serverTimestamp()
           });
+
+          // 2. Fetch all user push tokens
+          const tokenQuery = query(collection(db, "users"), where("expoPushToken", "!=", null));
+          const tokenSnap = await getDocs(tokenQuery);
+          const tokensToPush = tokenSnap.docs.map(doc => doc.data().expoPushToken).filter(Boolean);
+
+          // 3. Blast push notifications
+          if (tokensToPush.length > 0) {
+              await sendPushNotifications(tokensToPush, title, body);
+          }
+
       } catch (e) { console.error("Notification failed:", e); }
   };
 
@@ -192,7 +237,7 @@ export default function AnimeUpload() {
           
           await sendAutoNotification(
               `New Release: ${anime.title}`,
-              `${anime.title} has just been released! Watch it now on AniYu.`,
+              `${anime.title} has just been approved and released! Watch it now on AniYu.`,
               anime.id
           );
 
@@ -481,6 +526,7 @@ export default function AnimeUpload() {
 
       setStatus('Success!');
       
+      // ✅ SURGICAL UPDATE: It now fires the upgraded push function
       if (notifyUsers && finalStatus !== 'Pending') {
           if (isEditMode) {
              const newEpCount = episodes.filter(e => e.isNew).length;
@@ -643,7 +689,6 @@ export default function AnimeUpload() {
 
   // --- RENDER: LIST VIEW ---
   if (view === 'list') {
-    // ✅ SURGICAL UPDATE: Added Search Filter Logic
     const filteredAnimeList = animeList.filter(item => {
         const itemStatus = item.status === 'Released' ? 'Ongoing' : (item.status || 'Ongoing');
         const matchesTab = itemStatus === libraryTab;
@@ -663,7 +708,6 @@ export default function AnimeUpload() {
            </div>
         </div>
 
-        {/* ✅ SURGICAL UPDATE: Added Search Bar to UI */}
         <div style={{ display: 'flex', gap: 15, borderBottom: '2px solid #e5e7eb', paddingBottom: 15, marginBottom: 20, alignItems: 'center', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                 {STATUS_OPTIONS.map(status => (
@@ -766,7 +810,7 @@ export default function AnimeUpload() {
     );
   }
 
-  // --- RENDER: FORM VIEW (BULK UPLOAD/EDIT) ---
+  // --- RENDER: FORM VIEW ---
   return (
     <div className="container">
       <button onClick={() => setView('list')} style={{ display: 'flex', alignItems: 'center', gap: 5, border: 'none', background: 'none', cursor: 'pointer', color: '#6b7280', fontWeight: 600, marginBottom: 20 }}>

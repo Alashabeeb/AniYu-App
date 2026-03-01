@@ -19,7 +19,7 @@ import {
   Lock,
   Plus,
   RefreshCw,
-  Search, // ✅ IMPORTED SEARCH ICON
+  Search,
   Trash2,
   Unlock
 } from 'lucide-react';
@@ -36,13 +36,48 @@ const GENRES_LIST = [
 
 const STATUS_OPTIONS = ["Pending", "Ongoing", "Completed", "Hiatus"];
 
+// ✅ HELPER: EXPO PUSH API (Chunks and sends notifications directly to physical devices)
+const sendPushNotifications = async (expoPushTokens, title, body) => {
+    if (!expoPushTokens || expoPushTokens.length === 0) return;
+
+    const validTokens = expoPushTokens.filter(token => token);
+    if (validTokens.length === 0) return;
+
+    const messages = validTokens.map(token => ({
+        to: token,
+        sound: 'default',
+        title: title,
+        body: body,
+    }));
+
+    const chunks = [];
+    for (let i = 0; i < messages.length; i += 100) {
+        chunks.push(messages.slice(i, i + 100));
+    }
+
+    for (let chunk of chunks) {
+        try {
+            await fetch('https://exp.host/--/api/v2/push/send', {
+                method: 'POST',
+                headers: {
+                    Accept: 'application/json',
+                    'Accept-encoding': 'gzip, deflate',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(chunk),
+            });
+        } catch (error) {
+            console.error("Error sending push notification chunk:", error);
+        }
+    }
+};
+
 export default function MangaUpload() {
   const [view, setView] = useState('list');
   const [mangaList, setMangaList] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
   const [libraryTab, setLibraryTab] = useState('Ongoing');
   
-  // ✅ SURGICAL UPDATE: Added Search Term State
   const [searchTerm, setSearchTerm] = useState('');
   
   const [currentUser, setCurrentUser] = useState(null);
@@ -150,11 +185,23 @@ export default function MangaUpload() {
     }
   };
 
+  // ✅ SURGICAL UPDATE: Upgraded to send actual Push Notifications
   const sendAutoNotification = async (title, body, targetId = null) => {
       try {
+          // 1. Save to database for in-app feed
           await addDoc(collection(db, "announcements"), {
               title, body, targetId, type: 'manga_release', createdAt: serverTimestamp()
           });
+
+          // 2. Fetch all user push tokens
+          const tokenQuery = query(collection(db, "users"), where("expoPushToken", "!=", null));
+          const tokenSnap = await getDocs(tokenQuery);
+          const tokensToPush = tokenSnap.docs.map(doc => doc.data().expoPushToken).filter(Boolean);
+
+          // 3. Blast push notifications
+          if (tokensToPush.length > 0) {
+              await sendPushNotifications(tokensToPush, title, body);
+          }
       } catch (e) { console.error("Notification failed:", e); }
   };
 
@@ -417,7 +464,6 @@ export default function MangaUpload() {
   );
 
   if (view === 'list') {
-    // ✅ SURGICAL UPDATE: Added Search Filter Logic
     const filteredMangaList = mangaList.filter(item => {
         const itemStatus = item.status === 'Released' ? 'Ongoing' : (item.status || 'Ongoing');
         const matchesTab = itemStatus === libraryTab;
@@ -437,7 +483,6 @@ export default function MangaUpload() {
            </div>
         </div>
 
-        {/* ✅ SURGICAL UPDATE: Added Search Bar to UI */}
         <div style={{ display: 'flex', gap: 15, borderBottom: '2px solid #e5e7eb', paddingBottom: 15, marginBottom: 20, alignItems: 'center', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                 {STATUS_OPTIONS.map(status => (
@@ -497,7 +542,6 @@ export default function MangaUpload() {
             </div>
           ))}
         </div>
-        {/* Load More Button */}
         {!loadingList && hasMore && (
             <div style={{ textAlign: 'center', padding: '20px' }}>
                 <button 

@@ -1,22 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-// ❌ COMMENTED OUT FOR EXPO GO (Prevents Crash)
-// import * as Notifications from 'expo-notifications'; 
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../config/firebaseConfig';
 
 const NOTIFICATIONS_KEY = 'user_notifications';
 const PREFERENCE_KEY = 'notifications_enabled';
-
-// ❌ COMMENTED OUT FOR EXPO GO
-/*
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
-*/
 
 export interface AppNotification {
   id: string;
@@ -30,6 +17,30 @@ export interface AppNotification {
   actorName?: string;
   actorAvatar?: string;
 }
+
+// ✅ HELPER: EXPO PUSH API FOR SOCIAL FEATURES
+const sendPushNotification = async (expoPushToken: string, title: string, body: string) => {
+  const message = {
+    to: expoPushToken,
+    sound: 'default',
+    title: title,
+    body: body,
+  };
+
+  try {
+    await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Accept-encoding': 'gzip, deflate',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(message),
+    });
+  } catch (error) {
+    console.error("Error sending push notification:", error);
+  }
+};
 
 // 1. Get Notification History
 export const getNotifications = async (): Promise<AppNotification[]> => {
@@ -56,12 +67,9 @@ export const addNewDropNotification = async (title: string, body: string, type: 
     const updated = [newNotif, ...current].slice(0, 50); 
     await AsyncStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify(updated));
 
-    // ✅ EXPO GO SAFE MODE: Just log it, don't schedule a native push
     const isEnabled = await getNotificationPreference();
     if (isEnabled) {
       console.log(`[Notification Alert] ${title}: ${body}`);
-      // You could uncomment this if you want a popup inside the app:
-      // alert(`${title}\n${body}`);
     }
 
     return updated;
@@ -71,7 +79,7 @@ export const addNewDropNotification = async (title: string, body: string, type: 
   }
 };
 
-// 3. Send Social Notification (To Firestore) - ✅ WORKS IN EXPO GO
+// 3. Send Social Notification (To Firestore & Push to Device) - ✅ UPGRADED
 export const sendSocialNotification = async (
     targetUserId: string, 
     type: 'like' | 'comment' | 'repost' | 'follow', 
@@ -79,6 +87,7 @@ export const sendSocialNotification = async (
     contentSnippet?: string,
     targetId?: string
 ) => {
+    // Prevent sending a notification to yourself
     if (targetUserId === actor.uid) return; 
 
     try {
@@ -104,6 +113,7 @@ export const sendSocialNotification = async (
                 break;
         }
 
+        // A. Write to the Target User's Firestore Feed
         await addDoc(collection(db, 'users', targetUserId, 'notifications'), {
             title,
             body,
@@ -115,6 +125,15 @@ export const sendSocialNotification = async (
             read: false,
             createdAt: serverTimestamp()
         });
+
+        // B. 🚀 NEW: Fetch Target User's Push Token and Send Physical Push
+        const targetUserSnap = await getDoc(doc(db, 'users', targetUserId));
+        if (targetUserSnap.exists()) {
+            const targetUserData = targetUserSnap.data();
+            if (targetUserData.expoPushToken) {
+                await sendPushNotification(targetUserData.expoPushToken, title, body);
+            }
+        }
 
     } catch (error) {
         console.error("Error sending social notification:", error);

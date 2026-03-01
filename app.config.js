@@ -2,7 +2,7 @@ export default {
   expo: {
     name: "AniYu",
     slug: "AniYu",
-    version: "1.0.3",
+    version: "1.0.4",
     orientation: "portrait",
     icon: "./assets/images/icon.png",
     scheme: "aniyu",
@@ -50,6 +50,19 @@ export default {
           dark: {
             backgroundColor: "#000000"
           }
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow AniYu to use your location to customize your feed and improve security."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#2563eb"
         }
       ],
       "expo-video",
