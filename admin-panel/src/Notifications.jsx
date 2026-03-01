@@ -1,4 +1,4 @@
-import { addDoc, collection, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, startAfter, where } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, startAfter } from 'firebase/firestore';
 import {
     Bell,
     CheckCircle,
@@ -19,15 +19,16 @@ import { useEffect, useState } from 'react';
 import { db } from './firebase';
 
 // ✅ HELPER: EXPO PUSH API
-// This function takes an array of push tokens, chunks them into batches of 100, and sends them.
 const sendPushNotifications = async (expoPushTokens, title, body) => {
     if (!expoPushTokens || expoPushTokens.length === 0) return;
 
-    // Filter out any undefined or null tokens
-    const validTokens = expoPushTokens.filter(token => token);
-    if (validTokens.length === 0) return;
+    // Filter out any undefined, null, or invalid tokens
+    const validTokens = expoPushTokens.filter(token => token && typeof token === 'string' && token.startsWith('ExponentPushToken'));
+    if (validTokens.length === 0) {
+        console.warn("No valid Expo Push Tokens found.");
+        return;
+    }
 
-    // Expo Push API requires messages to be an array of objects
     const messages = validTokens.map(token => ({
         to: token,
         sound: 'default',
@@ -35,16 +36,14 @@ const sendPushNotifications = async (expoPushTokens, title, body) => {
         body: body,
     }));
 
-    // Chunk into batches of 100 (Expo's limit per request)
     const chunks = [];
     for (let i = 0; i < messages.length; i += 100) {
         chunks.push(messages.slice(i, i + 100));
     }
 
-    // Send all chunks to Expo
     for (let chunk of chunks) {
         try {
-            await fetch('https://exp.host/--/api/v2/push/send', {
+            const response = await fetch('https://exp.host/--/api/v2/push/send', {
                 method: 'POST',
                 headers: {
                     Accept: 'application/json',
@@ -53,6 +52,13 @@ const sendPushNotifications = async (expoPushTokens, title, body) => {
                 },
                 body: JSON.stringify(chunk),
             });
+            
+            const data = await response.json();
+            console.log("Expo Push Response:", data);
+            
+            if (data.errors) {
+                console.error("Expo API Error:", data.errors);
+            }
         } catch (error) {
             console.error("Error sending push notification chunk:", error);
         }
@@ -152,7 +158,7 @@ export default function Notifications() {
       try {
           let recipientCount = 0;
           let targetLabel = '';
-          let tokensToPush = []; // Store tokens we find
+          let tokensToPush = []; 
 
           // CASE 1: BROADCAST TO ALL
           if (targetType === 'all') {
@@ -161,10 +167,11 @@ export default function Notifications() {
                   title, body, type: 'system_broadcast', targetId: 'all', createdAt: serverTimestamp()
               });
               
-              // 1b. Fetch all users who have an expoPushToken
-              const tokenQuery = query(collection(db, "users"), where("expoPushToken", "!=", null));
-              const tokenSnap = await getDocs(tokenQuery);
-              tokensToPush = tokenSnap.docs.map(doc => doc.data().expoPushToken);
+              // 1b. ✅ BULLETPROOF FETCH: Get all users, filter tokens in memory to avoid Firestore Index traps
+              const userSnap = await getDocs(collection(db, "users"));
+              tokensToPush = userSnap.docs
+                  .map(doc => doc.data().expoPushToken)
+                  .filter(token => token && typeof token === 'string' && token.startsWith('ExponentPushToken'));
 
               targetLabel = 'All Users (Global Broadcast)';
               recipientCount = 'All'; 
@@ -174,12 +181,10 @@ export default function Notifications() {
           else if (targetType === 'specific') {
               if (!targetUid) throw new Error("Please enter a User UID.");
               
-              // 2a. Write to their feed
               await addDoc(collection(db, "users", targetUid, "notifications"), {
                   title, body, read: false, createdAt: serverTimestamp(), type: 'system'
               });
 
-              // 2b. Fetch their specific push token
               const userDoc = await getDoc(doc(db, "users", targetUid));
               if (userDoc.exists() && userDoc.data().expoPushToken) {
                   tokensToPush.push(userDoc.data().expoPushToken);
@@ -193,7 +198,6 @@ export default function Notifications() {
           else if (targetType === 'multiple') {
               if (selectedUsers.length === 0) throw new Error("Please select at least one user.");
               
-              // 3a. Write to their feeds
               const promises = selectedUsers.map(user => 
                   addDoc(collection(db, "users", user.id, "notifications"), {
                       title, body, read: false, createdAt: serverTimestamp(), type: 'system'
@@ -201,26 +205,26 @@ export default function Notifications() {
               );
               await Promise.all(promises);
               
-              // 3b. Extract their tokens (since we already have their user data in memory)
               tokensToPush = selectedUsers.map(u => u.expoPushToken).filter(Boolean);
 
               targetLabel = `Group (${selectedUsers.length} users)`;
               recipientCount = selectedUsers.length;
           }
 
-          // 🚀 SEND THE ACTUAL PUSH NOTIFICATION TO PHONES
+          // 🚀 SEND THE ACTUAL PUSH NOTIFICATION
           if (tokensToPush.length > 0) {
               await sendPushNotifications(tokensToPush, title, body);
+          } else {
+              console.warn("Alert: Saved to database, but NO valid push tokens were found to ping phones.");
           }
 
-          // Log the action
           await addDoc(collection(db, "notification_logs"), {
               title, body, target: targetLabel, recipientCount: recipientCount, createdAt: serverTimestamp()
           });
 
-          alert(`Successfully sent! Triggered push notification to ${tokensToPush.length} devices.`);
+          // ✅ NEW: Tell the admin exactly how many devices actually got buzzed
+          alert(`Successfully sent! Triggered a physical push notification to ${tokensToPush.length} device(s).`);
           
-          // Reset Form
           setTitle('');
           setBody('');
           setTargetUid('');
@@ -237,7 +241,6 @@ export default function Notifications() {
       }
   };
 
-  // --- RENDER (Unchanged CSS) ---
   return (
     <div className="container" style={{ position: 'relative' }}>
       
@@ -272,31 +275,16 @@ export default function Notifications() {
                             <div className="form-group">
                                 <span className="form-label">Who is this for?</span>
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 15 }}>
-                                    <div 
-                                        onClick={() => setTargetType('specific')}
-                                        style={{ padding: 15, borderRadius: 12, border: targetType === 'specific' ? '2px solid #2563eb' : '2px solid #e5e7eb', background: targetType === 'specific' ? '#eff6ff' : 'white', cursor: 'pointer', textAlign: 'center' }}
-                                    >
-                                        <div style={{ fontWeight: 700, color: targetType === 'specific' ? '#1e3a8a' : '#374151', display:'flex', flexDirection:'column', alignItems:'center', gap:5 }}>
-                                            <User size={24} /> Single User
-                                        </div>
+                                    <div onClick={() => setTargetType('specific')} style={{ padding: 15, borderRadius: 12, border: targetType === 'specific' ? '2px solid #2563eb' : '2px solid #e5e7eb', background: targetType === 'specific' ? '#eff6ff' : 'white', cursor: 'pointer', textAlign: 'center' }}>
+                                        <div style={{ fontWeight: 700, color: targetType === 'specific' ? '#1e3a8a' : '#374151', display:'flex', flexDirection:'column', alignItems:'center', gap:5 }}><User size={24} /> Single User</div>
                                     </div>
 
-                                    <div 
-                                        onClick={() => setTargetType('multiple')}
-                                        style={{ padding: 15, borderRadius: 12, border: targetType === 'multiple' ? '2px solid #059669' : '2px solid #e5e7eb', background: targetType === 'multiple' ? '#ecfdf5' : 'white', cursor: 'pointer', textAlign: 'center' }}
-                                    >
-                                        <div style={{ fontWeight: 700, color: targetType === 'multiple' ? '#065f46' : '#374151', display:'flex', flexDirection:'column', alignItems:'center', gap:5 }}>
-                                            <Users size={24} /> Select Group
-                                        </div>
+                                    <div onClick={() => setTargetType('multiple')} style={{ padding: 15, borderRadius: 12, border: targetType === 'multiple' ? '2px solid #059669' : '2px solid #e5e7eb', background: targetType === 'multiple' ? '#ecfdf5' : 'white', cursor: 'pointer', textAlign: 'center' }}>
+                                        <div style={{ fontWeight: 700, color: targetType === 'multiple' ? '#065f46' : '#374151', display:'flex', flexDirection:'column', alignItems:'center', gap:5 }}><Users size={24} /> Select Group</div>
                                     </div>
 
-                                    <div 
-                                        onClick={() => setTargetType('all')}
-                                        style={{ padding: 15, borderRadius: 12, border: targetType === 'all' ? '2px solid #7c3aed' : '2px solid #e5e7eb', background: targetType === 'all' ? '#f5f3ff' : 'white', cursor: 'pointer', textAlign: 'center' }}
-                                    >
-                                        <div style={{ fontWeight: 700, color: targetType === 'all' ? '#5b21b6' : '#374151', display:'flex', flexDirection:'column', alignItems:'center', gap:5 }}>
-                                            <Bell size={24} /> Everyone
-                                        </div>
+                                    <div onClick={() => setTargetType('all')} style={{ padding: 15, borderRadius: 12, border: targetType === 'all' ? '2px solid #7c3aed' : '2px solid #e5e7eb', background: targetType === 'all' ? '#f5f3ff' : 'white', cursor: 'pointer', textAlign: 'center' }}>
+                                        <div style={{ fontWeight: 700, color: targetType === 'all' ? '#5b21b6' : '#374151', display:'flex', flexDirection:'column', alignItems:'center', gap:5 }}><Bell size={24} /> Everyone</div>
                                     </div>
                                 </div>
                             </div>
@@ -316,15 +304,13 @@ export default function Notifications() {
                                             <div style={{ display:'flex', flexWrap:'wrap', gap: 10, marginBottom: 15 }}>
                                                 {selectedUsers.map(u => (
                                                     <span key={u.id} className="chip" style={{ background:'white', border:'1px solid #e5e7eb', padding:'5px 10px', display:'flex', alignItems:'center', gap:5 }}>
-                                                        {u.username || "Unknown"} 
-                                                        <X size={14} style={{cursor:'pointer', color:'#ef4444'}} onClick={() => toggleUserSelection(u)}/>
+                                                        {u.username || "Unknown"} <X size={14} style={{cursor:'pointer', color:'#ef4444'}} onClick={() => toggleUserSelection(u)}/>
                                                     </span>
                                                 ))}
                                             </div>
                                         ) : (
                                             <div style={{ color: '#9ca3af', fontStyle:'italic', marginBottom: 15, textAlign:'center' }}>No users selected yet.</div>
                                         )}
-                                        
                                         <button type="button" onClick={openUserPicker} style={{ width: '100%', padding: 10, background: 'white', border: '1px dashed #2563eb', color: '#2563eb', fontWeight: 700, borderRadius: 8, cursor:'pointer' }}>
                                             + Open User Picker
                                         </button>
@@ -375,7 +361,6 @@ export default function Notifications() {
             </div>
         </div>
 
-        {/* RIGHT COLUMN */}
         <div style={{ gridColumn: 'span 4' }}>
             <div className="card" style={{ background: '#eff6ff', border: '1px solid #bfdbfe', padding: 25 }}>
                 <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#1e3a8a', display: 'flex', alignItems: 'center', gap: 10, margin: '0 0 15px 0' }}><Info size={20}/> Best Practices</h3>
@@ -399,14 +384,7 @@ export default function Notifications() {
                   <div style={{ padding: 15, borderBottom: '1px solid #e5e7eb' }}>
                       <div style={{ position: 'relative' }}>
                           <Search size={18} style={{ position: 'absolute', left: 12, top: 12, color: '#9ca3af' }} />
-                          <input 
-                              type="text" 
-                              placeholder="Search loaded users..." 
-                              className="input-field" 
-                              style={{ paddingLeft: 40 }}
-                              value={userSearch}
-                              onChange={e => setUserSearch(e.target.value)}
-                          />
+                          <input type="text" placeholder="Search loaded users..." className="input-field" style={{ paddingLeft: 40 }} value={userSearch} onChange={e => setUserSearch(e.target.value)} />
                       </div>
                   </div>
 
@@ -414,17 +392,11 @@ export default function Notifications() {
                       {filteredUsers.map(user => {
                           const isSelected = selectedUsers.some(u => u.id === user.id);
                           return (
-                              <div 
-                                key={user.id} 
-                                onClick={() => toggleUserSelection(user)}
-                                style={{ display: 'flex', alignItems: 'center', gap: 15, padding: 12, borderRadius: 8, cursor: 'pointer', background: isSelected ? '#eff6ff' : 'transparent', transition: 'background 0.2s' }}
-                              >
+                              <div key={user.id} onClick={() => toggleUserSelection(user)} style={{ display: 'flex', alignItems: 'center', gap: 15, padding: 12, borderRadius: 8, cursor: 'pointer', background: isSelected ? '#eff6ff' : 'transparent', transition: 'background 0.2s' }}>
                                   {isSelected ? <CheckSquare size={20} className="text-blue-600"/> : <Square size={20} className="text-gray-300"/>}
-                                  
                                   <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#e5e7eb', overflow: 'hidden', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', color: '#6b7280' }}>
                                       {user.avatar ? <img src={user.avatar} style={{ width:'100%', height:'100%', objectFit:'cover' }}/> : (user.username?.[0] || 'U')}
                                   </div>
-
                                   <div style={{ flex: 1 }}>
                                       <div style={{ fontWeight: 600, color: '#1f2937' }}>{user.username || "Unknown"}</div>
                                       <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{user.email}</div>
@@ -432,13 +404,7 @@ export default function Notifications() {
                               </div>
                           );
                       })}
-                      
-                      <button 
-                        type="button" 
-                        onClick={() => fetchUsers(false)} 
-                        disabled={loadingUsers}
-                        style={{ width: '100%', padding: 10, marginTop: 10, background: '#f3f4f6', border: 'none', borderRadius: 8, color: '#6b7280', cursor:'pointer' }}
-                      >
+                      <button type="button" onClick={() => fetchUsers(false)} disabled={loadingUsers} style={{ width: '100%', padding: 10, marginTop: 10, background: '#f3f4f6', border: 'none', borderRadius: 8, color: '#6b7280', cursor:'pointer' }}>
                           {loadingUsers ? "Loading..." : "Load More Users"}
                       </button>
                   </div>
