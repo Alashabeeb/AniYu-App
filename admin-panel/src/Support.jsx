@@ -201,27 +201,25 @@ export default function Support() {
             .left-panel { width: 350px; background: white; border-right: 1px solid #e5e7eb; display: flex; flex-direction: column; z-index: 10; }
             .right-panel { flex: 1; display: flex; flex-direction: column; background: #f8fafc; position: relative; }
             
-            /* ✅ SURGICAL UPDATE: Bulletproof Back Button CSS */
             .mobile-back-btn { 
-                display: none !important; 
-                background: #f1f5f9; 
-                border: 1px solid #e2e8f0; 
-                padding: 8px; 
-                border-radius: 8px; 
+                display: none; 
+                background: transparent; 
+                border: none; 
+                padding: 5px 10px 5px 0; 
                 cursor: pointer; 
-                color: #475569; 
+                color: #4b5563; 
             }
-            .mobile-back-btn:hover { background: #e2e8f0; }
+            .mobile-back-btn:hover { color: #1f2937; }
             
             .ticket-card { padding: 18px 20px; border-bottom: 1px solid #f3f4f6; cursor: pointer; transition: all 0.2s; position: relative; }
             .ticket-card:hover { background: #f8fafc; }
             
-            /* ✅ SURGICAL UPDATE: Increased breakpoint to 992px to cover iPads/Tablets */
+            /* ✅ SURGICAL UPDATE: Forces the back button to display on mobile devices */
             @media (max-width: 992px) {
                 .support-container { margin: 10px; height: calc(100vh - 80px); }
                 .left-panel { width: 100%; display: var(--show-list); border-right: none; }
                 .right-panel { width: 100%; display: var(--show-chat); position: absolute; inset: 0; z-index: 20; border-radius: 16px; }
-                .mobile-back-btn { display: flex !important; align-items: center; justify-content: center; margin-right: 10px; }
+                .mobile-back-btn { display: flex !important; align-items: center; justify-content: center; margin-right: 5px; }
             }
 
             .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 100; display: flex; align-items: center; justify-content: center; }
@@ -315,8 +313,9 @@ export default function Support() {
                     <>
                         <div style={{ padding: '15px 25px', background: 'white', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <div style={{ display: 'flex', alignItems: 'center' }}>
+                                {/* ✅ FIXED: Back Button explicitly clears the selected ticket */}
                                 <button className="mobile-back-btn" onClick={() => setSelectedTicket(null)}>
-                                    <ArrowLeft size={20} />
+                                    <ArrowLeft size={24} />
                                 </button>
                                 <div style={{ width: 45, height: 45, borderRadius: '50%', background: '#f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: 15 }}>
                                     {selectedTicket.userAvatar ? <img src={selectedTicket.userAvatar} style={{width:'100%', height:'100%', borderRadius:'50%', objectFit:'cover'}}/> : <User className="text-gray-400"/>}

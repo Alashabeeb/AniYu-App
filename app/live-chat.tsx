@@ -278,7 +278,6 @@ export default function LiveChatScreen() {
     // RENDER: CHAT VIEW
     // =======================================================
     const renderMessage = ({ item }: { item: any }) => {
-        // ✅ NEW: Display System Messages (Transfer logic)
         if (item.senderModel === 'system') {
             return (
                 <View style={{ alignItems: 'center', marginVertical: 12 }}>
@@ -341,11 +340,11 @@ export default function LiveChatScreen() {
                 </View>
             )}
 
-            {/* ✅ FIXED KEYBOARD AVOIDANCE */}
+            {/* ✅ FIXED KEYBOARD AVOIDANCE (Height for Android, Padding for iOS) */}
             <KeyboardAvoidingView 
                 style={styles.keyboardView} 
-                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-                keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0} 
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                keyboardVerticalOffset={Platform.OS === 'ios' ? 10 : 0} 
             >
                 <FlatList
                     ref={flatListRef}
@@ -403,7 +402,6 @@ export default function LiveChatScreen() {
                         </View>
                     </View>
                 ) : (
-                    // ✅ DISPLAY "RESOLVED BY" TO THE USER
                     <View style={[styles.resolvedBanner, { backgroundColor: theme.card, borderTopColor: theme.border }]}>
                         <Ionicons name="checkmark-circle" size={20} color="#16a34a" />
                         <Text style={{ color: theme.text, fontWeight: 'bold', marginLeft: 8 }}>
