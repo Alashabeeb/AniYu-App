@@ -1,9 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
+import * as Linking from 'expo-linking'; // ✅ Added Deep Linking
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import {
-    arrayRemove, arrayUnion,
+    addDoc, arrayRemove, arrayUnion,
     collection, deleteDoc, doc,
     getDoc,
     increment,
@@ -17,7 +18,7 @@ import {
     ActivityIndicator,
     Alert,
     Dimensions,
-    FlatList, KeyboardAvoidingView, Modal, Platform, Share, StyleSheet,
+    FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, Share, StyleSheet,
     Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View, ViewToken
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -27,7 +28,6 @@ import { useTheme } from '../context/ThemeContext';
 import { sendSocialNotification } from '../services/notificationService';
 import { getFriendlyErrorMessage } from '../utils/errorHandler';
 
-// ✅ Dynamically calculate screen height for consistent proportions
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 const REPORT_REASONS = [
@@ -39,7 +39,6 @@ const REPORT_REASONS = [
   "Other"
 ];
 
-// GLOBAL CACHE
 const viewedSessionIds = new Set<string>();
 const viewedCommentSessionIds = new Set<string>();
 
@@ -57,6 +56,9 @@ export default function PostDetailsScreen() {
   const [menuVisible, setMenuVisible] = useState(false);
   const [reportModalVisible, setReportModalVisible] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
+
+  const [imageModalVisible, setImageModalVisible] = useState(false);
+  const [videoModalVisible, setVideoModalVisible] = useState(false);
 
   const [alertConfig, setAlertConfig] = useState({
     visible: false,
@@ -80,9 +82,7 @@ export default function PostDetailsScreen() {
   useFocusEffect(
     useCallback(() => {
       return () => {
-        try {
-            if (player && videoSource) player.pause();
-        } catch(e) {}
+        try { if (player && videoSource) player.pause(); } catch(e) {}
       };
     }, [player, videoSource])
   );
@@ -92,8 +92,10 @@ export default function PostDetailsScreen() {
   useEffect(() => {
     if (!postId) return;
     
-    const postUnsub = onSnapshot(doc(db, 'posts', postId as string), (doc) => {
-      if (doc.exists()) setPost({ id: doc.id, ...doc.data() });
+    const postUnsub = onSnapshot(doc(db, 'posts', postId as string), (docSnapshot) => {
+      if (docSnapshot.exists()) {
+          setPost({ id: docSnapshot.id, ...docSnapshot.data() });
+      }
     });
 
     const q = query(
@@ -138,20 +140,61 @@ export default function PostDetailsScreen() {
       if (!user) return;
       const ref = doc(db, 'posts', id);
       const isActive = currentArray?.includes(user.uid);
-      
       const countField = field === 'likes' ? 'likeCount' : 'repostCount';
 
-      await updateDoc(ref, { 
-          [field]: isActive ? arrayRemove(user.uid) : arrayUnion(user.uid),
-          [countField]: increment(isActive ? -1 : 1)
-      });
+      try {
+          await updateDoc(ref, { 
+              [field]: isActive ? arrayRemove(user.uid) : arrayUnion(user.uid),
+              [countField]: increment(isActive ? -1 : 1)
+          });
+
+          if (!isActive) {
+              const targetPost = id === post?.id ? post : comments.find(c => c.id === id);
+              if (targetPost) {
+                  if (field === 'reposts') {
+                      await addDoc(collection(db, 'posts'), {
+                          isRepost: true,
+                          originalPostId: id,
+                          userId: targetPost.userId, 
+                          displayName: targetPost.displayName,
+                          username: targetPost.username,
+                          userAvatar: targetPost.userAvatar,
+                          text: targetPost.text || "",
+                          mediaUrl: targetPost.mediaUrl || null,
+                          mediaType: targetPost.mediaType || null,
+                          tags: targetPost.tags || [],
+                          parentId: null, 
+                          createdAt: serverTimestamp(),
+                          repostedByUid: user.uid,
+                          repostedByName: user.displayName || 'Someone',
+                          likes: [], likeCount: 0,
+                          reposts: [], repostCount: 0,
+                          commentCount: 0,
+                          views: 0
+                      });
+                      sendSocialNotification(targetPost.userId, 'repost', { uid: user.uid, name: user.displayName || 'User', avatar: user.photoURL || '' }, '', id).catch(()=>console.log("Silent notif error"));
+                  } else if (field === 'likes' && targetPost.userId !== user.uid) {
+                      sendSocialNotification(targetPost.userId, 'like', { uid: user.uid, name: user.displayName || 'User', avatar: user.photoURL || '' }, '', id).catch(()=>console.log("Silent notif error"));
+                  }
+              }
+          }
+      } catch (error: any) {
+          console.error("Action error:", error);
+          const errorMessage = error.message?.includes('permission') 
+              ? 'Security block: Action reverted. Ensure rules allow this update.' 
+              : 'Network error. Try again.';
+          showAlert('error', 'Action Failed', errorMessage);
+      }
   };
 
+  // ✅ UPDATED: Native Deep Linking for Share
   const handleShare = async (item: any) => {
       try {
+          const itemUrl = Linking.createURL('/post-details', { queryParams: { postId: item.id } });
+          
           await Share.share({
-              message: `Check out this post from ${item.displayName || item.username} on AniYu: ${item.text || 'Check this out!'}`,
-              url: item.mediaUrl || '' 
+              message: `Check out what ${item.displayName || item.username} said on AniYu!\n\n${item.text ? `"${item.text}"\n\n` : ''}${itemUrl}`,
+              url: itemUrl 
           });
       } catch (error) { console.log("Share error", error); }
   };
@@ -166,8 +209,19 @@ export default function PostDetailsScreen() {
       Alert.alert("Delete Post", "Are you sure you want to delete this post permanently?", [
           { text: "Cancel", style: "cancel" },
           { text: "Delete", style: "destructive", onPress: async () => {
-              await deleteDoc(doc(db, "posts", postId as string));
-              router.back();
+              try {
+                  if (post?.parentId) {
+                      const batch = writeBatch(db);
+                      batch.delete(doc(db, "posts", postId as string));
+                      batch.update(doc(db, "posts", post.parentId), { commentCount: increment(-1) });
+                      await batch.commit();
+                  } else {
+                      await deleteDoc(doc(db, "posts", postId as string));
+                  }
+                  router.back();
+              } catch (error) {
+                  showAlert('error', 'Delete Failed', 'Could not delete this post.');
+              }
           }}
       ]);
   };
@@ -188,8 +242,7 @@ export default function PostDetailsScreen() {
                       showAlert('success', 'User Blocked', `You have blocked @${post.username}.`);
                       router.back();
                   } catch (e) {
-                      const friendlyMessage = getFriendlyErrorMessage(e);
-                      showAlert('error', 'Block Failed', friendlyMessage);
+                      showAlert('error', 'Block Failed', getFriendlyErrorMessage(e));
                   }
               }
           }
@@ -216,8 +269,7 @@ export default function PostDetailsScreen() {
         setReportModalVisible(false);
         showAlert('success', 'Report Submitted', 'Thank you for keeping our community safe. We will review this shortly.');
       } catch (error) {
-        const friendlyMessage = getFriendlyErrorMessage(error);
-        showAlert('error', 'Submission Failed', friendlyMessage);
+        showAlert('error', 'Submission Failed', getFriendlyErrorMessage(error));
       } finally {
         setReportLoading(false);
       }
@@ -267,17 +319,16 @@ export default function PostDetailsScreen() {
               { uid: user.uid, name: realDisplayName, avatar: realAvatar || '' },
               newComment,
               postId as string
-          );
+          ).catch(e => console.log("Silent Notification Error:", e));
       }
 
       setNewComment('');
     } catch (e: any) { 
         console.error(e); 
-        if (e.message.includes("permission-denied")) {
+        if (e.message?.includes("permission-denied")) {
             showAlert('error', '⛔ Blocked', 'You are posting too fast (30s cooldown) or you have been banned.');
         } else {
-            const friendlyMessage = getFriendlyErrorMessage(e);
-            showAlert('error', 'Comment Failed', friendlyMessage);
+            showAlert('error', 'Comment Failed', getFriendlyErrorMessage(e));
         }
     } 
     finally { setSending(false); }
@@ -376,16 +427,20 @@ export default function PostDetailsScreen() {
                   <Text style={[styles.postText, { color: theme.text }]}>{post.text}</Text>
                   
                   {post.mediaUrl && post.mediaType === 'video' && (
-                      <VideoView 
-                        player={player} 
-                        style={styles.postVideo} 
-                        contentFit="cover"
-                        allowsPictureInPicture={false}
-                        nativeControls={false} 
-                      />
+                      <Pressable onPress={() => setVideoModalVisible(true)}>
+                          <VideoView 
+                            player={player} 
+                            style={styles.postVideo} 
+                            contentFit="cover"
+                            allowsPictureInPicture={false}
+                            nativeControls={false} 
+                          />
+                      </Pressable>
                   )}
                   {post.mediaUrl && post.mediaType === 'image' && (
-                      <Image source={{ uri: post.mediaUrl }} style={styles.postImage} contentFit="cover" />
+                      <Pressable onPress={() => setImageModalVisible(true)}>
+                          <Image source={{ uri: post.mediaUrl }} style={styles.postImage} contentFit="cover" />
+                      </Pressable>
                   )}
 
                   <Text style={{ color: theme.subText, marginTop: 10, fontSize: 12 }}>
@@ -482,6 +537,33 @@ export default function PostDetailsScreen() {
         </View>
       </Modal>
 
+      <Modal visible={imageModalVisible} transparent={false} animationType="fade" onRequestClose={() => setImageModalVisible(false)}>
+        <View style={styles.fullScreenMediaContainer}>
+            <TouchableOpacity style={styles.closeMediaBtn} onPress={() => setImageModalVisible(false)}>
+                <Ionicons name="close" size={28} color="white" />
+            </TouchableOpacity>
+            {post?.mediaUrl && post?.mediaType === 'image' && (
+                <Image source={{ uri: post.mediaUrl }} style={styles.fullScreenMediaItem} contentFit="contain" />
+            )}
+        </View>
+      </Modal>
+
+      <Modal visible={videoModalVisible} transparent={false} animationType="fade" onRequestClose={() => setVideoModalVisible(false)}>
+        <View style={styles.fullScreenMediaContainer}>
+            <TouchableOpacity style={styles.closeMediaBtn} onPress={() => setVideoModalVisible(false)}>
+                <Ionicons name="close" size={28} color="white" />
+            </TouchableOpacity>
+            {post?.mediaUrl && post?.mediaType === 'video' && (
+                <VideoView
+                    player={player}
+                    style={styles.fullScreenMediaItem}
+                    contentFit="contain"
+                    nativeControls={true} 
+                />
+            )}
+        </View>
+      </Modal>
+
       <CustomAlert 
         visible={alertConfig.visible}
         type={alertConfig.type}
@@ -524,5 +606,25 @@ const styles = StyleSheet.create({
   menuText: { fontSize: 16, marginLeft: 12, fontWeight: '500' },
   reportContainer: { width: '90%', borderRadius: 16, padding: 20, alignItems: 'center', elevation: 10 },
   reportTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 5 },
-  reasonBtn: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', padding: 15, borderBottomWidth: 0.5 }
+  reasonBtn: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', padding: 15, borderBottomWidth: 0.5 },
+
+  fullScreenMediaContainer: {
+      flex: 1,
+      backgroundColor: '#000000',
+      justifyContent: 'center',
+      alignItems: 'center',
+  },
+  closeMediaBtn: {
+      position: 'absolute',
+      top: Platform.OS === 'ios' ? 50 : 20,
+      left: 20,
+      zIndex: 100,
+      padding: 8,
+      backgroundColor: 'rgba(0,0,0,0.6)',
+      borderRadius: 20,
+  },
+  fullScreenMediaItem: {
+      width: '100%',
+      height: '100%',
+  }
 });

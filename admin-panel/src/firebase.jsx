@@ -1,7 +1,8 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
-import { getStorage } from "firebase/storage";
+// ✅ SURGICAL UPDATE: Removed 'firebase/storage' completely. 
+// We rely 100% on Cloudflare R2 for all media.
 
 // ✅ CONFIG: Reads from the secure .env file
 export const firebaseConfig = {
@@ -20,4 +21,4 @@ const app = initializeApp(firebaseConfig);
 // Initialize Services
 export const auth = getAuth(app);
 export const db = getFirestore(app);
-export const storage = getStorage(app);
+// ✅ SURGICAL UPDATE: Removed 'export const storage = getStorage(app);'

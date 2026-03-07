@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { initializeApp } from "firebase/app";
 import { getReactNativePersistence, initializeAuth } from 'firebase/auth';
 import { initializeFirestore } from 'firebase/firestore';
-import { getStorage } from 'firebase/storage';
+// ✅ SURGICAL UPDATE: Removed firebase/storage import
 
 // ✅ UPDATED: Read from Environment Variables
 const firebaseConfig = {
@@ -25,9 +25,9 @@ const db = initializeFirestore(app, {
   experimentalForceLongPolling: true, 
 });
 
-const storage = getStorage(app);
+// ✅ SURGICAL UPDATE: Removed 'const storage = getStorage(app);'
 
-export { auth, db, storage };
+export { auth, db }; // ✅ Removed storage from export
 
 // ✅ R2 CONFIGURATION EXPORT
 export const R2_CONFIG = {

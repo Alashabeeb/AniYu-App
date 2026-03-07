@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useIsFocused } from '@react-navigation/native';
 import { Image } from 'expo-image';
+import * as Linking from 'expo-linking'; // ✅ Added Deep Linking
 import { useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import {
@@ -19,6 +20,7 @@ import {
     Alert,
     Dimensions,
     Modal,
+    Platform,
     Pressable,
     Share,
     StyleSheet,
@@ -38,7 +40,6 @@ interface PostCardProps {
 
 const REPORT_REASONS = ["Offensive content", "Abusive behavior", "Spam", "Other"];
 
-// ✅ Dynamically calculate screen height
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function PostCard({ post, isVisible = true }: PostCardProps) {
@@ -51,7 +52,9 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
   const [menuVisible, setMenuVisible] = useState(false);
   const [reportModalVisible, setReportModalVisible] = useState(false);
 
-  // ✅ OPTIMISTIC UI STATE: Allows instant visual updates without waiting for Firebase
+  const [imageModalVisible, setImageModalVisible] = useState(false);
+  const [videoModalVisible, setVideoModalVisible] = useState(false);
+
   const [localIsLiked, setLocalIsLiked] = useState(post.likes?.includes(currentUser?.uid));
   const [localLikeCount, setLocalLikeCount] = useState(post.likeCount || post.likes?.length || 0);
 
@@ -61,20 +64,18 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
   const isOwner = post.userId === currentUser?.uid;
   const isPinned = post.pinned === true;
 
-  // Sync local state if the feed refreshes and passes down new post props
   useEffect(() => {
       setLocalIsLiked(post.likes?.includes(currentUser?.uid));
       setLocalLikeCount(post.likeCount || post.likes?.length || 0);
       setLocalIsReposted(post.reposts?.includes(currentUser?.uid));
       setLocalRepostCount(post.repostCount || post.reposts?.length || 0);
-  }, [post]);
+  }, [post.id, currentUser?.uid]);
 
   const videoSource = post.mediaType === 'video' && post.mediaUrl ? post.mediaUrl : null;
   
   const player = useVideoPlayer(videoSource, player => { 
       if (videoSource) {
           player.loop = true;
-          // Notice: We don't auto-play here, we let the useEffect handle it safely
       }
   });
 
@@ -82,13 +83,9 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
       if (!player || !videoSource) return;
 
       if (!isFocused || !isVisible) {
-          try {
-              player.pause();
-          } catch (e) {}
+          try { player.pause(); } catch (e) {}
       } else {
-          try {
-              player.play();
-          } catch (e) {}
+          try { player.play(); } catch (e) {}
       }
   }, [isFocused, isVisible, player, videoSource]);
 
@@ -103,31 +100,29 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
 
   const handleGoToDetails = () => {
     try { if (player && videoSource) player.pause(); } catch(e){}
-    router.push({ pathname: '/post-details', params: { postId: post.id } });
+    const targetPostId = post.isRepost ? post.originalPostId : post.id;
+    router.push({ pathname: '/post-details', params: { postId: targetPostId } });
   };
 
   const handleLike = async () => {
     if (!currentUser) return;
     
-    // 1. Optimistic Update (Instant UI feedback)
     const newIsLiked = !localIsLiked;
     setLocalIsLiked(newIsLiked);
     setLocalLikeCount((prev: number) => prev + (newIsLiked ? 1 : -1));
 
-    // 2. Notification
-    if (newIsLiked) {
+    if (newIsLiked && !post.isRepost) {
         sendSocialNotification(post.userId, 'like', { uid: currentUser.uid, name: currentUser.displayName || 'User', avatar: currentUser.photoURL || '' }, '', post.id);
     }
     
-    // 3. Database Update
     try {
-        const postRef = doc(db, 'posts', post.id);
+        const targetPostId = post.isRepost ? post.originalPostId : post.id;
+        const postRef = doc(db, 'posts', targetPostId);
         await updateDoc(postRef, { 
             likes: newIsLiked ? arrayUnion(currentUser.uid) : arrayRemove(currentUser.uid),
             likeCount: increment(newIsLiked ? 1 : -1) 
         });
     } catch (e) {
-        // Rollback on network failure
         setLocalIsLiked(!newIsLiked);
         setLocalLikeCount((prev: number) => prev + (!newIsLiked ? 1 : -1));
     }
@@ -136,32 +131,57 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
   const handleRepost = async () => {
     if (!currentUser) return;
     
-    // Optimistic Update
     const newIsReposted = !localIsReposted;
     setLocalIsReposted(newIsReposted);
     setLocalRepostCount((prev: number) => prev + (newIsReposted ? 1 : -1));
-
-    if (newIsReposted) {
-        sendSocialNotification(post.userId, 'repost', { uid: currentUser.uid, name: currentUser.displayName || 'User', avatar: currentUser.photoURL || '' }, '', post.id);
-    }
     
     try {
-        const postRef = doc(db, 'posts', post.id);
+        const targetPostId = post.isRepost ? post.originalPostId : post.id;
+        const postRef = doc(db, 'posts', targetPostId);
+        
         await updateDoc(postRef, { 
             reposts: newIsReposted ? arrayUnion(currentUser.uid) : arrayRemove(currentUser.uid),
             repostCount: increment(newIsReposted ? 1 : -1)
         });
+
+        if (newIsReposted) {
+            await addDoc(collection(db, 'posts'), {
+                isRepost: true,
+                originalPostId: targetPostId,
+                userId: post.userId, 
+                displayName: post.displayName,
+                username: post.username,
+                userAvatar: post.userAvatar,
+                text: post.text || "",
+                mediaUrl: post.mediaUrl || null,
+                mediaType: post.mediaType || null,
+                tags: post.tags || [],
+                parentId: null, 
+                createdAt: serverTimestamp(),
+                repostedByUid: currentUser.uid,
+                repostedByName: currentUser.displayName || 'Someone',
+                likes: [], likeCount: 0,
+                reposts: [], repostCount: 0,
+                commentCount: 0,
+                views: 0
+            });
+            sendSocialNotification(post.userId, 'repost', { uid: currentUser.uid, name: currentUser.displayName || 'User', avatar: currentUser.photoURL || '' }, '', targetPostId);
+        }
     } catch (e) {
         setLocalIsReposted(!newIsReposted);
         setLocalRepostCount((prev: number) => prev + (!newIsReposted ? 1 : -1));
     }
   };
 
+  // ✅ UPDATED: Native Deep Linking for Share
   const handleShare = async () => {
       try {
+          const targetPostId = post.isRepost ? post.originalPostId : post.id;
+          const postUrl = Linking.createURL('/post-details', { queryParams: { postId: targetPostId } });
+
           await Share.share({
-              message: `Check out this post from ${post.displayName} on AniYu: ${post.text || 'Check this out!'}`,
-              url: post.mediaUrl || '' 
+              message: `Check out this post from ${post.displayName} on AniYu!\n\n${post.text ? `"${post.text}"\n\n` : ''}${postUrl}`,
+              url: postUrl 
           });
       } catch (error) { console.log("Share error", error); }
   };
@@ -179,7 +199,21 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
     setMenuVisible(false);
     Alert.alert("Delete Post", "Are you sure?", [
         { text: "Cancel", style: "cancel" },
-        { text: "Delete", style: "destructive", onPress: async () => { try { await deleteDoc(doc(db, "posts", post.id)); } catch (error) { Alert.alert("Error", "Could not delete post."); } } }
+        { text: "Delete", style: "destructive", onPress: async () => { 
+            try { 
+                if (post.parentId) {
+                    const { writeBatch } = require('firebase/firestore');
+                    const batch = writeBatch(db);
+                    batch.delete(doc(db, "posts", post.id));
+                    batch.update(doc(db, "posts", post.parentId), { commentCount: increment(-1) });
+                    await batch.commit();
+                } else {
+                    await deleteDoc(doc(db, "posts", post.id)); 
+                }
+            } catch (error) { 
+                Alert.alert("Error", "Could not delete post."); 
+            } 
+        } }
     ]);
   };
 
@@ -218,7 +252,16 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
   return (
     <Pressable onPress={handleGoToDetails} style={[styles.container, { borderBottomColor: theme.border }]}>
       
-      {isPinned && (
+      {post.isRepost && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, marginLeft: 50 }}>
+              <Ionicons name="repeat" size={12} color={theme.subText} />
+              <Text style={{ fontSize: 12, color: theme.subText, marginLeft: 5, fontWeight: 'bold' }}>
+                  {post.repostedByUid === currentUser?.uid ? 'You reposted' : `${post.repostedByName} reposted`}
+              </Text>
+          </View>
+      )}
+
+      {isPinned && !post.isRepost && (
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, marginLeft: 50 }}>
               <Ionicons name="pricetag" size={12} color={theme.subText} />
               <Text style={{ fontSize: 12, color: theme.subText, marginLeft: 5, fontWeight: 'bold' }}>Pinned</Text>
@@ -244,20 +287,24 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
           {post.text ? <Text style={[styles.text, { color: theme.text }]}>{post.text}</Text> : null}
 
           {post.mediaUrl && post.mediaType === 'image' && (
-              <Image source={{ uri: post.mediaUrl }} style={[styles.mediaBase, styles.imageMedia]} contentFit="cover" />
+              <Pressable onPress={(e) => { e.stopPropagation(); setImageModalVisible(true); }}>
+                  <Image source={{ uri: post.mediaUrl }} style={[styles.mediaBase, styles.imageMedia]} contentFit="cover" />
+              </Pressable>
           )}
+
           {post.mediaUrl && post.mediaType === 'video' && (
-              <VideoView 
-                  player={player} 
-                  style={[styles.mediaBase, styles.videoMedia]} 
-                  contentFit="cover" 
-                  allowsPictureInPicture={false}
-                  nativeControls={false} 
-              />
+              <Pressable onPress={(e) => { e.stopPropagation(); setVideoModalVisible(true); }}>
+                  <VideoView 
+                      player={player} 
+                      style={[styles.mediaBase, styles.videoMedia]} 
+                      contentFit="cover" 
+                      allowsPictureInPicture={false}
+                      nativeControls={false} 
+                  />
+              </Pressable>
           )}
 
           <View style={styles.actions}>
-            {/* ✅ BOUND TO LOCAL STATE NOW */}
             <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleLike(); }}>
               <Ionicons name={localIsLiked ? "heart" : "heart-outline"} size={18} color={localIsLiked ? "#FF6B6B" : theme.subText} />
               <Text style={[styles.count, { color: localIsLiked ? "#FF6B6B" : theme.subText }]}>{localLikeCount}</Text>
@@ -268,7 +315,6 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
               <Text style={[styles.count, { color: theme.subText }]}>{post.commentCount || 0}</Text>
             </TouchableOpacity>
             
-            {/* ✅ BOUND TO LOCAL STATE NOW */}
             <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleRepost(); }}>
               <Ionicons name="repeat-outline" size={18} color={localIsReposted ? "#00BA7C" : theme.subText} />
               <Text style={[styles.count, { color: localIsReposted ? "#00BA7C" : theme.subText }]}>{localRepostCount}</Text>
@@ -290,12 +336,14 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
         <TouchableWithoutFeedback onPress={() => setMenuVisible(false)}>
             <View style={styles.modalOverlay}>
                 <View style={[styles.menuContainer, { backgroundColor: theme.card }]}>
-                    {isOwner ? (
+                    {isOwner || (post.isRepost && post.repostedByUid === currentUser?.uid) ? (
                         <>
-                            <TouchableOpacity style={styles.menuItem} onPress={handlePin}>
-                                <Ionicons name="pricetag-outline" size={20} color={theme.text} />
-                                <Text style={[styles.menuText, { color: theme.text }]}>{isPinned ? "Unpin" : "Pin"}</Text>
-                            </TouchableOpacity>
+                            {!post.isRepost && (
+                                <TouchableOpacity style={styles.menuItem} onPress={handlePin}>
+                                    <Ionicons name="pricetag-outline" size={20} color={theme.text} />
+                                    <Text style={[styles.menuText, { color: theme.text }]}>{isPinned ? "Unpin" : "Pin"}</Text>
+                                </TouchableOpacity>
+                            )}
                             <TouchableOpacity style={styles.menuItem} onPress={handleDelete}>
                                 <Ionicons name="trash-outline" size={20} color="#FF6B6B" />
                                 <Text style={[styles.menuText, { color: '#FF6B6B' }]}>Delete</Text>
@@ -318,6 +366,33 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
             </View>
         </TouchableWithoutFeedback>
       </Modal>
+
+      <Modal visible={imageModalVisible} transparent={false} animationType="fade" onRequestClose={() => setImageModalVisible(false)}>
+        <View style={styles.fullScreenMediaContainer}>
+            <TouchableOpacity style={styles.closeMediaBtn} onPress={() => setImageModalVisible(false)}>
+                <Ionicons name="close" size={28} color="white" />
+            </TouchableOpacity>
+            {post.mediaUrl && post.mediaType === 'image' && (
+                <Image source={{ uri: post.mediaUrl }} style={styles.fullScreenMediaItem} contentFit="contain" />
+            )}
+        </View>
+      </Modal>
+
+      <Modal visible={videoModalVisible} transparent={false} animationType="fade" onRequestClose={() => setVideoModalVisible(false)}>
+        <View style={styles.fullScreenMediaContainer}>
+            <TouchableOpacity style={styles.closeMediaBtn} onPress={() => setVideoModalVisible(false)}>
+                <Ionicons name="close" size={28} color="white" />
+            </TouchableOpacity>
+            {post.mediaUrl && post.mediaType === 'video' && (
+                <VideoView
+                    player={player}
+                    style={styles.fullScreenMediaItem}
+                    contentFit="contain"
+                    nativeControls={true} 
+                />
+            )}
+        </View>
+      </Modal>
     </Pressable>
   );
 }
@@ -334,10 +409,30 @@ const styles = StyleSheet.create({
   imageMedia: { height: SCREEN_HEIGHT * 0.40 },
   videoMedia: { height: SCREEN_HEIGHT * 0.50 },
   actions: { flexDirection: 'row', justifyContent: 'space-between', paddingRight: 10 },
-  actionBtn: { flexDirection: 'row', alignItems: 'center', minWidth: 40, paddingVertical: 5 }, // Added slight padding for touch target
+  actionBtn: { flexDirection: 'row', alignItems: 'center', minWidth: 40, paddingVertical: 5 }, 
   count: { fontSize: 12, marginLeft: 4 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
   menuContainer: { width: 250, borderRadius: 12, padding: 10, elevation: 5 },
   menuItem: { flexDirection: 'row', alignItems: 'center', padding: 12 },
   menuText: { fontSize: 16, marginLeft: 12, fontWeight: '500' },
+  
+  fullScreenMediaContainer: {
+      flex: 1,
+      backgroundColor: '#000000',
+      justifyContent: 'center',
+      alignItems: 'center',
+  },
+  closeMediaBtn: {
+      position: 'absolute',
+      top: Platform.OS === 'ios' ? 50 : 20,
+      left: 20,
+      zIndex: 100,
+      padding: 8,
+      backgroundColor: 'rgba(0,0,0,0.6)',
+      borderRadius: 20,
+  },
+  fullScreenMediaItem: {
+      width: '100%',
+      height: '100%',
+  }
 });

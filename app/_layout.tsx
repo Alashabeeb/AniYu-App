@@ -50,6 +50,17 @@ function RootLayoutNav() {
           <Stack.Screen name="chapter-read" options={{ headerShown: false }} />
           <Stack.Screen name="settings" options={{ presentation: 'modal' }} />
           <Stack.Screen name="privacy-policy" options={{ headerShown: false }} />
+          
+          {/* ✅ SURGICAL UPDATE: Added all Social/Feed screens to prevent Header Flashing */}
+          <Stack.Screen name="post-details" options={{ headerShown: false }} />
+          <Stack.Screen name="feed-profile" options={{ headerShown: false }} />
+          <Stack.Screen name="create-post" options={{ headerShown: false }} />
+          <Stack.Screen name="search-users" options={{ headerShown: false }} />
+          
+          {/* ✅ Let's also add the support/notification screens just in case you visit them */}
+          <Stack.Screen name="notifications" options={{ headerShown: false }} />
+          <Stack.Screen name="live-chat" options={{ headerShown: false }} />
+          <Stack.Screen name="help-support" options={{ headerShown: false }} />
         </Stack>
       </ToastProvider>
     </ThemeProvider>
