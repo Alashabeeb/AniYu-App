@@ -32,7 +32,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import PostCard from '../../components/PostCard';
-import { auth, db } from '../../config/firebaseConfig';
+import { db } from '../../config/firebaseConfig';
+import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -41,7 +42,7 @@ const FEED_CACHE_KEY = 'aniyu_feed_cache_v2';
 export default function FeedScreen() {
   const router = useRouter();
   const { theme } = useTheme();
-  const currentUser = auth.currentUser;
+  const { user: currentUser } = useAuth();
 
   const [posts, setPosts] = useState<any[]>([]);
   const [userInterests, setUserInterests] = useState<string[]>([]);
@@ -63,7 +64,6 @@ export default function FeedScreen() {
   const [playingPostId, setPlayingPostId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('All'); 
 
-  // ✅ NEW: Generates a unique "Shuffle Token" every time the app fully restarts
   const sessionShuffleSeed = useRef(Math.random().toString(36).substring(7)).current;
 
   const isMountedRef = useRef(true);
@@ -113,30 +113,23 @@ export default function FeedScreen() {
       loadUserPreferences();
   }, [currentUser]);
 
-  // ALGORITHM: TikTok Decay + Factorial Permutation Jitter + Session Shuffle
   const calculatePostScore = (post: any, interests: string[], userId: string) => {
       let score = 0;
       
-      // 1. The Personalization Boost
       if (post.tags && Array.isArray(post.tags) && interests.length > 0) {
           const matches = post.tags.filter((tag: string) => interests.includes(tag));
           score += (matches.length * 50); 
       }
       
-      // 2. The Engagement Weights
       score += (post.likeCount || 0) * 2;
       score += (post.commentCount || 0) * 3;
       score += (post.repostCount || 0) * 5;
       
-      // 3. TikTok Mode: High-Velocity Time Decay (-5.0 points per hour)
       if (post.createdAt?.seconds) {
           const hoursOld = (Date.now() / 1000 - post.createdAt.seconds) / 3600;
           score -= (hoursOld * 5.0); 
       }
 
-      // 4. ✨ The Factorial Permutation Jitter (Now with Session Shuffle!)
-      // By adding the sessionShuffleSeed, the feed stays perfectly stable while they scroll,
-      // but completely scrambles into a new unique order every time they hard-close and reopen the app!
       const seedString = userId + post.id + sessionShuffleSeed;
       let hash = 0;
       for (let i = 0; i < Math.min(seedString.length, 20); i++) {
@@ -209,7 +202,6 @@ export default function FeedScreen() {
               .filter(p => !blockedUsers.includes(p.userId))
               .map(p => ({ ...p, algoScore: calculatePostScore(p, userInterests, currentUserId) }));
 
-          // TRUE MIRROR INTERCEPTOR: Overwrites stale repost data with live master post numbers!
           const reposts = fetchedChunk.filter(p => p.isRepost && p.originalPostId);
           if (reposts.length > 0) {
               const originalIds = [...new Set(reposts.map(p => p.originalPostId))].slice(0, 10);
@@ -241,7 +233,6 @@ export default function FeedScreen() {
               }
           }
 
-          // Sort by the newly jittered algorithmic score
           fetchedChunk.sort((a, b) => b.algoScore - a.algoScore);
 
           if (isRefresh) {
@@ -301,7 +292,7 @@ export default function FeedScreen() {
       }
   }).current;
 
-  const renderUserItem = ({ item }: any) => (
+  const renderUserItem = ({ item }: { item: any }) => (
       <TouchableOpacity 
           style={[styles.userCard, { backgroundColor: theme.card }]}
           onPress={() => router.push({ pathname: '/feed-profile', params: { userId: item.id } })}
@@ -337,7 +328,10 @@ export default function FeedScreen() {
         {!showSearch ? (
             <View style={styles.headerTop}>
                 <TouchableOpacity onPress={() => router.push('/feed-profile')}>
-                    <Image source={{ uri: currentUser?.photoURL || 'https://api.dicebear.com/7.x/avataaars/svg?seed=Felix' }} style={styles.headerAvatar} />
+                    <Image 
+                        source={{ uri: (currentUser as any)?.avatar || currentUser?.photoURL || 'https://api.dicebear.com/7.x/avataaars/svg?seed=Felix' }} 
+                        style={styles.headerAvatar} 
+                    />
                 </TouchableOpacity>
                 <Text style={[styles.headerTitle, { color: theme.text }]}>Community</Text>
                 <TouchableOpacity onPress={() => setShowSearch(true)} style={{ padding: 5 }}>
@@ -442,8 +436,8 @@ export default function FeedScreen() {
                     ) : null
                 }
                 
-                renderItem={({ item }) => (
-                    <PostCard post={item} isVisible={playingPostId === item.id} />
+                renderItem={({ item }: { item: any }) => (
+                    <PostCard post={item as any} isVisible={playingPostId === item.id} />
                 )}
             />
         )}

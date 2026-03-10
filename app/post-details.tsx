@@ -41,7 +41,6 @@ const REPORT_REASONS = [
 const viewedSessionIds = new Set<string>();
 const viewedCommentSessionIds = new Set<string>();
 
-// ✅ NEW: Added the formatCount helper to format 10k, 1.1M, etc.
 const formatCount = (count: number): string => {
     if (!count) return "0";
     if (count < 1000) return count.toString();
@@ -61,6 +60,9 @@ export default function PostDetailsScreen() {
   const [comments, setComments] = useState<any[]>([]);
   const [newComment, setNewComment] = useState('');
   const [sending, setSending] = useState(false);
+
+  const [loading, setLoading] = useState(true);
+  const [postFound, setPostFound] = useState(true);
 
   const [menuVisible, setMenuVisible] = useState(false);
   const [reportModalVisible, setReportModalVisible] = useState(false);
@@ -97,14 +99,29 @@ export default function PostDetailsScreen() {
   );
 
   const isOwner = post?.userId === user?.uid;
+  const authorId = post?.isRepost && post?.originalUserId ? post.originalUserId : post?.userId;
+  const isOriginalAuthor = authorId === user?.uid;
+  const showMenu = isOwner || !isOriginalAuthor;
 
   useEffect(() => {
-    if (!postId) return;
+    if (!postId) {
+        setLoading(false);
+        setPostFound(false);
+        return;
+    }
     
     const postUnsub = onSnapshot(doc(db, 'posts', postId as string), (docSnapshot) => {
       if (docSnapshot.exists()) {
           setPost({ id: docSnapshot.id, ...docSnapshot.data() });
+          setPostFound(true);
+      } else {
+          setPostFound(false);
       }
+      setLoading(false);
+    }, (error) => {
+        console.error("Error fetching post:", error);
+        setPostFound(false);
+        setLoading(false);
     });
 
     const q = query(
@@ -112,8 +129,11 @@ export default function PostDetailsScreen() {
         where('parentId', '==', postId), 
         orderBy('createdAt', 'desc')
     );
+    
     const commentsUnsub = onSnapshot(q, (snapshot) => {
       setComments(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (error) => {
+        console.error("Error fetching comments:", error);
     });
 
     const incrementView = async () => {
@@ -243,15 +263,16 @@ export default function PostDetailsScreen() {
                       await deleteDoc(doc(db, "posts", postId as string));
                   }
                   router.back();
-              } catch (error) {
-                  showAlert('error', 'Delete Failed', 'Could not delete this post.');
+              } catch (error: any) {
+                  console.error("Delete Error:", error);
+                  showAlert('error', 'Delete Failed', error.message || 'Could not delete this post.');
               }
           }}
       ]);
   };
 
   const handleBlockUser = async () => {
-      if (!user || !post) return;
+      if (!user || !post || isOwner || isOriginalAuthor) return;
       setMenuVisible(false);
       Alert.alert("Block User", `Are you sure you want to block @${post.username}?`, [
           { text: "Cancel", style: "cancel" },
@@ -261,7 +282,7 @@ export default function PostDetailsScreen() {
               onPress: async () => {
                   try {
                       await updateDoc(doc(db, 'users', user.uid), {
-                          blockedUsers: arrayUnion(post.userId)
+                          blockedUsers: arrayUnion(authorId)
                       });
                       showAlert('success', 'User Blocked', `You have blocked @${post.username}.`);
                       router.back();
@@ -358,7 +379,32 @@ export default function PostDetailsScreen() {
     finally { setSending(false); }
   };
 
-  if (!post) return <View style={[styles.container, { backgroundColor: theme.background }]} />;
+  if (loading) {
+      return (
+          <SafeAreaView style={[styles.container, { backgroundColor: theme.background, justifyContent: 'center', alignItems: 'center' }]}>
+              <ActivityIndicator size="large" color={theme.tint} />
+          </SafeAreaView>
+      );
+  }
+
+  if (!postFound || !post) {
+      return (
+          <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
+              <Stack.Screen options={{ headerShown: false }} />
+              <View style={[styles.header, { borderBottomColor: theme.border }]}>
+                  <TouchableOpacity onPress={() => router.back()} style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Ionicons name="arrow-back" size={24} color={theme.text} />
+                      <Text style={[styles.headerTitle, { color: theme.text }]}>Back</Text>
+                  </TouchableOpacity>
+              </View>
+              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+                  <Ionicons name="document-text-outline" size={64} color={theme.subText} style={{ marginBottom: 15 }} />
+                  <Text style={{ color: theme.text, fontSize: 18, fontWeight: 'bold' }}>Post not found</Text>
+                  <Text style={{ color: theme.subText, marginTop: 10, textAlign: 'center' }}>This post may have been deleted by the author.</Text>
+              </View>
+          </SafeAreaView>
+      );
+  }
 
   const formatTimeAgo = (timestamp: any) => {
     if (!timestamp?.seconds) return "now";
@@ -388,7 +434,6 @@ export default function PostDetailsScreen() {
                 <Text style={{ color: theme.text, marginTop: 2, marginBottom: 8 }}>{item.text}</Text>
                 
                 <View style={styles.commentActions}>
-                    {/* ✅ UPDATED: Added formatCount to all comment stats */}
                     <TouchableOpacity style={styles.actionButton} onPress={() => toggleAction(item.id, 'likes', item.likes || [])}>
                         <Ionicons name={isLiked ? "heart" : "heart-outline"} size={16} color={isLiked ? "#FF6B6B" : theme.subText} />
                         <Text style={[styles.actionText, { color: theme.subText }]}>{formatCount(item.likeCount || item.likes?.length || 0)}</Text>
@@ -426,9 +471,11 @@ export default function PostDetailsScreen() {
             </TouchableOpacity>
             <Text style={[styles.headerTitle, { color: theme.text }]}>Post</Text>
         </View>
-        <TouchableOpacity onPress={() => setMenuVisible(true)}>
-             <Ionicons name="ellipsis-horizontal" size={24} color={theme.text} />
-        </TouchableOpacity>
+        {showMenu && (
+            <TouchableOpacity onPress={() => setMenuVisible(true)}>
+                 <Ionicons name="ellipsis-horizontal" size={24} color={theme.text} />
+            </TouchableOpacity>
+        )}
       </View>
 
       <KeyboardAvoidingView 
@@ -475,7 +522,6 @@ export default function PostDetailsScreen() {
                   </Text>
                   
                   <View style={[styles.statsRow, { borderTopColor: theme.border, borderBottomColor: theme.border }]}>
-                      {/* ✅ UPDATED: Added formatCount to the main post stats text */}
                       <Text style={{ color: theme.subText }}><Text style={{ fontWeight: 'bold', color: theme.text }}>{formatCount(post.likeCount || post.likes?.length || 0)}</Text> Likes</Text>
                       <Text style={{ color: theme.subText, marginLeft: 15 }}><Text style={{ fontWeight: 'bold', color: theme.text }}>{formatCount(post.repostCount || post.reposts?.length || 0)}</Text> Reposts</Text>
                       <Text style={{ color: theme.subText, marginLeft: 15 }}><Text style={{ fontWeight: 'bold', color: theme.text }}>{formatCount(post.commentCount || 0)}</Text> Comments</Text>

@@ -30,7 +30,8 @@ import {
     Text,
     TouchableOpacity,
     TouchableWithoutFeedback,
-    View
+    View,
+    ViewToken
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import PostCard from '../components/PostCard';
@@ -61,12 +62,10 @@ export default function FeedProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [userData, setUserData] = useState<any>(null);
   
-  // ✅ DATA STATE
   const [myPosts, setMyPosts] = useState<any[]>([]);
   const [repostedPosts, setRepostedPosts] = useState<any[]>([]);
   const [likedPosts, setLikedPosts] = useState<any[]>([]);
 
-  // ✅ PAGINATION STATE (Track last visible doc for each tab)
   const [lastPost, setLastPost] = useState<DocumentSnapshot | null>(null);
   const [lastRepost, setLastRepost] = useState<DocumentSnapshot | null>(null);
   const [lastLike, setLastLike] = useState<DocumentSnapshot | null>(null);
@@ -78,17 +77,25 @@ export default function FeedProfileScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
 
   const [activeTab, setActiveTab] = useState('Posts'); 
-  const flatListRef = useRef<FlatList>(null);
   const [isFollowing, setIsFollowing] = useState(false); 
 
   const [menuVisible, setMenuVisible] = useState(false);
   const [reportModalVisible, setReportModalVisible] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
 
+  const [playingPostId, setPlayingPostId] = useState<string | null>(null);
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
+  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
+      if (viewableItems.length > 0) {
+          setPlayingPostId(viewableItems[0].item.id);
+      } else {
+          setPlayingPostId(null);
+      }
+  }).current;
+
   useEffect(() => {
     if (!targetUserId) return;
 
-    // 1. Get User Data (Keep Realtime for Follow button status)
     const userRef = doc(db, "users", targetUserId);
     const unsubUser = onSnapshot(userRef, async (docSnap) => {
         if (docSnap.exists()) {
@@ -115,15 +122,12 @@ export default function FeedProfileScreen() {
         }
     });
 
-    // ✅ LOAD INITIAL DATA (Limited to 15)
     loadPosts(true);
     loadReposts(true);
     loadLikes(true);
 
     return () => { unsubUser(); };
   }, [targetUserId]);
-
-  // --- ⬇️ OPTIMIZED FETCH FUNCTIONS ⬇️ ---
 
   const loadPosts = async (initial = false) => {
       if (!initial && (loadingMore || !hasMorePosts)) return;
@@ -147,7 +151,6 @@ export default function FeedProfileScreen() {
           if (initial) {
               setMyPosts(newPosts);
           } else {
-              // ✅ Deduplicate state to prevent key errors
               setMyPosts(prev => {
                   const existingIds = new Set(prev.map(p => p.id));
                   const strictlyNew = newPosts.filter(p => !existingIds.has(p.id));
@@ -184,7 +187,6 @@ export default function FeedProfileScreen() {
           if (initial) {
               setRepostedPosts(newPosts);
           } else {
-              // ✅ Deduplicate state
               setRepostedPosts(prev => {
                   const existingIds = new Set(prev.map(p => p.id));
                   const strictlyNew = newPosts.filter(p => !existingIds.has(p.id));
@@ -221,7 +223,6 @@ export default function FeedProfileScreen() {
           if (initial) {
               setLikedPosts(newPosts);
           } else {
-              // ✅ Deduplicate state
               setLikedPosts(prev => {
                   const existingIds = new Set(prev.map(p => p.id));
                   const strictlyNew = newPosts.filter(p => !existingIds.has(p.id));
@@ -278,9 +279,7 @@ export default function FeedProfileScreen() {
                       });
                       Alert.alert("Blocked", "User blocked successfully.");
                       router.back(); 
-                  } catch (e) {
-                      Alert.alert("Error", "Could not block user.");
-                  }
+                  } catch (e) { Alert.alert("Error", "Could not block user."); }
               }
           }
       ]);
@@ -296,30 +295,24 @@ export default function FeedProfileScreen() {
     } catch { Alert.alert("Error", "Could not submit."); } finally { setReportLoading(false); }
   };
 
-  const handleTabPress = (tab: string, index: number) => {
-      setActiveTab(tab);
-      flatListRef.current?.scrollToOffset({ offset: index * SCREEN_WIDTH, animated: true });
-  };
-
-  const handleMomentumScrollEnd = (event: any) => {
-      const offsetX = event.nativeEvent.contentOffset.x;
-      const index = Math.round(offsetX / SCREEN_WIDTH);
-      if (index === 0) setActiveTab('Posts');
-      else if (index === 1) setActiveTab('Reposts');
-      else if (index === 2) setActiveTab('Likes');
-  };
-
-  // ✅ UPDATED LIST RENDERER WITH PAGINATION AND UNIQUE KEYS
-  const renderList = (data: any[], emptyMsg: string, loadMoreFunc: () => void) => (
+  const renderList = (data: any[], emptyMsg: string, loadMoreFunc: () => void, tabName: string) => (
       <FlatList
           data={data}
-          // Fix 1: Combine ID with Index to guarantee 100% unique keys
           keyExtractor={(item, index) => item.id ? `${item.id}-${index}` : String(index)}
           contentContainerStyle={{ paddingBottom: 50, width: SCREEN_WIDTH }}
           showsVerticalScrollIndicator={false}
-          renderItem={({ item }) => <PostCard post={item} />}
           
-          // Pagination Props
+          onViewableItemsChanged={onViewableItemsChanged}
+          viewabilityConfig={viewabilityConfig}
+          
+          renderItem={({ item }: { item: any }) => (
+              <PostCard 
+                  post={item as any} 
+                  isVisible={playingPostId === item.id && activeTab === tabName} 
+                  isProfilePinnedView={tabName === 'Posts'}
+              />
+          )}
+          
           onEndReached={loadMoreFunc}
           onEndReachedThreshold={0.5}
           ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color={theme.tint} style={{marginVertical: 10}} /> : null}
@@ -342,7 +335,6 @@ export default function FeedProfileScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
       <Stack.Screen options={{ headerShown: false }} />
       
-      {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
             <Ionicons name="arrow-back" size={24} color="white" />
@@ -385,6 +377,10 @@ export default function FeedProfileScreen() {
           <View style={styles.nameSection}>
               <Text style={[styles.displayName, { color: theme.text }]}>{userData?.displayName || "Anonymous"}</Text>
               <Text style={[styles.username, { color: theme.subText }]}>@{userData?.username || "username"}</Text>
+              
+              {userData?.bio ? (
+                  <Text style={[styles.bio, { color: theme.text }]}>{userData.bio}</Text>
+              ) : null}
           </View>
 
           <View style={styles.statsRow}>
@@ -397,33 +393,23 @@ export default function FeedProfileScreen() {
           </View>
 
           <View style={[styles.tabRow, { borderBottomColor: theme.border }]}>
-              <TouchableOpacity onPress={() => handleTabPress('Posts', 0)} style={[styles.tab, activeTab === 'Posts' && { borderBottomColor: theme.tint, borderBottomWidth: 3 }]}>
+              <TouchableOpacity onPress={() => setActiveTab('Posts')} style={[styles.tab, activeTab === 'Posts' && { borderBottomColor: theme.tint, borderBottomWidth: 3 }]}>
                   <Text style={[styles.tabText, { color: activeTab === 'Posts' ? theme.text : theme.subText }]}>Posts</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => handleTabPress('Reposts', 1)} style={[styles.tab, activeTab === 'Reposts' && { borderBottomColor: theme.tint, borderBottomWidth: 3 }]}>
+              <TouchableOpacity onPress={() => setActiveTab('Reposts')} style={[styles.tab, activeTab === 'Reposts' && { borderBottomColor: theme.tint, borderBottomWidth: 3 }]}>
                   <Text style={[styles.tabText, { color: activeTab === 'Reposts' ? theme.text : theme.subText }]}>Reposts</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => handleTabPress('Likes', 2)} style={[styles.tab, activeTab === 'Likes' && { borderBottomColor: theme.tint, borderBottomWidth: 3 }]}>
+              <TouchableOpacity onPress={() => setActiveTab('Likes')} style={[styles.tab, activeTab === 'Likes' && { borderBottomColor: theme.tint, borderBottomWidth: 3 }]}>
                   <Text style={[styles.tabText, { color: activeTab === 'Likes' ? theme.text : theme.subText }]}>Likes</Text>
               </TouchableOpacity>
           </View>
       </View>
 
-      <FlatList
-        ref={flatListRef}
-        data={[1, 2, 3]} 
-        keyExtractor={item => item.toString()}
-        horizontal
-        pagingEnabled
-        showsHorizontalScrollIndicator={false}
-        onMomentumScrollEnd={handleMomentumScrollEnd}
-        renderItem={({ index }) => {
-            if (index === 0) return renderList(sortedMyPosts, "No posts yet.", () => loadPosts(false));
-            if (index === 1) return renderList(repostedPosts, "No reposts yet.", () => loadReposts(false));
-            if (index === 2) return renderList(likedPosts, "No liked posts yet.", () => loadLikes(false));
-            return null;
-        }}
-      />
+      <View style={{ flex: 1 }}>
+          {activeTab === 'Posts' && renderList(sortedMyPosts, "No posts yet.", () => loadPosts(false), 'Posts')}
+          {activeTab === 'Reposts' && renderList(repostedPosts, "No reposts yet.", () => loadReposts(false), 'Reposts')}
+          {activeTab === 'Likes' && renderList(likedPosts, "No liked posts yet.", () => loadLikes(false), 'Likes')}
+      </View>
 
        <Modal visible={menuVisible} transparent animationType="fade">
         <TouchableWithoutFeedback onPress={() => setMenuVisible(false)}>
@@ -483,6 +469,7 @@ const styles = StyleSheet.create({
   nameSection: { paddingHorizontal: 15, marginTop: 5 },
   displayName: { fontSize: 20, fontWeight: 'bold' },
   username: { fontSize: 14 },
+  bio: { marginTop: 8, fontSize: 14, lineHeight: 20 },
   statsRow: { flexDirection: 'row', paddingHorizontal: 15, marginTop: 15, marginBottom: 15 },
   statNum: { fontWeight: 'bold', fontSize: 15 },
   statLabel: { fontWeight: 'normal', fontSize: 14 },

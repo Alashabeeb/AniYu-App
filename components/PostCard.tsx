@@ -11,6 +11,7 @@ import {
     collection,
     deleteDoc,
     doc,
+    getDoc,
     getDocs,
     increment,
     query,
@@ -40,6 +41,7 @@ import { sendSocialNotification } from '../services/notificationService';
 interface PostCardProps {
   post: any;
   isVisible?: boolean; 
+  isProfilePinnedView?: boolean;
 }
 
 const REPORT_REASONS = ["Offensive content", "Abusive behavior", "Spam", "Other"];
@@ -47,19 +49,16 @@ const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 const localViewedSet = new Set<string>();
 
-// ✅ NEW: The Universal Formatting Function for k and M
 const formatCount = (count: number): string => {
     if (!count) return "0";
     if (count < 1000) return count.toString();
     if (count < 1000000) {
-        // Divide by 1000, keep 1 decimal, and remove the decimal if it's .0
         return (count / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
     }
-    // Same logic for Millions
     return (count / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
 };
 
-export default function PostCard({ post, isVisible = true }: PostCardProps) {
+export default function PostCard({ post, isVisible = true, isProfilePinnedView = false }: PostCardProps) {
   const router = useRouter();
   const { theme } = useTheme();
   const currentUser = auth.currentUser;
@@ -77,22 +76,21 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
   const [localIsReposted, setLocalIsReposted] = useState(post.reposts?.includes(currentUser?.uid));
   const [localRepostCount, setLocalRepostCount] = useState<number>(post.repostCount || post.reposts?.length || 0);
 
-  // ✅ FIXED TypeScript error by explicitly declaring <number>
   const [localViewCount, setLocalViewCount] = useState<number>(post.views || 0);
 
   const authorId = post.isRepost && post.originalUserId ? post.originalUserId : post.userId;
-  
   const isOwner = post.userId === currentUser?.uid;
   const isPinned = post.pinned === true;
+  const isOriginalAuthor = authorId === currentUser?.uid;
+  const showMenu = isOwner || !isOriginalAuthor;
 
   useEffect(() => {
       setLocalIsLiked(post.likes?.includes(currentUser?.uid));
       setLocalLikeCount(post.likeCount || post.likes?.length || 0);
       setLocalIsReposted(post.reposts?.includes(currentUser?.uid));
       setLocalRepostCount(post.repostCount || post.reposts?.length || 0);
-      
       setLocalViewCount(post.views || 0);
-  }, [post.id, currentUser?.uid, post.views]);
+  }, [post.id, currentUser?.uid, post.views, post.likeCount, post.repostCount, post.likes, post.reposts]);
 
   const videoSource = post.mediaType === 'video' && post.mediaUrl ? post.mediaUrl : null;
   const player = useVideoPlayer(videoSource, player => { 
@@ -121,18 +119,15 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
     try { if (player && videoSource) player.pause(); } catch(e){}
     const targetPostId = post.isRepost ? post.originalPostId : post.id;
     
-    // ✅ FIXED TypeScript explicitly defining prev as number
     if (!localViewedSet.has(targetPostId)) {
         localViewedSet.add(targetPostId);
         setLocalViewCount((prev: number) => prev + 1);
     }
-
     router.push({ pathname: '/post-details', params: { postId: targetPostId } });
   };
 
   const handleLike = async () => {
     if (!currentUser) return;
-    
     const newIsLiked = !localIsLiked;
     setLocalIsLiked(newIsLiked);
     setLocalLikeCount((prev: number) => prev + (newIsLiked ? 1 : -1));
@@ -151,14 +146,12 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
     } catch (e: any) {
         setLocalIsLiked(!newIsLiked);
         setLocalLikeCount((prev: number) => prev + (!newIsLiked ? 1 : -1));
-        console.error("Like Error:", e);
         Alert.alert("Action Blocked", "Firebase blocked this action. Check your Security Rules!");
     }
   };
 
   const handleRepost = async () => {
     if (!currentUser) return;
-    
     const newIsReposted = !localIsReposted;
     setLocalIsReposted(newIsReposted);
     setLocalRepostCount((prev: number) => prev + (newIsReposted ? 1 : -1));
@@ -216,7 +209,6 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
     } catch (e: any) {
         setLocalIsReposted(!newIsReposted);
         setLocalRepostCount((prev: number) => prev + (!newIsReposted ? 1 : -1));
-        console.error("Repost Error:", e);
         Alert.alert("Action Blocked", "Firebase blocked this action. Check your Security Rules!");
     }
   };
@@ -234,12 +226,32 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
   };
 
   const handlePin = async () => {
+      if (!currentUser) return;
       setMenuVisible(false);
       try {
-          const postRef = doc(db, 'posts', post.id);
-          await updateDoc(postRef, { pinned: !isPinned });
+          const userRef = doc(db, 'users', currentUser.uid);
+          const userSnap = await getDoc(userRef);
+          const oldPinnedPostId = userSnap.data()?.pinnedPostId;
+
+          const batch = writeBatch(db);
+
+          if (!isPinned) {
+              if (oldPinnedPostId && oldPinnedPostId !== post.id) {
+                  batch.update(doc(db, 'posts', oldPinnedPostId), { pinned: false });
+              }
+              batch.update(doc(db, 'posts', post.id), { pinned: true });
+              batch.update(userRef, { pinnedPostId: post.id });
+          } else {
+              batch.update(doc(db, 'posts', post.id), { pinned: false });
+              batch.update(userRef, { pinnedPostId: null });
+          }
+          
+          await batch.commit();
           Alert.alert("Success", isPinned ? "Post Unpinned." : "Post Pinned to Profile.");
-      } catch (e) { Alert.alert("Error", "Could not pin post."); }
+      } catch (e) {
+          console.error(e);
+          Alert.alert("Error", "Could not pin post.");
+      }
   };
 
   const handleDelete = async () => {
@@ -256,15 +268,16 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
                 } else {
                     await deleteDoc(doc(db, "posts", post.id)); 
                 }
-            } catch (error) { 
-                Alert.alert("Error", "Could not delete post."); 
+            } catch (error: any) { 
+                console.error("Delete Error:", error);
+                Alert.alert("Error", error.message || "Could not delete post."); 
             } 
         } }
     ]);
   };
 
   const handleBlockUser = async () => {
-      if (!currentUser || isOwner) return;
+      if (!currentUser || isOwner || isOriginalAuthor) return;
       setMenuVisible(false);
       Alert.alert("Block User", `Are you sure you want to block @${post.username}?`, [
           { text: "Cancel", style: "cancel" },
@@ -307,7 +320,7 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
           </View>
       )}
 
-      {isPinned && !post.isRepost && (
+      {isPinned && !post.isRepost && isProfilePinnedView && (
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, marginLeft: 50 }}>
               <Ionicons name="pricetag" size={12} color={theme.subText} />
               <Text style={{ fontSize: 12, color: theme.subText, marginLeft: 5, fontWeight: 'bold' }}>Pinned</Text>
@@ -325,9 +338,11 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
               <Text style={[styles.name, { color: theme.text }]} numberOfLines={1}>{post.displayName}</Text>
               <Text style={[styles.handle, { color: theme.subText }]} numberOfLines={1}>@{post.username} · {timeAgo}</Text>
             </View>
-            <TouchableOpacity onPress={(e) => { e.stopPropagation(); setMenuVisible(true); }} style={styles.dotsButton}>
-                <Ionicons name="ellipsis-horizontal" size={20} color={theme.subText} />
-            </TouchableOpacity>
+            {showMenu && (
+                <TouchableOpacity onPress={(e) => { e.stopPropagation(); setMenuVisible(true); }} style={styles.dotsButton}>
+                    <Ionicons name="ellipsis-horizontal" size={20} color={theme.subText} />
+                </TouchableOpacity>
+            )}
           </View>
 
           {post.text ? <Text style={[styles.text, { color: theme.text }]}>{post.text}</Text> : null}
@@ -351,7 +366,6 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
           )}
 
           <View style={styles.actions}>
-            {/* ✅ UPDATED: Wrapped the localLikeCount in formatCount() */}
             <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleLike(); }}>
               <Ionicons name={localIsLiked ? "heart" : "heart-outline"} size={18} color={localIsLiked ? "#FF6B6B" : theme.subText} />
               <Text style={[styles.count, { color: localIsLiked ? "#FF6B6B" : theme.subText }]}>
@@ -359,7 +373,6 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
               </Text>
             </TouchableOpacity>
             
-            {/* ✅ UPDATED: Wrapped the commentCount in formatCount() */}
             <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleGoToDetails(); }}>
               <Ionicons name="chatbubble-outline" size={18} color={theme.subText} />
               <Text style={[styles.count, { color: theme.subText }]}>
@@ -367,7 +380,6 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
               </Text>
             </TouchableOpacity>
             
-            {/* ✅ UPDATED: Wrapped the localRepostCount in formatCount() */}
             <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleRepost(); }}>
               <Ionicons name="repeat-outline" size={18} color={localIsReposted ? "#00BA7C" : theme.subText} />
               <Text style={[styles.count, { color: localIsReposted ? "#00BA7C" : theme.subText }]}>
@@ -375,7 +387,6 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
               </Text>
             </TouchableOpacity>
             
-            {/* ✅ UPDATED: Wrapped the localViewCount in formatCount() */}
             <View style={styles.actionBtn}>
                 <Ionicons name="stats-chart" size={16} color={theme.subText} />
                 <Text style={[styles.count, { color: theme.subText }]}>
