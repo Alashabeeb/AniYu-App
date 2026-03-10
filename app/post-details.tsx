@@ -1,17 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import * as Linking from 'expo-linking'; // ✅ Added Deep Linking
+import * as Linking from 'expo-linking';
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import {
     addDoc, arrayRemove, arrayUnion,
     collection, deleteDoc, doc,
-    getDoc,
+    getDoc, getDocs,
     increment,
     onSnapshot, orderBy,
     query, serverTimestamp, updateDoc,
-    where,
-    writeBatch
+    where, writeBatch
 } from 'firebase/firestore';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -41,6 +40,16 @@ const REPORT_REASONS = [
 
 const viewedSessionIds = new Set<string>();
 const viewedCommentSessionIds = new Set<string>();
+
+// ✅ NEW: Added the formatCount helper to format 10k, 1.1M, etc.
+const formatCount = (count: number): string => {
+    if (!count) return "0";
+    if (count < 1000) return count.toString();
+    if (count < 1000000) {
+        return (count / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+    }
+    return (count / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+};
 
 export default function PostDetailsScreen() {
   const router = useRouter();
@@ -177,6 +186,23 @@ export default function PostDetailsScreen() {
                       sendSocialNotification(targetPost.userId, 'like', { uid: user.uid, name: user.displayName || 'User', avatar: user.photoURL || '' }, '', id).catch(()=>console.log("Silent notif error"));
                   }
               }
+          } else {
+              if (field === 'reposts') {
+                  const q = query(
+                      collection(db, 'posts'),
+                      where('isRepost', '==', true),
+                      where('originalPostId', '==', id),
+                      where('repostedByUid', '==', user.uid)
+                  );
+                  const querySnapshot = await getDocs(q);
+                  if (!querySnapshot.empty) {
+                      const batch = writeBatch(db);
+                      querySnapshot.forEach((docSnapshot) => {
+                          batch.delete(doc(db, 'posts', docSnapshot.id));
+                      });
+                      await batch.commit();
+                  }
+              }
           }
       } catch (error: any) {
           console.error("Action error:", error);
@@ -187,11 +213,9 @@ export default function PostDetailsScreen() {
       }
   };
 
-  // ✅ UPDATED: Native Deep Linking for Share
   const handleShare = async (item: any) => {
       try {
           const itemUrl = Linking.createURL('/post-details', { queryParams: { postId: item.id } });
-          
           await Share.share({
               message: `Check out what ${item.displayName || item.username} said on AniYu!\n\n${item.text ? `"${item.text}"\n\n` : ''}${itemUrl}`,
               url: itemUrl 
@@ -362,27 +386,30 @@ export default function PostDetailsScreen() {
                     <Text style={[styles.commentHandle, { color: theme.subText }]} numberOfLines={1}>@{item.username} · {timeAgo}</Text>
                 </View>
                 <Text style={{ color: theme.text, marginTop: 2, marginBottom: 8 }}>{item.text}</Text>
+                
                 <View style={styles.commentActions}>
+                    {/* ✅ UPDATED: Added formatCount to all comment stats */}
                     <TouchableOpacity style={styles.actionButton} onPress={() => toggleAction(item.id, 'likes', item.likes || [])}>
                         <Ionicons name={isLiked ? "heart" : "heart-outline"} size={16} color={isLiked ? "#FF6B6B" : theme.subText} />
-                        <Text style={[styles.actionText, { color: theme.subText }]}>{item.likeCount || item.likes?.length || 0}</Text>
+                        <Text style={[styles.actionText, { color: theme.subText }]}>{formatCount(item.likeCount || item.likes?.length || 0)}</Text>
                     </TouchableOpacity>
                     <TouchableOpacity style={styles.actionButton} onPress={() => goToDetails(item.id)}>
                         <Ionicons name="chatbubble-outline" size={16} color={theme.subText} />
-                        <Text style={[styles.actionText, { color: theme.subText }]}>{item.commentCount || 0}</Text>
+                        <Text style={[styles.actionText, { color: theme.subText }]}>{formatCount(item.commentCount || 0)}</Text>
                     </TouchableOpacity>
                     <TouchableOpacity style={styles.actionButton} onPress={() => toggleAction(item.id, 'reposts', item.reposts || [])}>
                         <Ionicons name="repeat-outline" size={16} color={isReposted ? "#00BA7C" : theme.subText} />
-                         <Text style={[styles.actionText, { color: theme.subText }]}>{item.repostCount || item.reposts?.length || 0}</Text>
+                         <Text style={[styles.actionText, { color: theme.subText }]}>{formatCount(item.repostCount || item.reposts?.length || 0)}</Text>
                     </TouchableOpacity>
                     <View style={styles.actionButton}>
                         <Ionicons name="stats-chart" size={16} color={theme.subText} />
-                        <Text style={[styles.actionText, { color: theme.subText }]}>{item.views || 0}</Text>
+                        <Text style={[styles.actionText, { color: theme.subText }]}>{formatCount(item.views || 0)}</Text>
                     </View>
                     <TouchableOpacity style={styles.actionButton} onPress={() => handleShare(item)}>
                         <Ionicons name="share-social-outline" size={16} color={theme.subText} />
                     </TouchableOpacity>
                 </View>
+
             </View>
         </TouchableOpacity>
       );
@@ -448,10 +475,11 @@ export default function PostDetailsScreen() {
                   </Text>
                   
                   <View style={[styles.statsRow, { borderTopColor: theme.border, borderBottomColor: theme.border }]}>
-                      <Text style={{ color: theme.subText }}><Text style={{ fontWeight: 'bold', color: theme.text }}>{post.likeCount || post.likes?.length || 0}</Text> Likes</Text>
-                      <Text style={{ color: theme.subText, marginLeft: 15 }}><Text style={{ fontWeight: 'bold', color: theme.text }}>{post.repostCount || post.reposts?.length || 0}</Text> Reposts</Text>
-                      <Text style={{ color: theme.subText, marginLeft: 15 }}><Text style={{ fontWeight: 'bold', color: theme.text }}>{post.commentCount || 0}</Text> Comments</Text>
-                      <Text style={{ color: theme.subText, marginLeft: 15 }}><Text style={{ fontWeight: 'bold', color: theme.text }}>{post.views || 0}</Text> Views</Text>
+                      {/* ✅ UPDATED: Added formatCount to the main post stats text */}
+                      <Text style={{ color: theme.subText }}><Text style={{ fontWeight: 'bold', color: theme.text }}>{formatCount(post.likeCount || post.likes?.length || 0)}</Text> Likes</Text>
+                      <Text style={{ color: theme.subText, marginLeft: 15 }}><Text style={{ fontWeight: 'bold', color: theme.text }}>{formatCount(post.repostCount || post.reposts?.length || 0)}</Text> Reposts</Text>
+                      <Text style={{ color: theme.subText, marginLeft: 15 }}><Text style={{ fontWeight: 'bold', color: theme.text }}>{formatCount(post.commentCount || 0)}</Text> Comments</Text>
+                      <Text style={{ color: theme.subText, marginLeft: 15 }}><Text style={{ fontWeight: 'bold', color: theme.text }}>{formatCount(post.views || 0)}</Text> Views</Text>
                   </View>
 
                   <View style={styles.mainActions}>

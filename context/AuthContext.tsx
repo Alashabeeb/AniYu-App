@@ -32,7 +32,6 @@ async function registerForPushNotificationsAsync() {
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
     
-    // If no permission, ask the user!
     if (existingStatus !== 'granted') {
       const { status } = await Notifications.requestPermissionsAsync();
       finalStatus = status;
@@ -44,13 +43,11 @@ async function registerForPushNotificationsAsync() {
     }
 
     try {
-      // Required for EAS builds (Production)
       const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
       
       if (projectId) {
           token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
       } else {
-          // Fallback for local Expo Go testing
           token = (await Notifications.getExpoPushTokenAsync()).data;
       }
     } catch (e) {
@@ -70,55 +67,59 @@ export const AuthProvider = ({ children }: any) => {
   useEffect(() => {
     let userUnsub: () => void; 
 
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    // Notice this is NO LONGER an async function blocking the main thread
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       if (userUnsub) userUnsub();
 
       if (currentUser) {
+        // ✅ BUG FIX 1: Set the user instantly so the router doesn't flash the Login screen!
+        setUser(currentUser as any);
+        
         const userRef = doc(db, 'users', currentUser.uid);
         
-        try {
-            // 1. Fetch IP Address
-            let ipAddress = "Unknown IP";
+        // ✅ BUG FIX 2: Run the heavy IP/Push Token fetching in the background asynchronously
+        (async () => {
             try {
-                const ipResponse = await fetch('https://api.ipify.org?format=json');
-                const ipData = await ipResponse.json();
-                ipAddress = ipData.ip;
-            } catch (e) {
-                console.warn("Could not fetch IP Address");
+                let ipAddress = "Unknown IP";
+                try {
+                    const ipResponse = await fetch('https://api.ipify.org?format=json');
+                    const ipData = await ipResponse.json();
+                    ipAddress = ipData.ip;
+                } catch (e) {
+                    console.warn("Could not fetch IP Address");
+                }
+
+                const deviceModel = Device.modelName || Device.deviceName || 'Unknown Device';
+                const osVersion = `${Device.osName || Platform.OS} ${Device.osVersion || ''}`.trim();
+                const appVersion = Application.nativeApplicationVersion || '1.0.0';
+
+                const pushToken = await registerForPushNotificationsAsync();
+
+                const updateData: any = {
+                    isOnline: true,
+                    lastActiveAt: serverTimestamp(),
+                    deviceModel: deviceModel,
+                    osVersion: osVersion,
+                    appVersion: appVersion,
+                    ipAddress: ipAddress
+                };
+
+                if (pushToken) {
+                    updateData.expoPushToken = pushToken;
+                }
+
+                await updateDoc(userRef, updateData);
+            } catch (error) {
+                console.error("Failed to update user device tracking:", error);
             }
+        })();
 
-            // 2. Get Device & App Info
-            const deviceModel = Device.modelName || Device.deviceName || 'Unknown Device';
-            const osVersion = `${Device.osName || Platform.OS} ${Device.osVersion || ''}`.trim();
-            const appVersion = Application.nativeApplicationVersion || '1.0.0';
-
-            // 3. 🚀 GET PUSH NOTIFICATION TOKEN
-            const pushToken = await registerForPushNotificationsAsync();
-
-            // 4. Push fresh tracking data AND Push Token to Firestore
-            const updateData: any = {
-                isOnline: true,
-                lastActiveAt: serverTimestamp(),
-                deviceModel: deviceModel,
-                osVersion: osVersion,
-                appVersion: appVersion,
-                ipAddress: ipAddress
-            };
-
-            // Only update the token if we successfully generated one
-            if (pushToken) {
-                updateData.expoPushToken = pushToken;
-            }
-
-            await updateDoc(userRef, updateData);
-        } catch (error) {
-            console.error("Failed to update user device tracking:", error);
-        }
-
-        // REAL-TIME LISTENER FOR BANS & UPDATES
+        // REAL-TIME LISTENER FOR BANS & LIVE PROFILE UPDATES
         userUnsub = onSnapshot(userRef, async (docSnap) => {
             if (docSnap.exists()) {
                 const userData = docSnap.data();
+                
+                // Merge Firebase Auth data with Firestore Profile data
                 setUser({ ...currentUser, ...userData } as any);
                 
                 if (userData.isBanned) {
@@ -143,9 +144,11 @@ export const AuthProvider = ({ children }: any) => {
             }
         });
       } else {
+        // User is fully logged out
         setUser(null);
       }
       
+      // ✅ BUG FIX 3: End loading state immediately so Splash Screen can hide smoothly
       setLoading(false);
     });
 
@@ -157,7 +160,8 @@ export const AuthProvider = ({ children }: any) => {
 
   return (
     <AuthContext.Provider value={{ user, loading }}>
-      {!loading && children}
+      {/* ✅ BUG FIX 4: Render children unconditionally so the Splash Screen controller in _layout actually mounts! */}
+      {children}
     </AuthContext.Provider>
   );
 };

@@ -1,4 +1,5 @@
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useRouter, useSegments } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import GlobalGatekeeper from '../components/GlobalGatekeeper';
@@ -8,22 +9,35 @@ import { ThemeProvider } from '../context/ThemeContext';
 import { ToastProvider } from '../context/ToastContext';
 import { useUserHeartbeat } from '../hooks/useUserHeartbeat';
 
+// ✅ 1. Freeze the splash screen while Firebase checks the user's token
+SplashScreen.preventAutoHideAsync();
+
 function RootLayoutNav() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const segments = useSegments(); // Tracks the current folder path (e.g., '(auth)' or '(tabs)')
 
   useUserHeartbeat();
 
   useEffect(() => {
+    // If Firebase is still checking local storage, do absolutely nothing.
     if (loading) return;
     
-    // Simple redirect logic without waiting for ads
-    if (!user) {
+    // Check if the user is currently sitting inside the (auth) folder
+    const inAuthGroup = segments[0] === '(auth)';
+
+    if (!user && !inAuthGroup) {
+      // User is logged out, but trying to view the app. Send them to login.
       router.replace('/(auth)/login');
-    } else {
+    } else if (user && inAuthGroup) {
+      // User is logged in, but stuck on the login screen. Send them to tabs.
       router.replace('/(tabs)');
     }
-  }, [user, loading]);
+
+    // ✅ 2. Once the routing decision is made, gracefully hide the Splash Screen
+    SplashScreen.hideAsync();
+
+  }, [user, loading, segments]);
 
   if (loading) {
     return (
@@ -35,12 +49,8 @@ function RootLayoutNav() {
 
   return (
     <ThemeProvider>
-      {/* 1. Wrap with ToastProvider */}
       <ToastProvider>
-        
-        {/* 2. Activate the Listener */}
         <NotificationListener /> 
-        
         <GlobalGatekeeper />
         <Stack>
           <Stack.Screen name="(auth)" options={{ headerShown: false }} />
@@ -51,13 +61,13 @@ function RootLayoutNav() {
           <Stack.Screen name="settings" options={{ presentation: 'modal' }} />
           <Stack.Screen name="privacy-policy" options={{ headerShown: false }} />
           
-          {/* ✅ SURGICAL UPDATE: Added all Social/Feed screens to prevent Header Flashing */}
+          {/* Social / Feed Screens */}
           <Stack.Screen name="post-details" options={{ headerShown: false }} />
           <Stack.Screen name="feed-profile" options={{ headerShown: false }} />
-          <Stack.Screen name="create-post" options={{ headerShown: false }} />
+          <Stack.Screen name="create-post" options={{ presentation: 'modal', title: 'Create Post' }} />
           <Stack.Screen name="search-users" options={{ headerShown: false }} />
           
-          {/* ✅ Let's also add the support/notification screens just in case you visit them */}
+          {/* Support / Notifications */}
           <Stack.Screen name="notifications" options={{ headerShown: false }} />
           <Stack.Screen name="live-chat" options={{ headerShown: false }} />
           <Stack.Screen name="help-support" options={{ headerShown: false }} />

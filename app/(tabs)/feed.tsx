@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router';
 import {
     collection,
     doc,
+    documentId,
     DocumentSnapshot,
     getDoc,
     getDocs,
@@ -19,6 +20,7 @@ import {
     ActivityIndicator,
     Dimensions,
     FlatList,
+    Platform,
     RefreshControl,
     StyleSheet,
     Text,
@@ -34,7 +36,6 @@ import { auth, db } from '../../config/firebaseConfig';
 import { useTheme } from '../../context/ThemeContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
 const FEED_CACHE_KEY = 'aniyu_feed_cache_v2';
 
 export default function FeedScreen() {
@@ -60,29 +61,33 @@ export default function FeedScreen() {
   const [searchingUsers, setSearchingUsers] = useState(false);
 
   const [playingPostId, setPlayingPostId] = useState<string | null>(null);
-
   const [activeTab, setActiveTab] = useState('All'); 
-  const flatListRef = useRef<FlatList>(null); 
+
+  // ✅ NEW: Generates a unique "Shuffle Token" every time the app fully restarts
+  const sessionShuffleSeed = useRef(Math.random().toString(36).substring(7)).current;
+
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    return () => { isMountedRef.current = false; };
+  }, []);
 
   useEffect(() => {
       const loadCache = async () => {
           try {
               const cachedPosts = await AsyncStorage.getItem(FEED_CACHE_KEY);
-              if (cachedPosts) setPosts(JSON.parse(cachedPosts));
+              if (cachedPosts && isMountedRef.current) setPosts(JSON.parse(cachedPosts));
           } catch(e) { console.log("Feed cache error", e); }
       };
       loadCache();
   }, []);
 
-  // ✅ COST SAVER 4: Cached profile fetch instead of live onSnapshot listener
   useEffect(() => {
-      let isMounted = true;
       const loadUserPreferences = async () => {
           if (!currentUser) return;
           try {
               const cacheKey = `prefs_${currentUser.uid}`;
               const cachedPrefs = await AsyncStorage.getItem(cacheKey);
-              if (cachedPrefs && isMounted) {
+              if (cachedPrefs && isMountedRef.current) {
                   const data = JSON.parse(cachedPrefs);
                   setBlockedUsers(data.blockedUsers || []);
                   setUserInterests(data.interests || []);
@@ -90,7 +95,7 @@ export default function FeedScreen() {
               }
 
               const userSnap = await getDoc(doc(db, 'users', currentUser.uid));
-              if (userSnap.exists() && isMounted) {
+              if (userSnap.exists() && isMountedRef.current) {
                   const data = userSnap.data();
                   setBlockedUsers(data?.blockedUsers || []);
                   setUserInterests(data?.interests || data?.favoriteGenres || []);
@@ -106,30 +111,53 @@ export default function FeedScreen() {
           }
       };
       loadUserPreferences();
-      return () => { isMounted = false; };
   }, [currentUser]);
 
-  const calculatePostScore = (post: any, interests: string[]) => {
+  // ALGORITHM: TikTok Decay + Factorial Permutation Jitter + Session Shuffle
+  const calculatePostScore = (post: any, interests: string[], userId: string) => {
       let score = 0;
+      
+      // 1. The Personalization Boost
       if (post.tags && Array.isArray(post.tags) && interests.length > 0) {
           const matches = post.tags.filter((tag: string) => interests.includes(tag));
           score += (matches.length * 50); 
       }
+      
+      // 2. The Engagement Weights
       score += (post.likeCount || 0) * 2;
       score += (post.commentCount || 0) * 3;
       score += (post.repostCount || 0) * 5;
+      
+      // 3. TikTok Mode: High-Velocity Time Decay (-5.0 points per hour)
       if (post.createdAt?.seconds) {
           const hoursOld = (Date.now() / 1000 - post.createdAt.seconds) / 3600;
-          score -= (hoursOld * 1.5); 
+          score -= (hoursOld * 5.0); 
       }
+
+      // 4. ✨ The Factorial Permutation Jitter (Now with Session Shuffle!)
+      // By adding the sessionShuffleSeed, the feed stays perfectly stable while they scroll,
+      // but completely scrambles into a new unique order every time they hard-close and reopen the app!
+      const seedString = userId + post.id + sessionShuffleSeed;
+      let hash = 0;
+      for (let i = 0; i < Math.min(seedString.length, 20); i++) {
+          hash = ((hash << 5) - hash) + seedString.charCodeAt(i);
+      }
+      const personalizedJitter = (Math.abs(hash) % 31) - 15;
+      score += personalizedJitter;
+
       return score;
   };
 
   const fetchFeedChunk = async (isRefresh = false) => {
+      if (!isMountedRef.current) return;
       if (!hasMore && !isRefresh) return;
+      if (loadingMore || refreshing) return;
+
       if (isRefresh) {
           setRefreshing(true);
           setHasMore(true);
+          setGlobalLastVisible(null);
+          setInterestLastVisible(null);
       } else {
           setLoadingMore(true);
       }
@@ -150,12 +178,13 @@ export default function FeedScreen() {
                   intQ = query(collection(db, 'posts'), where('parentId', '==', null), where('tags', 'array-contains-any', safeInterests), orderBy('createdAt', 'desc'), startAfter(interestLastVisible), limit(10));
               }
               fetchPromises.push(getDocs(intQ).catch(e => {
-                  console.warn("Missing Index for personalized feed. Check Firebase console to build it.", e);
+                  console.warn("Missing Index for personalized feed.", e);
                   return { docs: [] }; 
               }));
           }
 
           const results = await Promise.all(fetchPromises);
+          if (!isMountedRef.current) return;
           
           const globalSnap = results[0];
           const interestSnap = results[1];
@@ -174,10 +203,45 @@ export default function FeedScreen() {
               interestSnap.docs.forEach((docSnap: any) => { postMap.set(docSnap.id, { id: docSnap.id, ...docSnap.data() }); });
           }
 
+          const currentUserId = currentUser?.uid || 'guest_user';
+
           let fetchedChunk = Array.from(postMap.values())
               .filter(p => !blockedUsers.includes(p.userId))
-              .map(p => ({ ...p, algoScore: calculatePostScore(p, userInterests) }));
+              .map(p => ({ ...p, algoScore: calculatePostScore(p, userInterests, currentUserId) }));
 
+          // TRUE MIRROR INTERCEPTOR: Overwrites stale repost data with live master post numbers!
+          const reposts = fetchedChunk.filter(p => p.isRepost && p.originalPostId);
+          if (reposts.length > 0) {
+              const originalIds = [...new Set(reposts.map(p => p.originalPostId))].slice(0, 10);
+              if (originalIds.length > 0) {
+                  try {
+                      const origQ = query(collection(db, 'posts'), where(documentId(), 'in', originalIds));
+                      const origSnap = await getDocs(origQ);
+                      const origMap = new Map();
+                      origSnap.docs.forEach(d => origMap.set(d.id, d.data()));
+
+                      fetchedChunk = fetchedChunk.map(p => {
+                          if (p.isRepost && origMap.has(p.originalPostId)) {
+                              const master = origMap.get(p.originalPostId);
+                              return {
+                                  ...p,
+                                  likes: master.likes || [],
+                                  likeCount: master.likeCount || 0,
+                                  reposts: master.reposts || [],
+                                  repostCount: master.repostCount || 0,
+                                  commentCount: master.commentCount || 0,
+                                  views: master.views || 0,
+                                  text: master.text || p.text,
+                                  mediaUrl: master.mediaUrl || p.mediaUrl
+                              };
+                          }
+                          return p;
+                      });
+                  } catch (syncErr) { console.log("Failed to sync master posts", syncErr); }
+              }
+          }
+
+          // Sort by the newly jittered algorithmic score
           fetchedChunk.sort((a, b) => b.algoScore - a.algoScore);
 
           if (isRefresh) {
@@ -194,8 +258,10 @@ export default function FeedScreen() {
       } catch (error) {
           console.log("Error loading feed:", error);
       } finally {
-          setRefreshing(false);
-          setLoadingMore(false);
+          if (isMountedRef.current) {
+              setRefreshing(false);
+              setLoadingMore(false);
+          }
       }
   };
 
@@ -206,44 +272,27 @@ export default function FeedScreen() {
   }, [interestsLoaded]);
 
   useEffect(() => {
-      let isActive = true;
       const runSearch = async () => {
           if (showSearch && searchText.trim().length > 0) {
-              if(isActive) setSearchingUsers(true);
+              if (isMountedRef.current) setSearchingUsers(true);
               try {
                   const lowerText = searchText.toLowerCase();
                   const q = query(collection(db, 'users'), where('username', '>=', lowerText), where('username', '<=', lowerText + '\uf8ff'), limit(20));
                   const snapshot = await getDocs(q);
-                  if (isActive) setUserResults(snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() })));
+                  if (isMountedRef.current) setUserResults(snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() })));
               } catch (error) { console.error(error); } 
-              finally { if (isActive) setSearchingUsers(false); }
+              finally { if (isMountedRef.current) setSearchingUsers(false); }
           } else {
-              if (isActive) setUserResults([]);
+              if (isMountedRef.current) setUserResults([]);
           }
       };
-
       runSearch();
-      return () => { isActive = false; };
   }, [searchText, showSearch]);
-
-  const handleTabPress = (tab: string) => {
-      setActiveTab(tab);
-      if (tab === 'All') flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
-      else flatListRef.current?.scrollToOffset({ offset: SCREEN_WIDTH, animated: true });
-  };
-
-  const handleMomentumScrollEnd = (event: any) => {
-      const offsetX = event.nativeEvent.contentOffset.x;
-      const index = Math.round(offsetX / SCREEN_WIDTH);
-      if (index === 0) setActiveTab('All');
-      else setActiveTab('Chat');
-  };
 
   const onRefresh = useCallback(() => { fetchFeedChunk(true); }, [interestsLoaded]);
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
 
-  // ✅ COST SAVER 2: Removed database writes! Scrolling is now 100% free.
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
       if (viewableItems.length > 0) {
           setPlayingPostId(viewableItems[0].item.id);
@@ -266,38 +315,8 @@ export default function FeedScreen() {
       </TouchableOpacity>
   );
 
-  const renderFeedList = (data: any[], emptyMessage: string) => (
-    <FlatList
-        data={data}
-        keyExtractor={(item, index) => item.id ? `${item.id}-${index}` : String(index)}
-        contentContainerStyle={{ paddingBottom: 100, width: SCREEN_WIDTH }}
-        showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.tint} />}
-        
-        onViewableItemsChanged={onViewableItemsChanged}
-        viewabilityConfig={viewabilityConfig}
-        
-        onEndReached={() => fetchFeedChunk()}
-        onEndReachedThreshold={0.5}
-        ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color={theme.tint} style={{ marginVertical: 20 }} /> : null}
-        
-        ListEmptyComponent={
-            <View style={{ padding: 40, alignItems: 'center', width: SCREEN_WIDTH }}>
-                <Text style={{ color: theme.subText }}>{emptyMessage}</Text>
-            </View>
-        }
-        renderItem={({ item }) => (
-            <PostCard 
-                post={item} 
-                isVisible={playingPostId === item.id && activeTab === 'All'} 
-            />
-        )}
-        extraData={{ playingPostId, activeTab }}
-    />
-  );
-
   const renderChatPlaceholder = () => (
-      <View style={[styles.chatPlaceholderContainer, { width: SCREEN_WIDTH }]}>
+      <View style={[styles.chatPlaceholderContainer, { flex: 1 }]}>
           <View style={[styles.chatIconWrapper, { backgroundColor: theme.tint + '15' }]}>
               <Ionicons name="chatbubbles" size={60} color={theme.tint} />
           </View>
@@ -349,14 +368,14 @@ export default function FeedScreen() {
             <View style={[styles.switchContainer, { backgroundColor: theme.border }]}>
                 <TouchableOpacity 
                     style={[styles.switchBtn, activeTab === 'All' && { backgroundColor: theme.tint }]}
-                    onPress={() => handleTabPress('All')}
+                    onPress={() => setActiveTab('All')}
                 >
                     <Text style={[styles.switchText, { color: activeTab === 'All' ? 'white' : theme.subText }]}>For You</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity 
                     style={[styles.switchBtn, activeTab === 'Chat' && { backgroundColor: theme.tint }]}
-                    onPress={() => handleTabPress('Chat')}
+                    onPress={() => setActiveTab('Chat')}
                 >
                     <Text style={[styles.switchText, { color: activeTab === 'Chat' ? 'white' : theme.subText }]}>Chat</Text>
                 </TouchableOpacity>
@@ -383,22 +402,49 @@ export default function FeedScreen() {
                     />
                 )}
             </View>
+        ) : activeTab === 'Chat' ? (
+            renderChatPlaceholder()
         ) : (
             <FlatList
-                ref={flatListRef}
-                data={[1, 2]} 
-                keyExtractor={item => item.toString()}
-                horizontal
-                pagingEnabled
-                showsHorizontalScrollIndicator={false}
-                onMomentumScrollEnd={handleMomentumScrollEnd}
-                scrollEventThrottle={16}
-                initialNumToRender={1}
-                renderItem={({ index }) => {
-                    if (index === 0) return renderFeedList(posts, "No posts yet. Be the first!");
-                    if (index === 1) return renderChatPlaceholder(); 
-                    return null;
-                }}
+                data={posts}
+                keyExtractor={(item, index) => item.id ? `${item.id}-${index}` : String(index)}
+                contentContainerStyle={{ paddingBottom: 100 }}
+                showsVerticalScrollIndicator={false}
+                
+                removeClippedSubviews={Platform.OS === 'android'} 
+                maxToRenderPerBatch={5} 
+                windowSize={10} 
+                initialNumToRender={5} 
+                
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.tint} />}
+                
+                onViewableItemsChanged={onViewableItemsChanged}
+                viewabilityConfig={viewabilityConfig}
+                
+                onEndReached={() => fetchFeedChunk()}
+                onEndReachedThreshold={0.5} 
+                
+                ListFooterComponent={
+                    <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+                        {loadingMore ? (
+                            <ActivityIndicator size="small" color={theme.tint} />
+                        ) : !hasMore && posts.length > 0 ? (
+                            <Text style={{ color: theme.subText, fontSize: 12 }}>You're all caught up!</Text>
+                        ) : null}
+                    </View>
+                }
+                
+                ListEmptyComponent={
+                    !refreshing && !loadingMore ? (
+                        <View style={{ padding: 40, alignItems: 'center' }}>
+                            <Text style={{ color: theme.subText }}>No posts yet. Be the first!</Text>
+                        </View>
+                    ) : null
+                }
+                
+                renderItem={({ item }) => (
+                    <PostCard post={item} isVisible={playingPostId === item.id} />
+                )}
             />
         )}
       </View>

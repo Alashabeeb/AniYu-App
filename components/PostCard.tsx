@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useIsFocused } from '@react-navigation/native';
 import { Image } from 'expo-image';
-import * as Linking from 'expo-linking'; // ✅ Added Deep Linking
+import * as Linking from 'expo-linking';
 import { useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import {
@@ -11,9 +11,13 @@ import {
     collection,
     deleteDoc,
     doc,
+    getDocs,
     increment,
+    query,
     serverTimestamp,
-    updateDoc
+    updateDoc,
+    where,
+    writeBatch
 } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import {
@@ -39,8 +43,21 @@ interface PostCardProps {
 }
 
 const REPORT_REASONS = ["Offensive content", "Abusive behavior", "Spam", "Other"];
-
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+const localViewedSet = new Set<string>();
+
+// ✅ NEW: The Universal Formatting Function for k and M
+const formatCount = (count: number): string => {
+    if (!count) return "0";
+    if (count < 1000) return count.toString();
+    if (count < 1000000) {
+        // Divide by 1000, keep 1 decimal, and remove the decimal if it's .0
+        return (count / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+    }
+    // Same logic for Millions
+    return (count / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+};
 
 export default function PostCard({ post, isVisible = true }: PostCardProps) {
   const router = useRouter();
@@ -51,16 +68,20 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
 
   const [menuVisible, setMenuVisible] = useState(false);
   const [reportModalVisible, setReportModalVisible] = useState(false);
-
   const [imageModalVisible, setImageModalVisible] = useState(false);
   const [videoModalVisible, setVideoModalVisible] = useState(false);
 
   const [localIsLiked, setLocalIsLiked] = useState(post.likes?.includes(currentUser?.uid));
-  const [localLikeCount, setLocalLikeCount] = useState(post.likeCount || post.likes?.length || 0);
+  const [localLikeCount, setLocalLikeCount] = useState<number>(post.likeCount || post.likes?.length || 0);
 
   const [localIsReposted, setLocalIsReposted] = useState(post.reposts?.includes(currentUser?.uid));
-  const [localRepostCount, setLocalRepostCount] = useState(post.repostCount || post.reposts?.length || 0);
+  const [localRepostCount, setLocalRepostCount] = useState<number>(post.repostCount || post.reposts?.length || 0);
 
+  // ✅ FIXED TypeScript error by explicitly declaring <number>
+  const [localViewCount, setLocalViewCount] = useState<number>(post.views || 0);
+
+  const authorId = post.isRepost && post.originalUserId ? post.originalUserId : post.userId;
+  
   const isOwner = post.userId === currentUser?.uid;
   const isPinned = post.pinned === true;
 
@@ -69,19 +90,17 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
       setLocalLikeCount(post.likeCount || post.likes?.length || 0);
       setLocalIsReposted(post.reposts?.includes(currentUser?.uid));
       setLocalRepostCount(post.repostCount || post.reposts?.length || 0);
-  }, [post.id, currentUser?.uid]);
+      
+      setLocalViewCount(post.views || 0);
+  }, [post.id, currentUser?.uid, post.views]);
 
   const videoSource = post.mediaType === 'video' && post.mediaUrl ? post.mediaUrl : null;
-  
   const player = useVideoPlayer(videoSource, player => { 
-      if (videoSource) {
-          player.loop = true;
-      }
+      if (videoSource) player.loop = true;
   });
 
   useEffect(() => {
       if (!player || !videoSource) return;
-
       if (!isFocused || !isVisible) {
           try { player.pause(); } catch (e) {}
       } else {
@@ -101,6 +120,13 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
   const handleGoToDetails = () => {
     try { if (player && videoSource) player.pause(); } catch(e){}
     const targetPostId = post.isRepost ? post.originalPostId : post.id;
+    
+    // ✅ FIXED TypeScript explicitly defining prev as number
+    if (!localViewedSet.has(targetPostId)) {
+        localViewedSet.add(targetPostId);
+        setLocalViewCount((prev: number) => prev + 1);
+    }
+
     router.push({ pathname: '/post-details', params: { postId: targetPostId } });
   };
 
@@ -112,7 +138,7 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
     setLocalLikeCount((prev: number) => prev + (newIsLiked ? 1 : -1));
 
     if (newIsLiked && !post.isRepost) {
-        sendSocialNotification(post.userId, 'like', { uid: currentUser.uid, name: currentUser.displayName || 'User', avatar: currentUser.photoURL || '' }, '', post.id);
+        sendSocialNotification(authorId, 'like', { uid: currentUser.uid, name: currentUser.displayName || 'User', avatar: currentUser.photoURL || '' }, '', post.id);
     }
     
     try {
@@ -122,9 +148,11 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
             likes: newIsLiked ? arrayUnion(currentUser.uid) : arrayRemove(currentUser.uid),
             likeCount: increment(newIsLiked ? 1 : -1) 
         });
-    } catch (e) {
+    } catch (e: any) {
         setLocalIsLiked(!newIsLiked);
         setLocalLikeCount((prev: number) => prev + (!newIsLiked ? 1 : -1));
+        console.error("Like Error:", e);
+        Alert.alert("Action Blocked", "Firebase blocked this action. Check your Security Rules!");
     }
   };
 
@@ -148,7 +176,10 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
             await addDoc(collection(db, 'posts'), {
                 isRepost: true,
                 originalPostId: targetPostId,
-                userId: post.userId, 
+                userId: currentUser.uid, 
+                repostedByUid: currentUser.uid,
+                repostedByName: currentUser.displayName || 'Someone',
+                originalUserId: authorId,
                 displayName: post.displayName,
                 username: post.username,
                 userAvatar: post.userAvatar,
@@ -158,22 +189,38 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
                 tags: post.tags || [],
                 parentId: null, 
                 createdAt: serverTimestamp(),
-                repostedByUid: currentUser.uid,
-                repostedByName: currentUser.displayName || 'Someone',
-                likes: [], likeCount: 0,
-                reposts: [], repostCount: 0,
-                commentCount: 0,
-                views: 0
+                likes: post.likes || [], 
+                likeCount: post.likeCount || 0,
+                reposts: post.reposts || [], 
+                repostCount: post.repostCount || 0,
+                commentCount: post.commentCount || 0,
+                views: post.views || 0
             });
-            sendSocialNotification(post.userId, 'repost', { uid: currentUser.uid, name: currentUser.displayName || 'User', avatar: currentUser.photoURL || '' }, '', targetPostId);
+            sendSocialNotification(authorId, 'repost', { uid: currentUser.uid, name: currentUser.displayName || 'User', avatar: currentUser.photoURL || '' }, '', targetPostId);
+        } else {
+            const q = query(
+                collection(db, 'posts'),
+                where('isRepost', '==', true),
+                where('originalPostId', '==', targetPostId),
+                where('repostedByUid', '==', currentUser.uid)
+            );
+            const querySnapshot = await getDocs(q);
+            if (!querySnapshot.empty) {
+                const batch = writeBatch(db);
+                querySnapshot.forEach((docSnapshot) => {
+                    batch.delete(doc(db, 'posts', docSnapshot.id));
+                });
+                await batch.commit();
+            }
         }
-    } catch (e) {
+    } catch (e: any) {
         setLocalIsReposted(!newIsReposted);
         setLocalRepostCount((prev: number) => prev + (!newIsReposted ? 1 : -1));
+        console.error("Repost Error:", e);
+        Alert.alert("Action Blocked", "Firebase blocked this action. Check your Security Rules!");
     }
   };
 
-  // ✅ UPDATED: Native Deep Linking for Share
   const handleShare = async () => {
       try {
           const targetPostId = post.isRepost ? post.originalPostId : post.id;
@@ -202,7 +249,6 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
         { text: "Delete", style: "destructive", onPress: async () => { 
             try { 
                 if (post.parentId) {
-                    const { writeBatch } = require('firebase/firestore');
                     const batch = writeBatch(db);
                     batch.delete(doc(db, "posts", post.id));
                     batch.update(doc(db, "posts", post.parentId), { commentCount: increment(-1) });
@@ -229,7 +275,7 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
                   try {
                       const myRef = doc(db, 'users', currentUser.uid);
                       await updateDoc(myRef, {
-                          blockedUsers: arrayUnion(post.userId)
+                          blockedUsers: arrayUnion(authorId)
                       });
                       Alert.alert("Blocked", `You will no longer see posts from @${post.username}.`);
                   } catch (e) {
@@ -269,7 +315,7 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
       )}
 
       <View style={{ flexDirection: 'row' }}>
-        <TouchableOpacity onPress={(e) => { e.stopPropagation(); router.push({ pathname: '/feed-profile', params: { userId: post.userId } }); }}>
+        <TouchableOpacity onPress={(e) => { e.stopPropagation(); router.push({ pathname: '/feed-profile', params: { userId: authorId } }); }}>
           <Image source={{ uri: post.userAvatar }} style={styles.avatar} />
         </TouchableOpacity>
 
@@ -305,24 +351,36 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
           )}
 
           <View style={styles.actions}>
+            {/* ✅ UPDATED: Wrapped the localLikeCount in formatCount() */}
             <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleLike(); }}>
               <Ionicons name={localIsLiked ? "heart" : "heart-outline"} size={18} color={localIsLiked ? "#FF6B6B" : theme.subText} />
-              <Text style={[styles.count, { color: localIsLiked ? "#FF6B6B" : theme.subText }]}>{localLikeCount}</Text>
+              <Text style={[styles.count, { color: localIsLiked ? "#FF6B6B" : theme.subText }]}>
+                  {formatCount(localLikeCount)}
+              </Text>
             </TouchableOpacity>
             
+            {/* ✅ UPDATED: Wrapped the commentCount in formatCount() */}
             <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleGoToDetails(); }}>
               <Ionicons name="chatbubble-outline" size={18} color={theme.subText} />
-              <Text style={[styles.count, { color: theme.subText }]}>{post.commentCount || 0}</Text>
+              <Text style={[styles.count, { color: theme.subText }]}>
+                  {formatCount(post.commentCount || 0)}
+              </Text>
             </TouchableOpacity>
             
+            {/* ✅ UPDATED: Wrapped the localRepostCount in formatCount() */}
             <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleRepost(); }}>
               <Ionicons name="repeat-outline" size={18} color={localIsReposted ? "#00BA7C" : theme.subText} />
-              <Text style={[styles.count, { color: localIsReposted ? "#00BA7C" : theme.subText }]}>{localRepostCount}</Text>
+              <Text style={[styles.count, { color: localIsReposted ? "#00BA7C" : theme.subText }]}>
+                  {formatCount(localRepostCount)}
+              </Text>
             </TouchableOpacity>
             
+            {/* ✅ UPDATED: Wrapped the localViewCount in formatCount() */}
             <View style={styles.actionBtn}>
                 <Ionicons name="stats-chart" size={16} color={theme.subText} />
-                <Text style={[styles.count, { color: theme.subText }]}>{post.views || 0}</Text>
+                <Text style={[styles.count, { color: theme.subText }]}>
+                    {formatCount(localViewCount)}
+                </Text>
             </View>
 
             <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleShare(); }}>
@@ -336,7 +394,7 @@ export default function PostCard({ post, isVisible = true }: PostCardProps) {
         <TouchableWithoutFeedback onPress={() => setMenuVisible(false)}>
             <View style={styles.modalOverlay}>
                 <View style={[styles.menuContainer, { backgroundColor: theme.card }]}>
-                    {isOwner || (post.isRepost && post.repostedByUid === currentUser?.uid) ? (
+                    {isOwner ? (
                         <>
                             {!post.isRepost && (
                                 <TouchableOpacity style={styles.menuItem} onPress={handlePin}>
@@ -415,24 +473,7 @@ const styles = StyleSheet.create({
   menuContainer: { width: 250, borderRadius: 12, padding: 10, elevation: 5 },
   menuItem: { flexDirection: 'row', alignItems: 'center', padding: 12 },
   menuText: { fontSize: 16, marginLeft: 12, fontWeight: '500' },
-  
-  fullScreenMediaContainer: {
-      flex: 1,
-      backgroundColor: '#000000',
-      justifyContent: 'center',
-      alignItems: 'center',
-  },
-  closeMediaBtn: {
-      position: 'absolute',
-      top: Platform.OS === 'ios' ? 50 : 20,
-      left: 20,
-      zIndex: 100,
-      padding: 8,
-      backgroundColor: 'rgba(0,0,0,0.6)',
-      borderRadius: 20,
-  },
-  fullScreenMediaItem: {
-      width: '100%',
-      height: '100%',
-  }
+  fullScreenMediaContainer: { flex: 1, backgroundColor: '#000000', justifyContent: 'center', alignItems: 'center' },
+  closeMediaBtn: { position: 'absolute', top: Platform.OS === 'ios' ? 50 : 20, left: 20, zIndex: 100, padding: 8, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 20 },
+  fullScreenMediaItem: { width: '100%', height: '100%' }
 });
