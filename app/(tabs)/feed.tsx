@@ -113,23 +113,54 @@ export default function FeedScreen() {
       loadUserPreferences();
   }, [currentUser]);
 
+  // Ensure active posts are immediately filtered if the blocked list updates
+  useEffect(() => {
+      if (blockedUsers.length > 0) {
+          setPosts(prev => prev.filter(p => {
+              if (blockedUsers.includes(p.userId)) return false;
+              if (p.isRepost && p.originalUserId && blockedUsers.includes(p.originalUserId)) return false;
+              return true;
+          }));
+      }
+  }, [blockedUsers]);
+
   const calculatePostScore = (post: any, interests: string[], userId: string) => {
       let score = 0;
       
+      // 1. Interest Matching (Base Relevance)
       if (post.tags && Array.isArray(post.tags) && interests.length > 0) {
           const matches = post.tags.filter((tag: string) => interests.includes(tag));
           score += (matches.length * 50); 
       }
       
-      score += (post.likeCount || 0) * 2;
-      score += (post.commentCount || 0) * 3;
-      score += (post.repostCount || 0) * 5;
+      // 2. Engagement Metrics (Value)
+      const likes = post.likeCount || 0;
+      const comments = post.commentCount || 0;
+      const reposts = post.repostCount || 0;
+      const views = post.views || 0;
+
+      score += likes * 2;
+      score += comments * 3;
+      score += reposts * 5;
+
+      // 3. Engagement Rate Multiplier
+      if (views > 50) {
+          const engagementRate = (likes + comments + reposts) / views;
+          score *= (1 + Math.min(engagementRate, 0.2)); 
+      }
       
+      // 4. Time Decay (Gravity Decay)
       if (post.createdAt?.seconds) {
-          const hoursOld = (Date.now() / 1000 - post.createdAt.seconds) / 3600;
-          score -= (hoursOld * 5.0); 
+          const hoursOld = Math.max(0, (Date.now() / 1000 - post.createdAt.seconds) / 3600);
+          
+          score = score / Math.pow(hoursOld + 2, 1.2);
+          
+          if (hoursOld < 3) {
+              score += (3 - hoursOld) * 10;
+          }
       }
 
+      // 5. Content Diversity (Personalized Jitter)
       const seedString = userId + post.id + sessionShuffleSeed;
       let hash = 0;
       for (let i = 0; i < Math.min(seedString.length, 20); i++) {
@@ -198,8 +229,13 @@ export default function FeedScreen() {
 
           const currentUserId = currentUser?.uid || 'guest_user';
 
+          // Completely filter out blocked users (both direct posts and reposts)
           let fetchedChunk = Array.from(postMap.values())
-              .filter(p => !blockedUsers.includes(p.userId))
+              .filter(p => {
+                  if (blockedUsers.includes(p.userId)) return false;
+                  if (p.isRepost && p.originalUserId && blockedUsers.includes(p.originalUserId)) return false;
+                  return true;
+              })
               .map(p => ({ ...p, algoScore: calculatePostScore(p, userInterests, currentUserId) }));
 
           const reposts = fetchedChunk.filter(p => p.isRepost && p.originalPostId);

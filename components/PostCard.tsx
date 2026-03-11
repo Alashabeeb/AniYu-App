@@ -42,6 +42,7 @@ interface PostCardProps {
   post: any;
   isVisible?: boolean; 
   isProfilePinnedView?: boolean;
+  onDelete?: (postId: string) => void;
 }
 
 const REPORT_REASONS = ["Offensive content", "Abusive behavior", "Spam", "Other"];
@@ -58,7 +59,7 @@ const formatCount = (count: number): string => {
     return (count / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
 };
 
-export default function PostCard({ post, isVisible = true, isProfilePinnedView = false }: PostCardProps) {
+export default function PostCard({ post, isVisible = true, isProfilePinnedView = false, onDelete }: PostCardProps) {
   const router = useRouter();
   const { theme } = useTheme();
   const currentUser = auth.currentUser;
@@ -82,6 +83,8 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
   const isOwner = post.userId === currentUser?.uid;
   const isPinned = post.pinned === true;
   const isOriginalAuthor = authorId === currentUser?.uid;
+  
+  const isMyOriginalPost = currentUser?.uid === post.userId && !post.isRepost;
   const showMenu = isOwner || !isOriginalAuthor;
 
   useEffect(() => {
@@ -256,21 +259,29 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
 
   const handleDelete = async () => {
     setMenuVisible(false);
-    Alert.alert("Delete Post", "Are you sure?", [
+    Alert.alert("Delete Post", "Are you sure you want to permanently delete this?", [
         { text: "Cancel", style: "cancel" },
         { text: "Delete", style: "destructive", onPress: async () => { 
             try { 
-                if (post.parentId) {
-                    const batch = writeBatch(db);
-                    batch.delete(doc(db, "posts", post.id));
-                    batch.update(doc(db, "posts", post.parentId), { commentCount: increment(-1) });
-                    await batch.commit();
-                } else {
-                    await deleteDoc(doc(db, "posts", post.id)); 
+                await deleteDoc(doc(db, "posts", post.id));
+
+                if (onDelete) {
+                    onDelete(post.id);
                 }
+
+                if (post.parentId) {
+                    try {
+                        await updateDoc(doc(db, "posts", post.parentId), { commentCount: increment(-1) });
+                    } catch (e) { console.log("Parent post already deleted or inaccessible."); }
+                }
+
             } catch (error: any) { 
                 console.error("Delete Error:", error);
-                Alert.alert("Error", error.message || "Could not delete post."); 
+                if (error.code === 'permission-denied') {
+                    Alert.alert("Permission Denied", "Firebase Security Rules blocked the deletion.");
+                } else {
+                    Alert.alert("Error", error.message || "Could not delete post."); 
+                }
             } 
         } }
     ]);
@@ -413,10 +424,12 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
                                     <Text style={[styles.menuText, { color: theme.text }]}>{isPinned ? "Unpin" : "Pin"}</Text>
                                 </TouchableOpacity>
                             )}
-                            <TouchableOpacity style={styles.menuItem} onPress={handleDelete}>
-                                <Ionicons name="trash-outline" size={20} color="#FF6B6B" />
-                                <Text style={[styles.menuText, { color: '#FF6B6B' }]}>Delete</Text>
-                            </TouchableOpacity>
+                            {isMyOriginalPost && (
+                                <TouchableOpacity style={styles.menuItem} onPress={handleDelete}>
+                                    <Ionicons name="trash-outline" size={20} color="#FF6B6B" />
+                                    <Text style={[styles.menuText, { color: '#FF6B6B' }]}>Delete</Text>
+                                </TouchableOpacity>
+                            )}
                         </>
                     ) : (
                         <>
