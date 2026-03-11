@@ -1,4 +1,4 @@
-import { addDoc, collection, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, startAfter } from 'firebase/firestore';
+import { addDoc, collection, getDocs, limit, orderBy, query, serverTimestamp, startAfter } from 'firebase/firestore';
 import {
     Bell,
     CheckCircle,
@@ -18,52 +18,7 @@ import {
 import { useEffect, useState } from 'react';
 import { db } from './firebase';
 
-// ✅ HELPER: EXPO PUSH API
-const sendPushNotifications = async (expoPushTokens, title, body) => {
-    if (!expoPushTokens || expoPushTokens.length === 0) return;
-
-    // Filter out any undefined, null, or invalid tokens
-    const validTokens = expoPushTokens.filter(token => token && typeof token === 'string' && token.startsWith('ExponentPushToken'));
-    if (validTokens.length === 0) {
-        console.warn("No valid Expo Push Tokens found.");
-        return;
-    }
-
-    const messages = validTokens.map(token => ({
-        to: token,
-        sound: 'default',
-        title: title,
-        body: body,
-    }));
-
-    const chunks = [];
-    for (let i = 0; i < messages.length; i += 100) {
-        chunks.push(messages.slice(i, i + 100));
-    }
-
-    for (let chunk of chunks) {
-        try {
-            const response = await fetch('https://exp.host/--/api/v2/push/send', {
-                method: 'POST',
-                headers: {
-                    Accept: 'application/json',
-                    'Accept-encoding': 'gzip, deflate',
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(chunk),
-            });
-            
-            const data = await response.json();
-            console.log("Expo Push Response:", data);
-            
-            if (data.errors) {
-                console.error("Expo API Error:", data.errors);
-            }
-        } catch (error) {
-            console.error("Error sending push notification chunk:", error);
-        }
-    }
-};
+// ✅ REMOVED: sendPushNotifications helper (Cloud Functions now handle this securely)
 
 export default function Notifications() {
   const [activeTab, setActiveTab] = useState('compose'); 
@@ -158,20 +113,13 @@ export default function Notifications() {
       try {
           let recipientCount = 0;
           let targetLabel = '';
-          let tokensToPush = []; 
 
           // CASE 1: BROADCAST TO ALL
           if (targetType === 'all') {
-              // 1a. Write to global feed
+              // 1a. Write to global feed - The Cloud Function will detect this and handle the mass push
               await addDoc(collection(db, "announcements"), {
                   title, body, type: 'system_broadcast', targetId: 'all', createdAt: serverTimestamp()
               });
-              
-              // 1b. ✅ BULLETPROOF FETCH: Get all users, filter tokens in memory to avoid Firestore Index traps
-              const userSnap = await getDocs(collection(db, "users"));
-              tokensToPush = userSnap.docs
-                  .map(doc => doc.data().expoPushToken)
-                  .filter(token => token && typeof token === 'string' && token.startsWith('ExponentPushToken'));
 
               targetLabel = 'All Users (Global Broadcast)';
               recipientCount = 'All'; 
@@ -181,14 +129,10 @@ export default function Notifications() {
           else if (targetType === 'specific') {
               if (!targetUid) throw new Error("Please enter a User UID.");
               
+              // Write to specific user feed - Cloud Function will push to this specific user
               await addDoc(collection(db, "users", targetUid, "notifications"), {
                   title, body, read: false, createdAt: serverTimestamp(), type: 'system'
               });
-
-              const userDoc = await getDoc(doc(db, "users", targetUid));
-              if (userDoc.exists() && userDoc.data().expoPushToken) {
-                  tokensToPush.push(userDoc.data().expoPushToken);
-              }
 
               targetLabel = `User: ${targetUid}`;
               recipientCount = 1;
@@ -204,26 +148,17 @@ export default function Notifications() {
                   })
               );
               await Promise.all(promises);
-              
-              tokensToPush = selectedUsers.map(u => u.expoPushToken).filter(Boolean);
 
               targetLabel = `Group (${selectedUsers.length} users)`;
               recipientCount = selectedUsers.length;
-          }
-
-          // 🚀 SEND THE ACTUAL PUSH NOTIFICATION
-          if (tokensToPush.length > 0) {
-              await sendPushNotifications(tokensToPush, title, body);
-          } else {
-              console.warn("Alert: Saved to database, but NO valid push tokens were found to ping phones.");
           }
 
           await addDoc(collection(db, "notification_logs"), {
               title, body, target: targetLabel, recipientCount: recipientCount, createdAt: serverTimestamp()
           });
 
-          // ✅ NEW: Tell the admin exactly how many devices actually got buzzed
-          alert(`Successfully sent! Triggered a physical push notification to ${tokensToPush.length} device(s).`);
+          // ✅ NEW: Tell the admin the server has taken over
+          alert(`Successfully scheduled! The server is currently distributing the notifications in the background.`);
           
           setTitle('');
           setBody('');
@@ -332,7 +267,7 @@ export default function Notifications() {
 
                             <button type="submit" className="btn-publish" disabled={loading} style={{ marginTop: 10 }}>
                                 {loading ? <Loader2 className="animate-spin" /> : <Send size={20} />}
-                                {loading ? "Sending Push..." : "Send Notification"}
+                                {loading ? "Queueing..." : "Send Notification"}
                             </button>
 
                         </form>

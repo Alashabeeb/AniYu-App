@@ -94,9 +94,9 @@ export const moderateNewPost = onDocumentCreated("posts/{postId}", async (event)
 
     // ✅ SURGICAL UPDATE: Added Rule #5 to catch negative app reviews/complaints
     const prompt = `You are a strict auto-moderator for an Anime community app. Evaluate the following user ${contentTypeLabel}. 
-Flag it if it contains ANY of the following: 1. Hate speech or extreme toxicity. 2. Harassment or bullying. 3. Explicit or NSFW content. 4. Major Anime/Manga spoilers without warning. 5. Negative comments, complaints, or slander specifically directed at this app or its developers. 
-Return ONLY a valid JSON object in this exact format: {"flagged": boolean, "reason": "string explaining exactly which rule was broken, or empty if clean"}. 
-Text: "${newPost.text}"`;
+    Flag it if it contains ANY of the following: 1. Hate speech or extreme toxicity. 2. Harassment or bullying. 3. Explicit or NSFW content. 4. Major Anime/Manga spoilers without warning. 5. Negative comments, complaints, or slander specifically directed at this app or its developers. 
+    Return ONLY a valid JSON object in this exact format: {"flagged": boolean, "reason": "string explaining exactly which rule was broken, or empty if clean"}. 
+    Text: "${newPost.text}"`;
 
     // Call the free Google Gemini API
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
@@ -156,4 +156,101 @@ Text: "${newPost.text}"`;
   } catch (error) {
     console.error("Error during Gemini auto-moderation:", error);
   }
+});
+
+// ✅ 4. AUTO-SEND SPECIFIC USER NOTIFICATIONS (Social & Direct Admin)
+export const sendTargetedPushNotification = onDocumentCreated("users/{userId}/notifications/{notificationId}", async (event) => {
+    const snapshot = event.data;
+    if (!snapshot) return;
+
+    const notifData = snapshot.data();
+    const userId = event.params.userId;
+
+    // Don't send push if it's already read or missing title/body
+    if (notifData.read || !notifData.title || !notifData.body) return;
+
+    try {
+        const userDoc = await admin.firestore().doc(`users/${userId}`).get();
+        if (!userDoc.exists) return;
+
+        const pushToken = userDoc.data()?.expoPushToken;
+        if (!pushToken || !pushToken.startsWith('ExponentPushToken')) return;
+
+        // ✅ WHATSAPP/TWITTER STYLE GROUPING PAYLOAD
+        const message = {
+            to: pushToken,
+            sound: 'default',
+            title: notifData.title,
+            body: notifData.body,
+            data: { targetId: notifData.targetId, type: notifData.type }, // Deep linking data
+            badge: 1, // Increments app icon badge
+            threadId: 'aniyu_social', // iOS Grouping ID
+            categoryId: 'social_interaction', // iOS Category
+            channelId: 'social-updates', // Android Grouping Channel
+        };
+
+        const response = await fetch('https://exp.host/--/api/v2/push/send', {
+            method: 'POST',
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify(message),
+        });
+
+        const result = await response.json();
+        
+        // Token Cleanup: If device is no longer registered, remove the dead token
+        if (result.errors || (result.data && result.data.status === 'error' && result.data.details?.error === 'DeviceNotRegistered')) {
+            console.log(`🧹 Cleaning up dead token for user: ${userId}`);
+            await admin.firestore().doc(`users/${userId}`).update({ expoPushToken: admin.firestore.FieldValue.delete() });
+        }
+    } catch (error) {
+        console.error("Error sending targeted push:", error);
+    }
+});
+
+// ✅ 5. AUTO-SEND GLOBAL BROADCASTS (Scalable Batching)
+export const sendGlobalBroadcastPush = onDocumentCreated("announcements/{announcementId}", async (event) => {
+    const snapshot = event.data;
+    if (!snapshot) return;
+
+    const announcement = snapshot.data();
+    if (announcement.type !== 'system_broadcast' && announcement.targetId !== 'all') return;
+
+    try {
+        console.log("🚀 Starting Global Broadcast via Cloud Functions...");
+        
+        // Fetch users in chunks (Scalable approach)
+        const usersRef = admin.firestore().collection("users");
+        const snapshot = await usersRef.select("expoPushToken").get(); 
+        
+        const validTokens = snapshot.docs
+            .map(doc => doc.data().expoPushToken)
+            .filter(token => token && typeof token === 'string' && token.startsWith('ExponentPushToken'));
+
+        if (validTokens.length === 0) return;
+
+        // ✅ BROADCAST GROUPING PAYLOAD (Separate from Social)
+        const messages = validTokens.map(token => ({
+            to: token,
+            sound: 'default',
+            title: announcement.title,
+            body: announcement.body,
+            badge: 1,
+            threadId: 'aniyu_announcements', // Separate iOS group for admin
+            categoryId: 'admin_broadcast',
+            channelId: 'admin-broadcasts', // Separate Android channel
+        }));
+
+        // Send in chunks of 100 (Expo API Limit)
+        for (let i = 0; i < messages.length; i += 100) {
+            const chunk = messages.slice(i, i + 100);
+            await fetch('https://exp.host/--/api/v2/push/send', {
+                method: 'POST',
+                headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+                body: JSON.stringify(chunk),
+            });
+        }
+        console.log(`✅ Broadcast successfully queued for ${validTokens.length} devices.`);
+    } catch (error) {
+        console.error("Error sending broadcast:", error);
+    }
 });

@@ -1,13 +1,44 @@
+import * as Notifications from 'expo-notifications';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, Platform, View } from 'react-native';
 import GlobalGatekeeper from '../components/GlobalGatekeeper';
 import NotificationListener from '../components/NotificationListener';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import { ThemeProvider } from '../context/ThemeContext';
 import { ToastProvider } from '../context/ToastContext';
 import { useUserHeartbeat } from '../hooks/useUserHeartbeat';
+
+// ✅ EXPO FOREGROUND NOTIFICATION HANDLER
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: false, // 🛑 FALSE: Prevents the drop-down OS banner while app is open
+    shouldShowList: false,   // 🛑 FALSE: Prevents it from cluttering the notification center while active
+    shouldPlaySound: false,  // 🛑 FALSE: No loud ding while they are already in the app
+    shouldSetBadge: true,    // ✅ TRUE: Still updates the red unread badge count on the app icon
+  }),
+});
+// ✅ CREATE ANDROID CHANNELS FOR GROUPING
+// Run this once when the app starts to enable the "Drop Down" stack effect on Android
+async function setupNotificationChannels() {
+  if (Platform.OS === 'android') {
+    await Notifications.setNotificationChannelAsync('social-updates', {
+      name: 'Social Interactions',
+      importance: Notifications.AndroidImportance.DEFAULT,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#8b5cf6', // Matches your theme
+    });
+    
+    await Notifications.setNotificationChannelAsync('admin-broadcasts', {
+      name: 'Announcements',
+      importance: Notifications.AndroidImportance.HIGH, // High priority for admin messages
+      vibrationPattern: [0, 500],
+      lightColor: '#ef4444',
+    });
+  }
+}
+setupNotificationChannels();
 
 // ✅ 1. Freeze the splash screen while Firebase checks the user's token
 SplashScreen.preventAutoHideAsync();

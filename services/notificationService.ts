@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { addDoc, collection, doc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { db } from '../config/firebaseConfig';
 
 const NOTIFICATIONS_KEY = 'user_notifications';
@@ -17,30 +17,6 @@ export interface AppNotification {
   actorName?: string;
   actorAvatar?: string;
 }
-
-// ✅ HELPER: EXPO PUSH API FOR SOCIAL FEATURES
-const sendPushNotification = async (expoPushToken: string, title: string, body: string) => {
-  const message = {
-    to: expoPushToken,
-    sound: 'default',
-    title: title,
-    body: body,
-  };
-
-  try {
-    await fetch('https://exp.host/--/api/v2/push/send', {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Accept-encoding': 'gzip, deflate',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(message),
-    });
-  } catch (error) {
-    console.error("Error sending push notification:", error);
-  }
-};
 
 // 1. Get Notification History
 export const getNotifications = async (): Promise<AppNotification[]> => {
@@ -79,7 +55,7 @@ export const addNewDropNotification = async (title: string, body: string, type: 
   }
 };
 
-// 3. Send Social Notification (To Firestore & Push to Device) - ✅ UPGRADED
+// 3. Send Social Notification (To Firestore & Cloud Functions handle Device Push) - ✅ UPGRADED
 export const sendSocialNotification = async (
     targetUserId: string, 
     type: 'like' | 'comment' | 'repost' | 'follow', 
@@ -114,6 +90,7 @@ export const sendSocialNotification = async (
         }
 
         // A. Write to the Target User's Firestore Feed
+        // 🚀 The Cloud Function `sendTargetedPushNotification` will automatically detect this write and send the physical push!
         await addDoc(collection(db, 'users', targetUserId, 'notifications'), {
             title,
             body,
@@ -125,15 +102,6 @@ export const sendSocialNotification = async (
             read: false,
             createdAt: serverTimestamp()
         });
-
-        // B. 🚀 NEW: Fetch Target User's Push Token and Send Physical Push
-        const targetUserSnap = await getDoc(doc(db, 'users', targetUserId));
-        if (targetUserSnap.exists()) {
-            const targetUserData = targetUserSnap.data();
-            if (targetUserData.expoPushToken) {
-                await sendPushNotification(targetUserData.expoPushToken, title, body);
-            }
-        }
 
     } catch (error) {
         console.error("Error sending social notification:", error);
