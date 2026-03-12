@@ -240,13 +240,26 @@ export default function FeedScreen() {
 
           const reposts = fetchedChunk.filter(p => p.isRepost && p.originalPostId);
           if (reposts.length > 0) {
-              const originalIds = [...new Set(reposts.map(p => p.originalPostId))].slice(0, 10);
+              // ✅ BUG 3 FIX: Removed .slice(0, 10) to support scaling up feed chunks
+              const originalIds = [...new Set(reposts.map(p => p.originalPostId))];
               if (originalIds.length > 0) {
                   try {
-                      const origQ = query(collection(db, 'posts'), where(documentId(), 'in', originalIds));
-                      const origSnap = await getDocs(origQ);
+                      // ✅ Chunk the IDs into arrays of 10 to bypass Firestore's "in" query limit
+                      const chunks = [];
+                      for (let i = 0; i < originalIds.length; i += 10) {
+                          chunks.push(originalIds.slice(i, i + 10));
+                      }
+
+                      // ✅ Fetch all chunks in parallel
+                      const snapPromises = chunks.map(chunk => 
+                          getDocs(query(collection(db, 'posts'), where(documentId(), 'in', chunk)))
+                      );
+                      const snapResults = await Promise.all(snapPromises);
+
                       const origMap = new Map();
-                      origSnap.docs.forEach(d => origMap.set(d.id, d.data()));
+                      snapResults.forEach(snap => {
+                          snap.docs.forEach(d => origMap.set(d.id, d.data()));
+                      });
 
                       fetchedChunk = fetchedChunk.map(p => {
                           if (p.isRepost && origMap.has(p.originalPostId)) {
@@ -473,7 +486,24 @@ export default function FeedScreen() {
                 }
                 
                 renderItem={({ item }: { item: any }) => (
-                    <PostCard post={item as any} isVisible={playingPostId === item.id} />
+                    <PostCard 
+                        post={item as any} 
+                        isVisible={playingPostId === item.id} 
+                        onDelete={(deletedId) => {
+                            setPosts(prev => prev.filter(p => p.id !== deletedId));
+                        }}
+                        onBlock={(blockedId) => {
+                            setPosts(prev => prev.filter(p => p.userId !== blockedId && p.originalUserId !== blockedId));
+                            const newBlocked = [...blockedUsers, blockedId];
+                            setBlockedUsers(newBlocked);
+                            if (currentUser) {
+                                AsyncStorage.setItem(`prefs_${currentUser.uid}`, JSON.stringify({
+                                    blockedUsers: newBlocked,
+                                    interests: userInterests
+                                })).catch(()=>{});
+                            }
+                        }}
+                    />
                 )}
             />
         )}

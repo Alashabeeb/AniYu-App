@@ -29,9 +29,10 @@ import { uploadToR2 } from '../services/r2Storage';
 
 const GENRES = ["Action", "Adventure", "Romance", "Fantasy", "Drama", "Comedy", "Sci-Fi", "Slice of Life", "Sports", "Mystery"];
 
-// ✅ DEFINE SIZE LIMITS (in Bytes)
-const MAX_IMAGE_SIZE = 1 * 1024 * 1024; // 1 MB
-const MAX_VIDEO_SIZE = 5 * 1024 * 1024; // 5 MB
+// ✅ UPDATED: SIZE LIMITS (in Bytes)
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5 MB
+const MAX_VIDEO_SIZE = 20 * 1024 * 1024; // 20 MB
+const MAX_CHARS = 120; // Text character limit
 
 export default function CreatePostScreen() {
   const router = useRouter();
@@ -78,7 +79,7 @@ export default function CreatePostScreen() {
       if (asset.fileSize) {
           const isVideo = asset.type === 'video';
           const limit = isVideo ? MAX_VIDEO_SIZE : MAX_IMAGE_SIZE;
-          const limitLabel = isVideo ? '5MB' : '1MB';
+          const limitLabel = isVideo ? '20MB' : '5MB';
 
           if (asset.fileSize > limit) {
               showAlert('error', 'File Too Large', `Please select a ${isVideo ? 'video' : 'image'} under ${limitLabel}.`);
@@ -198,7 +199,7 @@ export default function CreatePostScreen() {
   };
 
   // ✅ NEW: Post button is disabled if no tags are selected
-  const isPostDisabled = (!text.trim() && !media) || selectedTags.length === 0 || loading;
+  const isPostDisabled = (!text.trim() && !media) || selectedTags.length === 0 || loading || text.length > MAX_CHARS;
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
@@ -243,9 +244,15 @@ export default function CreatePostScreen() {
                     placeholderTextColor={theme.subText}
                     multiline
                     autoFocus
+                    maxLength={MAX_CHARS}
                     value={text}
                     onChangeText={setText}
                 />
+                
+                {/* Character Counter */}
+                <Text style={{ textAlign: 'right', color: text.length === MAX_CHARS ? '#ef4444' : theme.subText, fontSize: 12, marginRight: 15, marginTop: -5, marginBottom: 10 }}>
+                    {text.length}/{MAX_CHARS}
+                </Text>
 
                 {media && (
                     <View style={styles.previewWrapper}>

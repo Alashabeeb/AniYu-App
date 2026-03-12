@@ -37,12 +37,14 @@ import {
 import { auth, db } from '../config/firebaseConfig';
 import { useTheme } from '../context/ThemeContext';
 import { sendSocialNotification } from '../services/notificationService';
+import { deleteFromR2 } from '../services/r2Storage'; // ✅ IMPORTED R2 DELETE FUNCTION
 
 interface PostCardProps {
   post: any;
   isVisible?: boolean; 
   isProfilePinnedView?: boolean;
   onDelete?: (postId: string) => void;
+  onBlock?: (userId: string) => void;
 }
 
 const REPORT_REASONS = ["Offensive content", "Abusive behavior", "Spam", "Other"];
@@ -59,7 +61,7 @@ const formatCount = (count: number): string => {
     return (count / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
 };
 
-export default function PostCard({ post, isVisible = true, isProfilePinnedView = false, onDelete }: PostCardProps) {
+export default function PostCard({ post, isVisible = true, isProfilePinnedView = false, onDelete, onBlock }: PostCardProps) {
   const router = useRouter();
   const { theme } = useTheme();
   const currentUser = auth.currentUser;
@@ -263,6 +265,17 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
         { text: "Cancel", style: "cancel" },
         { text: "Delete", style: "destructive", onPress: async () => { 
             try { 
+                // ✅ BUG 1 FIX: Delete file from R2 if it's an original post
+                if (!post.isRepost && post.mediaUrl) {
+                    await deleteFromR2(post.mediaUrl);
+                }
+
+                // ✅ BUG 2 FIX: Ghost Pin Profile Bug
+                if (post.pinned && currentUser) {
+                    const userRef = doc(db, 'users', currentUser.uid);
+                    await updateDoc(userRef, { pinnedPostId: null });
+                }
+
                 await deleteDoc(doc(db, "posts", post.id));
 
                 if (onDelete) {
@@ -301,6 +314,11 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
                       await updateDoc(myRef, {
                           blockedUsers: arrayUnion(authorId)
                       });
+                      
+                      if (onBlock) {
+                          onBlock(authorId);
+                      }
+
                       Alert.alert("Blocked", `You will no longer see posts from @${post.username}.`);
                   } catch (e) {
                       Alert.alert("Error", "Could not block user.");

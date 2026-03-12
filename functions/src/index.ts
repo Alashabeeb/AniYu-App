@@ -1,4 +1,4 @@
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3"; // ✅ ADDED DeleteObjectCommand
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import * as admin from "firebase-admin";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
@@ -70,7 +70,56 @@ export const generateUploadUrl = onRequest((req, res) => {
   });
 });
 
-// 3. ✅ AUTO-MODERATE NEW POSTS & COMMENTS USING GOOGLE GEMINI
+// ✅ 2.5 DELETE FILE FROM R2 (Fixes Storage Leak)
+export const deleteR2File = onRequest((req, res) => {
+  cors(req, res, async () => {
+    // A. Security Check: Ensure user is logged in
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const idToken = authHeader.split("Bearer ")[1];
+
+    try {
+      await admin.auth().verifyIdToken(idToken);
+    } catch (e) {
+      res.status(401).json({ error: "Invalid Token" });
+      return;
+    }
+
+    // B. Get File URL
+    const { fileUrl } = req.body;
+    if (!fileUrl) {
+      res.status(400).json({ error: "Missing file URL" });
+      return;
+    }
+
+    try {
+      // C. Extract Key from URL
+      // The publicUrl looks like https://pub-xxxx.r2.dev/folder/filename.jpg
+      // We parse the URL and remove the leading slash to get the exact R2 Key
+      const urlObj = new URL(fileUrl);
+      const key = decodeURIComponent(urlObj.pathname.substring(1)); 
+
+      // D. Issue Delete Command to R2
+      const command = new DeleteObjectCommand({
+        Bucket: process.env.R2_BUCKET_NAME,
+        Key: key,
+      });
+
+      await r2Client.send(command);
+
+      res.status(200).json({ success: true, message: "File permanently deleted from R2" });
+
+    } catch (error) {
+      console.error("Error deleting file from R2:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  });
+});
+
+// 3. AUTO-MODERATE NEW POSTS & COMMENTS USING GOOGLE GEMINI
 export const moderateNewPost = onDocumentCreated("posts/{postId}", async (event) => {
   const snapshot = event.data;
   if (!snapshot) return;
@@ -92,7 +141,6 @@ export const moderateNewPost = onDocumentCreated("posts/{postId}", async (event)
         return;
     }
 
-    // ✅ SURGICAL UPDATE: Added Rule #5 to catch negative app reviews/complaints
     const prompt = `You are a strict auto-moderator for an Anime community app. Evaluate the following user ${contentTypeLabel}. 
     Flag it if it contains ANY of the following: 1. Hate speech or extreme toxicity. 2. Harassment or bullying. 3. Explicit or NSFW content. 4. Major Anime/Manga spoilers without warning. 5. Negative comments, complaints, or slander specifically directed at this app or its developers. 
     Return ONLY a valid JSON object in this exact format: {"flagged": boolean, "reason": "string explaining exactly which rule was broken, or empty if clean"}. 
@@ -158,7 +206,7 @@ export const moderateNewPost = onDocumentCreated("posts/{postId}", async (event)
   }
 });
 
-// ✅ 4. AUTO-SEND SPECIFIC USER NOTIFICATIONS (Social & Direct Admin)
+// 4. AUTO-SEND SPECIFIC USER NOTIFICATIONS (Social & Direct Admin)
 export const sendTargetedPushNotification = onDocumentCreated("users/{userId}/notifications/{notificationId}", async (event) => {
     const snapshot = event.data;
     if (!snapshot) return;
@@ -176,7 +224,6 @@ export const sendTargetedPushNotification = onDocumentCreated("users/{userId}/no
         const pushToken = userDoc.data()?.expoPushToken;
         if (!pushToken || !pushToken.startsWith('ExponentPushToken')) return;
 
-        // ✅ WHATSAPP/TWITTER STYLE GROUPING PAYLOAD
         const message = {
             to: pushToken,
             sound: 'default',
@@ -207,7 +254,7 @@ export const sendTargetedPushNotification = onDocumentCreated("users/{userId}/no
     }
 });
 
-// ✅ 5. AUTO-SEND GLOBAL BROADCASTS (Scalable Batching)
+// 5. AUTO-SEND GLOBAL BROADCASTS (Scalable Batching)
 export const sendGlobalBroadcastPush = onDocumentCreated("announcements/{announcementId}", async (event) => {
     const snapshot = event.data;
     if (!snapshot) return;
@@ -228,7 +275,6 @@ export const sendGlobalBroadcastPush = onDocumentCreated("announcements/{announc
 
         if (validTokens.length === 0) return;
 
-        // ✅ BROADCAST GROUPING PAYLOAD (Separate from Social)
         const messages = validTokens.map(token => ({
             to: token,
             sound: 'default',

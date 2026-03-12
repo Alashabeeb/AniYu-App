@@ -25,6 +25,7 @@ import CustomAlert from '../components/CustomAlert';
 import { auth, db } from '../config/firebaseConfig';
 import { useTheme } from '../context/ThemeContext';
 import { sendSocialNotification } from '../services/notificationService';
+import { deleteFromR2 } from '../services/r2Storage'; // ✅ IMPORTED R2 DELETE FUNCTION
 import { getFriendlyErrorMessage } from '../utils/errorHandler';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -254,6 +255,16 @@ export default function PostDetailsScreen() {
           { text: "Cancel", style: "cancel" },
           { text: "Delete", style: "destructive", onPress: async () => {
               try {
+                  // ✅ BUG 1 FIX: Delete file from R2 if it has media
+                  if (!post.isRepost && post.mediaUrl) {
+                      await deleteFromR2(post.mediaUrl);
+                  }
+
+                  // ✅ BUG 1 FIX: Ghost Pin Profile Bug
+                  if (post.pinned && user) {
+                      await updateDoc(doc(db, 'users', user.uid), { pinnedPostId: null });
+                  }
+
                   if (post?.parentId) {
                       const batch = writeBatch(db);
                       batch.delete(doc(db, "posts", postId as string));
@@ -262,6 +273,8 @@ export default function PostDetailsScreen() {
                   } else {
                       await deleteDoc(doc(db, "posts", postId as string));
                   }
+                  
+                  // Go back to the feed where the UI will automatically refresh
                   router.back();
               } catch (error: any) {
                   console.error("Delete Error:", error);

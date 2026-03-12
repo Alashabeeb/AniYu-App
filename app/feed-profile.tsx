@@ -310,6 +310,17 @@ export default function FeedProfileScreen() {
                   post={item as any} 
                   isVisible={playingPostId === item.id && activeTab === tabName} 
                   isProfilePinnedView={tabName === 'Posts'}
+                  // ✅ BUG FIX: Ghost Posts now instantly disappear from profile lists!
+                  onDelete={(deletedId) => {
+                      if (tabName === 'Posts') setMyPosts(prev => prev.filter(p => p.id !== deletedId));
+                      if (tabName === 'Reposts') setRepostedPosts(prev => prev.filter(p => p.id !== deletedId));
+                      if (tabName === 'Likes') setLikedPosts(prev => prev.filter(p => p.id !== deletedId));
+                  }}
+                  onBlock={(blockedId) => {
+                      if (tabName === 'Posts') setMyPosts(prev => prev.filter(p => p.userId !== blockedId && p.originalUserId !== blockedId));
+                      if (tabName === 'Reposts') setRepostedPosts(prev => prev.filter(p => p.userId !== blockedId && p.originalUserId !== blockedId));
+                      if (tabName === 'Likes') setLikedPosts(prev => prev.filter(p => p.userId !== blockedId && p.originalUserId !== blockedId));
+                  }}
               />
           )}
           
