@@ -29,7 +29,7 @@ import {
   XCircle
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { auth, db, storage } from './firebase';
+import { auth, db } from './firebase';
 import { uploadToR2 } from './utils/r2Storage';
 
 const GENRES_LIST = [
