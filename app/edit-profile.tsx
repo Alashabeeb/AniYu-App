@@ -4,7 +4,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { Stack, useRouter } from 'expo-router';
 // ✅ ADDED: collection, getDocs, query, where
 import { collection, doc, getDoc, getDocs, query, updateDoc, where } from 'firebase/firestore';
-import { getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage';
+// ✅ REMOVED FIREBASE STORAGE IMPORTS
 import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -19,8 +19,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import CustomAlert from '../components/CustomAlert';
-import { auth, db, storage } from '../config/firebaseConfig';
+import { auth, db } from '../config/firebaseConfig'; // ✅ REMOVED storage
 import { useTheme } from '../context/ThemeContext';
+import { uploadToR2 } from '../services/r2Storage'; // ✅ IMPORTED R2 UPLOAD
 
 // ✅ NEW: Genres for the user to select their interests
 const GENRES = [
@@ -90,46 +91,22 @@ export default function EditProfileScreen() {
     }
   };
 
-  const getBlobFromUri = async (uri: string): Promise<Blob> => {
-    const blob = await new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.onload = function () {
-        resolve(xhr.response);
-      };
-      xhr.onerror = function (e) {
-        reject(new TypeError("Network request failed"));
-      };
-      xhr.responseType = "blob";
-      xhr.open("GET", uri, true);
-      xhr.send(null);
-    });
-    return blob as Blob;
-  };
-
+  // ✅ UPDATED: Now uses Cloudflare R2 directly
   const uploadImage = async (uri: string, type: 'avatar' | 'banner') => {
       setUploading(true);
       try {
           const user = auth.currentUser;
           if (!user) throw new Error("User not found");
 
-          const blob = await getBlobFromUri(uri);
-          
-          const storageRef = ref(storage, `users/${user.uid}/${type}.jpg`);
-          const metadata = { contentType: 'image/jpeg' };
-          
-          await uploadBytesResumable(storageRef, blob, metadata);
-          const downloadUrl = await getDownloadURL(storageRef);
+          const folderPath = `users/${user.uid}/${type}s`;
+          const downloadUrl = await uploadToR2(uri, folderPath);
 
           if (type === 'avatar') setAvatar(downloadUrl);
           else setBanner(downloadUrl);
 
       } catch (error: any) {
           console.error(error);
-          if (error.code === 'storage/unauthorized') {
-             showAlert('error', 'Permission Denied', 'You cannot upload to this profile.');
-          } else {
-             showAlert('error', 'Upload Failed', 'Could not upload image. Please try again.');
-          }
+          showAlert('error', 'Upload Failed', 'Could not upload image. Please try again.');
       } finally {
           setUploading(false);
       }
