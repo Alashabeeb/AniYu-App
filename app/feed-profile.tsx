@@ -7,6 +7,7 @@ import {
     arrayUnion,
     collection,
     doc,
+    documentId,
     DocumentSnapshot,
     getDocs,
     limit,
@@ -182,7 +183,52 @@ export default function FeedProfileScreen() {
           }
 
           const snapshot = await getDocs(q);
-          const newPosts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          
+          // ✅ TS BUG FIX: Explicitly typed as any[] so TypeScript knows we can access .isRepost and .originalPostId
+          let newPosts: any[] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+          // ✅ BUG 1 FIX: Filter out Zombie Reposts on User Profiles
+          const originalIds = [...new Set(newPosts.map(p => p.originalPostId))];
+          if (originalIds.length > 0) {
+              try {
+                  const chunks = [];
+                  for (let i = 0; i < originalIds.length; i += 10) {
+                      chunks.push(originalIds.slice(i, i + 10));
+                  }
+
+                  const snapPromises = chunks.map(chunk => 
+                      getDocs(query(collection(db, 'posts'), where(documentId(), 'in', chunk)))
+                  );
+                  const snapResults = await Promise.all(snapPromises);
+
+                  const origMap = new Map();
+                  snapResults.forEach(snap => {
+                      snap.docs.forEach(d => origMap.set(d.id, d.data()));
+                  });
+
+                  newPosts = newPosts.map(p => {
+                      if (p.isRepost) {
+                          if (origMap.has(p.originalPostId)) {
+                              const master = origMap.get(p.originalPostId);
+                              return {
+                                  ...p,
+                                  likes: master.likes || [],
+                                  likeCount: master.likeCount || 0,
+                                  reposts: master.reposts || [],
+                                  repostCount: master.repostCount || 0,
+                                  commentCount: master.commentCount || 0,
+                                  views: master.views || 0,
+                                  text: master.text || p.text,
+                                  mediaUrl: master.mediaUrl || p.mediaUrl
+                              };
+                          } else {
+                              return null; // Master was deleted, kill the zombie
+                          }
+                      }
+                      return p;
+                  }).filter(Boolean) as any[]; // ✅ TS BUG FIX: Cast the filtered result back to any[]
+              } catch (syncErr) { console.log("Failed to sync profile master posts", syncErr); }
+          }
 
           if (initial) {
               setRepostedPosts(newPosts);
@@ -310,7 +356,6 @@ export default function FeedProfileScreen() {
                   post={item as any} 
                   isVisible={playingPostId === item.id && activeTab === tabName} 
                   isProfilePinnedView={tabName === 'Posts'}
-                  // ✅ BUG FIX: Ghost Posts now instantly disappear from profile lists!
                   onDelete={(deletedId) => {
                       if (tabName === 'Posts') setMyPosts(prev => prev.filter(p => p.id !== deletedId));
                       if (tabName === 'Reposts') setRepostedPosts(prev => prev.filter(p => p.id !== deletedId));

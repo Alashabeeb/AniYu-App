@@ -158,9 +158,10 @@ export default function PostDetailsScreen() {
               const commentId = viewToken.item.id;
               if (!viewedCommentSessionIds.has(commentId)) {
                   viewedCommentSessionIds.add(commentId);
-                  try {
-                      updateDoc(doc(db, 'posts', commentId), { views: increment(1) });
-                  } catch (e) { console.log("Error incrementing comment view", e); }
+                  // ✅ BILLING TRAP FIXED: Commented out updateDoc to stop catastrophic Firebase billing drain from comment views!
+                  // try {
+                  //     updateDoc(doc(db, 'posts', commentId), { views: increment(1) });
+                  // } catch (e) { console.log("Error incrementing comment view", e); }
               }
           }
       });
@@ -255,12 +256,10 @@ export default function PostDetailsScreen() {
           { text: "Cancel", style: "cancel" },
           { text: "Delete", style: "destructive", onPress: async () => {
               try {
-                  // ✅ BUG 1 FIX: Delete file from R2 if it has media
                   if (!post.isRepost && post.mediaUrl) {
                       await deleteFromR2(post.mediaUrl);
                   }
 
-                  // ✅ BUG 1 FIX: Ghost Pin Profile Bug
                   if (post.pinned && user) {
                       await updateDoc(doc(db, 'users', user.uid), { pinnedPostId: null });
                   }
@@ -274,7 +273,6 @@ export default function PostDetailsScreen() {
                       await deleteDoc(doc(db, "posts", postId as string));
                   }
                   
-                  // Go back to the feed where the UI will automatically refresh
                   router.back();
               } catch (error: any) {
                   console.error("Delete Error:", error);

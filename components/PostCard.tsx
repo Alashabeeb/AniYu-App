@@ -81,6 +81,9 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
 
   const [localViewCount, setLocalViewCount] = useState<number>(post.views || 0);
 
+  // ✅ BUG 3 FIX: Action Lock state to prevent Double-Tap Clones
+  const [isProcessingAction, setIsProcessingAction] = useState(false);
+
   const authorId = post.isRepost && post.originalUserId ? post.originalUserId : post.userId;
   const isOwner = post.userId === currentUser?.uid;
   const isPinned = post.pinned === true;
@@ -132,7 +135,9 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
   };
 
   const handleLike = async () => {
-    if (!currentUser) return;
+    if (!currentUser || isProcessingAction) return;
+    setIsProcessingAction(true); // Lock the UI
+
     const newIsLiked = !localIsLiked;
     setLocalIsLiked(newIsLiked);
     setLocalLikeCount((prev: number) => prev + (newIsLiked ? 1 : -1));
@@ -152,11 +157,16 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
         setLocalIsLiked(!newIsLiked);
         setLocalLikeCount((prev: number) => prev + (!newIsLiked ? 1 : -1));
         Alert.alert("Action Blocked", "Firebase blocked this action. Check your Security Rules!");
+    } finally {
+        // Enforce a strict cooldown before unlocking
+        setTimeout(() => setIsProcessingAction(false), 1000);
     }
   };
 
   const handleRepost = async () => {
-    if (!currentUser) return;
+    if (!currentUser || isProcessingAction) return;
+    setIsProcessingAction(true); // Lock the UI
+
     const newIsReposted = !localIsReposted;
     setLocalIsReposted(newIsReposted);
     setLocalRepostCount((prev: number) => prev + (newIsReposted ? 1 : -1));
@@ -215,6 +225,9 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
         setLocalIsReposted(!newIsReposted);
         setLocalRepostCount((prev: number) => prev + (!newIsReposted ? 1 : -1));
         Alert.alert("Action Blocked", "Firebase blocked this action. Check your Security Rules!");
+    } finally {
+        // Enforce a strict cooldown before unlocking
+        setTimeout(() => setIsProcessingAction(false), 1000);
     }
   };
 
@@ -265,12 +278,10 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
         { text: "Cancel", style: "cancel" },
         { text: "Delete", style: "destructive", onPress: async () => { 
             try { 
-                // ✅ BUG 1 FIX: Delete file from R2 if it's an original post
                 if (!post.isRepost && post.mediaUrl) {
                     await deleteFromR2(post.mediaUrl);
                 }
 
-                // ✅ BUG 2 FIX: Ghost Pin Profile Bug
                 if (post.pinned && currentUser) {
                     const userRef = doc(db, 'users', currentUser.uid);
                     await updateDoc(userRef, { pinnedPostId: null });
@@ -395,7 +406,8 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
           )}
 
           <View style={styles.actions}>
-            <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleLike(); }}>
+            {/* ✅ BUG 3 FIX: Disabled state passed into buttons */}
+            <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleLike(); }} disabled={isProcessingAction}>
               <Ionicons name={localIsLiked ? "heart" : "heart-outline"} size={18} color={localIsLiked ? "#FF6B6B" : theme.subText} />
               <Text style={[styles.count, { color: localIsLiked ? "#FF6B6B" : theme.subText }]}>
                   {formatCount(localLikeCount)}
@@ -409,7 +421,7 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
               </Text>
             </TouchableOpacity>
             
-            <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleRepost(); }}>
+            <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleRepost(); }} disabled={isProcessingAction}>
               <Ionicons name="repeat-outline" size={18} color={localIsReposted ? "#00BA7C" : theme.subText} />
               <Text style={[styles.count, { color: localIsReposted ? "#00BA7C" : theme.subText }]}>
                   {formatCount(localRepostCount)}

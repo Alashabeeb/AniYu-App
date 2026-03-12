@@ -240,17 +240,16 @@ export default function FeedScreen() {
 
           const reposts = fetchedChunk.filter(p => p.isRepost && p.originalPostId);
           if (reposts.length > 0) {
-              // ✅ BUG 3 FIX: Removed .slice(0, 10) to support scaling up feed chunks
               const originalIds = [...new Set(reposts.map(p => p.originalPostId))];
               if (originalIds.length > 0) {
                   try {
-                      // ✅ Chunk the IDs into arrays of 10 to bypass Firestore's "in" query limit
+                      // Chunk the IDs into arrays of 10 to bypass Firestore's "in" query limit
                       const chunks = [];
                       for (let i = 0; i < originalIds.length; i += 10) {
                           chunks.push(originalIds.slice(i, i + 10));
                       }
 
-                      // ✅ Fetch all chunks in parallel
+                      // Fetch all chunks in parallel
                       const snapPromises = chunks.map(chunk => 
                           getDocs(query(collection(db, 'posts'), where(documentId(), 'in', chunk)))
                       );
@@ -261,23 +260,31 @@ export default function FeedScreen() {
                           snap.docs.forEach(d => origMap.set(d.id, d.data()));
                       });
 
+                      // ✅ BUG 1 FIX: Obliterate Zombie Reposts. 
+                      // If the original post doesn't exist in origMap, it returns null and is filtered out.
                       fetchedChunk = fetchedChunk.map(p => {
-                          if (p.isRepost && origMap.has(p.originalPostId)) {
-                              const master = origMap.get(p.originalPostId);
-                              return {
-                                  ...p,
-                                  likes: master.likes || [],
-                                  likeCount: master.likeCount || 0,
-                                  reposts: master.reposts || [],
-                                  repostCount: master.repostCount || 0,
-                                  commentCount: master.commentCount || 0,
-                                  views: master.views || 0,
-                                  text: master.text || p.text,
-                                  mediaUrl: master.mediaUrl || p.mediaUrl
-                              };
+                          if (p.isRepost) {
+                              if (origMap.has(p.originalPostId)) {
+                                  const master = origMap.get(p.originalPostId);
+                                  return {
+                                      ...p,
+                                      likes: master.likes || [],
+                                      likeCount: master.likeCount || 0,
+                                      reposts: master.reposts || [],
+                                      repostCount: master.repostCount || 0,
+                                      commentCount: master.commentCount || 0,
+                                      views: master.views || 0,
+                                      text: master.text || p.text,
+                                      mediaUrl: master.mediaUrl || p.mediaUrl
+                                  };
+                              } else {
+                                  // The Master Post was deleted! Return null to destroy this zombie repost.
+                                  return null; 
+                              }
                           }
                           return p;
-                      });
+                      }).filter(Boolean); // <-- Safely removes the nulls!
+
                   } catch (syncErr) { console.log("Failed to sync master posts", syncErr); }
               }
           }
