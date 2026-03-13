@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
+import { doc, getDoc } from 'firebase/firestore';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -23,11 +24,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import MangaGrid from '../../components/MangaGrid';
 import TrendingRail from '../../components/TrendingRail';
+import { auth, db } from '../../config/firebaseConfig';
 import { useTheme } from '../../context/ThemeContext';
 // Services
 import { DownloadItem, getMangaDownloads, removeMangaDownload } from '../../services/downloadService';
 import { getMangaFavorites, toggleMangaFavorite } from '../../services/favoritesService';
-import { getAllManga, getTopManga, searchManga } from '../../services/mangaService';
+import { getAllManga, getRecommendedManga, getTopManga, searchManga } from '../../services/mangaService';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -50,6 +52,7 @@ export default function ComicScreen() {
   const [libraryType, setLibraryType] = useState('Favorites');
   
   const [topManga, setTopManga] = useState<any[]>([]);
+  const [recommendedManga, setRecommendedManga] = useState<any[]>([]);
   const [allManga, setAllManga] = useState<any[]>([]); 
   const [library, setLibrary] = useState<any[]>([]);
   
@@ -69,10 +72,11 @@ export default function ComicScreen() {
           try {
               const cachedData = await AsyncStorage.getItem(MANGA_SCREEN_CACHE_KEY);
               if (cachedData) {
-                  const { top, all, favs } = JSON.parse(cachedData);
+                  const { top, all, favs, recs } = JSON.parse(cachedData);
                   if (top) setTopManga(top);
                   if (all) setAllManga(all);
                   if (favs) setLibrary(favs);
+                  if (recs) setRecommendedManga(recs);
                   if (top && top.length > 0) setLoading(false);
               }
           } catch (e) { console.log("Manga cache load failed", e); }
@@ -86,57 +90,72 @@ export default function ComicScreen() {
     }, [])
   );
 
-  const loadData = async () => {
-    // ✅ 1. LOAD LOCAL DOWNLOADS (Always works offline)
+  // ✅ BUG FIX 2: Added isRefresh flag to prevent UI disruption
+  const loadData = async (isRefresh = false) => {
     try {
         const down = await getMangaDownloads(); 
         const groups: Record<string, GroupedManga> = {};
         down.forEach((item) => {
             const id = item.mal_id;
             if (!groups[id]) {
-                groups[id] = {
-                    mal_id: id,
-                    title: item.animeTitle || item.title,
-                    image: item.image || '',
-                    chapters: []
-                };
+                groups[id] = { mal_id: id, title: item.animeTitle || item.title, image: item.image || '', chapters: [] };
             }
             groups[id].chapters.push(item);
         });
-        Object.values(groups).forEach(g => {
-            g.chapters.sort((a, b) => a.number - b.number);
-        });
+        Object.values(groups).forEach(g => { g.chapters.sort((a, b) => a.number - b.number); });
         setGroupedDownloads(Object.values(groups));
     } catch (e) { console.log("Error loading downloads", e); }
 
-    // ✅ 2. LOAD NETWORK CONTENT (Might fail offline)
-    if (topManga.length === 0) setLoading(true);
+    if (topManga.length === 0 && !isRefresh) setLoading(true); 
     
     try {
         const top = await getTopManga();
         const all = await getAllManga();
         const favs = await getMangaFavorites();
 
-        // Save to cache
+        const genreCounts: Record<string, number> = {};
+        const currentUser = auth.currentUser;
+        
+        if (currentUser) {
+            try {
+                const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+                if (userDoc.exists()) {
+                    const interests = userDoc.data().interests || userDoc.data().favoriteGenres || [];
+                    interests.forEach((g: string) => { genreCounts[g] = (genreCounts[g] || 0) + 5; });
+                }
+            } catch(e) {}
+        }
+        
+        favs.forEach((item: any) => {
+            if (item.genres) {
+                item.genres.forEach((g: string) => { genreCounts[g] = (genreCounts[g] || 0) + 1; });
+            }
+        });
+        
+        const sortedGenres = Object.entries(genreCounts).sort(([, a], [, b]) => b - a).map(([genre]) => genre).slice(0, 5);
+        const recs = await getRecommendedManga(sortedGenres);
+
         AsyncStorage.setItem(MANGA_SCREEN_CACHE_KEY, JSON.stringify({
             top: top,
             all: all,
-            favs: favs
+            favs: favs,
+            recs: recs
         })).catch(e => console.log("Cache save failed", e));
         
         setTopManga(top);
         setAllManga(all);
         setLibrary(favs);
+        setRecommendedManga(recs);
     } catch (error) {
         console.error("Network error, staying with cache:", error);
     } finally {
-        setLoading(false);
+        if (!isRefresh) setLoading(false); 
     }
   };
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadData();
+    await loadData(true); // ✅ Tell the function to run silently
     setRefreshing(false);
   };
 
@@ -147,7 +166,8 @@ export default function ComicScreen() {
       AsyncStorage.setItem(MANGA_SCREEN_CACHE_KEY, JSON.stringify({
           top: topManga,
           all: allManga,
-          favs: favs
+          favs: favs,
+          recs: recommendedManga
       }));
   };
 
@@ -364,6 +384,15 @@ export default function ComicScreen() {
                       favorites={library} 
                       onToggleFavorite={handleToggleFav}
                       onMore={() => router.push('/manga-list?type=top')}
+                      onItemPress={openMangaDetails}
+                  />
+
+                  <TrendingRail 
+                      title="Recommended for You" 
+                      data={recommendedManga.slice(0, 5)} 
+                      favorites={library} 
+                      onToggleFavorite={handleToggleFav}
+                      onMore={() => router.push('/manga-list?type=recommended')}
                       onItemPress={openMangaDetails}
                   />
 

@@ -4,6 +4,8 @@ import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import {
   collection,
+  doc,
+  getDoc,
   limit,
   onSnapshot,
   query,
@@ -69,8 +71,9 @@ export default function HomeScreen() {
     }, [])
   );
 
+  // ✅ BUG FIX 1: Added currentUser?.uid to dependency array to fix Ghost Notifications
   useEffect(() => {
-      if (!currentUser) return;
+      if (!currentUser?.uid) return;
       
       const q = query(
         collection(db, 'users', currentUser.uid, 'notifications'), 
@@ -82,7 +85,7 @@ export default function HomeScreen() {
           checkUnreadStatus(snapshot.size);
       });
       return unsubscribe;
-  }, []);
+  }, [currentUser?.uid]);
 
   const checkUnreadStatus = async (socialCount?: number) => {
       const localCount = await getUnreadLocalCount();
@@ -124,15 +127,25 @@ export default function HomeScreen() {
   };
 
   const getTopGenres = async () => {
-      const history = await getContinueWatching();
-      if (history.length === 0) return [];
-
       const genreCounts: Record<string, number> = {};
       
+      if (currentUser) {
+          try {
+              const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+              if (userDoc.exists()) {
+                  const interests = userDoc.data().interests || userDoc.data().favoriteGenres || [];
+                  interests.forEach((g: string) => {
+                      genreCounts[g] = (genreCounts[g] || 0) + 5; 
+                  });
+              }
+          } catch(e) { console.log("Could not fetch user interests", e); }
+      }
+
+      const history = await getContinueWatching();
       history.forEach(item => {
           if (item.genres) {
-              item.genres.forEach(g => {
-                  genreCounts[g] = (genreCounts[g] || 0) + 1;
+              item.genres.forEach((g: string) => {
+                  genreCounts[g] = (genreCounts[g] || 0) + 1; 
               });
           }
       });
@@ -141,12 +154,13 @@ export default function HomeScreen() {
           .sort(([, a], [, b]) => b - a)
           .map(([genre]) => genre);
 
-      return sortedGenres.slice(0, 3); 
+      return sortedGenres.slice(0, 5); 
   };
 
-  const loadInitialData = async () => {
+  // ✅ BUG FIX 2: isRefresh flag prevents UI destruction during pull-to-refresh
+  const loadInitialData = async (isRefresh = false) => {
     try {
-      if (trending.length === 0) setLoading(true); 
+      if (trending.length === 0 && !isRefresh) setLoading(true); 
       
       await loadHistory();
 
@@ -172,13 +186,13 @@ export default function HomeScreen() {
     } catch (error) {
       console.error("Network error, sticking to cache:", error);
     } finally {
-      setLoading(false);
+      if (!isRefresh) setLoading(false);
     }
   };
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadInitialData();
+    await loadInitialData(true); // ✅ Passed true to run silently
     setRefreshing(false);
   }, []);
 

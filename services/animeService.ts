@@ -2,6 +2,8 @@ import {
   addDoc,
   collection,
   doc,
+  getCountFromServer // ✅ IMPORTED getCountFromServer
+  ,
   getDoc,
   getDocs,
   getDocsFromCache,
@@ -50,7 +52,6 @@ export const getTopAnime = async () => {
         results = cachedSnapshot.docs.map(doc => ({ mal_id: doc.id, ...doc.data() }));
     }
     
-    // ✅ FIX: Added (a: any) to satisfy TypeScript
     return results.filter((a: any) => allowed.includes(a.ageRating || 'All')).slice(0, 50);
   } catch (error) {
     console.error("Error fetching anime:", error);
@@ -73,7 +74,6 @@ export const getUpcomingAnime = async () => {
     const snapshot = await getDocs(q);
     const results = snapshot.docs.map(doc => ({ mal_id: doc.id, ...doc.data() }));
     
-    // ✅ FIX: Added (a: any)
     return results.filter((a: any) => allowed.includes(a.ageRating || 'All')).slice(0, 15);
   } catch (error) {
     console.error("Error fetching upcoming:", error);
@@ -98,13 +98,15 @@ export const getAnimeDetails = async (id: string) => {
   }
 };
 
-// Calculate Rank based on Views
+// ✅ BUG FIX: Calculate Rank using getCountFromServer (Stops massive billing drain)
 export const getAnimeRank = async (currentViews: number) => {
   try {
     const animeRef = collection(db, 'anime');
     const q = query(animeRef, where('views', '>', currentViews));
-    const snapshot = await getDocs(q);
-    return snapshot.size + 1;
+    
+    // Instead of downloading 500 documents to count them, we ask the server to just send the number!
+    const snapshot = await getCountFromServer(q);
+    return snapshot.data().count + 1;
   } catch (error) {
     console.error("Error fetching rank:", error);
     return 'N/A';
@@ -130,7 +132,6 @@ export const getSimilarAnime = async (genres: string[], currentId: string) => {
     
     return snapshot.docs
         .map(doc => ({ mal_id: doc.id, ...doc.data() }))
-        // ✅ FIX: Added (a: any)
         .filter((a: any) => allowed.includes(a.ageRating || 'All') && String(a.mal_id) !== String(currentId))
         .slice(0, 20);
 
@@ -165,7 +166,6 @@ export const getRecommendedAnime = async (userGenres: string[]) => {
         ...doc.data()
     })) as any[];
 
-    // ✅ FIX: Added (a: any)
     results = results.filter((a: any) => allowed.includes(a.ageRating || 'All'));
     return results.sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 50);
 
@@ -233,7 +233,6 @@ export const searchAnime = async (queryText: string) => {
       ...doc.data()
     }));
     
-    // ✅ FIX: Added (a: any)
     return results.filter((a: any) => allowed.includes(a.ageRating || 'All')).slice(0, 20);
 
   } catch (error) {

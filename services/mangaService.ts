@@ -1,8 +1,7 @@
 import {
   collection,
-  doc, // ✅ NEW IMPORT
-  DocumentSnapshot // ✅ NEW IMPORT
-  ,
+  doc,
+  DocumentSnapshot,
   getDoc,
   getDocs,
   getDocsFromCache,
@@ -50,7 +49,7 @@ export const getTopManga = async () => {
 export const getAllManga = async () => {
   try {
     const mangaRef = collection(db, 'manga');
-    const q = query(mangaRef, orderBy('updatedAt', 'desc'), limit(50)); // ✅ Reduced limit to 50
+    const q = query(mangaRef, orderBy('updatedAt', 'desc'), limit(50)); 
     
     const snapshot = await getDocs(q);
     const results = snapshot.docs.map(doc => ({ mal_id: doc.id, ...doc.data() }));
@@ -62,16 +61,18 @@ export const getAllManga = async () => {
   }
 };
 
-// 3. Search Manga (Optimized Prefix Search)
+// ✅ BUG FIX: Case-Insensitive Search using keywords array!
 export const searchManga = async (queryText: string) => {
   if (!queryText) return [];
   try {
     const mangaRef = collection(db, 'manga');
-    // ✅ OPTIMIZED: Uses Firestore query instead of client-side filtering
+    
+    // Convert to lowercase for bulletproof searching
+    const searchTerm = queryText.toLowerCase().trim().split(/\s+/)[0]; 
+
     const q = query(
         mangaRef, 
-        where('title', '>=', queryText),
-        where('title', '<=', queryText + '\uf8ff'),
+        where('keywords', 'array-contains', searchTerm),
         limit(20)
     );
     
@@ -84,6 +85,38 @@ export const searchManga = async (queryText: string) => {
     return await filterContent(matches);
   } catch (error) {
     console.error("Error searching manga:", error);
+    return [];
+  }
+};
+
+// ✅ NEW: Get Recommended Manga based on User Genres
+export const getRecommendedManga = async (userGenres: string[]) => {
+  try {
+    if (!userGenres || userGenres.length === 0) {
+        return getTopManga(); 
+    }
+
+    const searchGenres = userGenres.slice(0, 5); 
+    const mangaRef = collection(db, 'manga');
+    
+    const q = query(
+        mangaRef, 
+        where('genres', 'array-contains-any', searchGenres), 
+        limit(100)
+    );
+    
+    const snapshot = await getDocs(q);
+    
+    let results = snapshot.docs.map(doc => ({
+        mal_id: doc.id,
+        ...doc.data()
+    })) as any[];
+
+    results = await filterContent(results);
+    return results.sort((a: any, b: any) => (b.views || 0) - (a.views || 0)).slice(0, 50);
+
+  } catch (error) {
+    console.error("Error fetching recommended manga:", error);
     return [];
   }
 };
@@ -109,7 +142,6 @@ export const getMangaDetails = async (id: string) => {
 export const getMangaChapters = async (id: string, lastVisible: DocumentSnapshot | null = null) => {
   try {
     const chaptersRef = collection(db, 'manga', id, 'chapters');
-    // ✅ PAGINATION: Fetch 50 at a time
     let q = query(chaptersRef, orderBy('number', 'asc'), limit(50));
     
     if (lastVisible) {
@@ -128,7 +160,7 @@ export const getMangaChapters = async (id: string, lastVisible: DocumentSnapshot
   }
 };
 
-// ✅ NEW: Get Single Adjacent Chapter (Next/Prev)
+// Get Single Adjacent Chapter (Next/Prev)
 export const getAdjacentChapter = async (mangaId: string, currentNumber: number, direction: 'next' | 'prev') => {
     try {
         const chaptersRef = collection(db, 'manga', mangaId, 'chapters');
@@ -139,7 +171,7 @@ export const getAdjacentChapter = async (mangaId: string, currentNumber: number,
             chaptersRef, 
             where('number', op, currentNumber),
             orderBy('number', sortOrder),
-            limit(1) // ✅ Only fetch ONE document
+            limit(1) 
         );
         
         const snapshot = await getDocs(q);
