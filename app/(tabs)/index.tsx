@@ -11,7 +11,7 @@ import {
   query,
   where
 } from 'firebase/firestore';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -42,6 +42,9 @@ export default function HomeScreen() {
   const { theme, isDark } = useTheme();
   const currentUser = auth.currentUser;
 
+  // ✅ BUG FIX 1: Memory Leak Protection Ref
+  const isMountedRef = useRef(true);
+
   const [trending, setTrending] = useState<any[]>([]);
   const [upcoming, setUpcoming] = useState<any[]>([]); 
   const [recommended, setRecommended] = useState<any[]>([]); 
@@ -59,8 +62,11 @@ export default function HomeScreen() {
   const [hasUnread, setHasUnread] = useState(false);
 
   useEffect(() => { 
+      isMountedRef.current = true;
       loadFromCache(); 
       loadInitialData(); 
+      
+      return () => { isMountedRef.current = false; }; // Cleanup on unmount
   }, []);
 
   useFocusEffect(
@@ -71,7 +77,6 @@ export default function HomeScreen() {
     }, [])
   );
 
-  // ✅ BUG FIX 1: Added currentUser?.uid to dependency array to fix Ghost Notifications
   useEffect(() => {
       if (!currentUser?.uid) return;
       
@@ -82,13 +87,14 @@ export default function HomeScreen() {
       );
       
       const unsubscribe = onSnapshot(q, (snapshot) => {
-          checkUnreadStatus(snapshot.size);
+          if (isMountedRef.current) checkUnreadStatus(snapshot.size);
       });
       return unsubscribe;
   }, [currentUser?.uid]);
 
   const checkUnreadStatus = async (socialCount?: number) => {
       const localCount = await getUnreadLocalCount();
+      if (!isMountedRef.current) return;
       if (socialCount !== undefined) {
            setHasUnread(socialCount > 0 || localCount > 0);
       } else {
@@ -98,6 +104,7 @@ export default function HomeScreen() {
 
   const loadFavorites = async () => {
       const favs = await getFavorites();
+      if (!isMountedRef.current) return;
       const animeFavs = favs.filter((item: any) => {
           const type = item.type?.toLowerCase();
           return type !== 'manga' && type !== 'manhwa' && type !== 'novel' && !item.isManga;
@@ -107,13 +114,13 @@ export default function HomeScreen() {
 
   const loadHistory = async () => {
       const history = await getContinueWatching();
-      setContinueWatching(history);
+      if (isMountedRef.current) setContinueWatching(history);
   };
 
   const loadFromCache = async () => {
       try {
           const cachedData = await AsyncStorage.getItem(HOME_DATA_CACHE_KEY);
-          if (cachedData) {
+          if (cachedData && isMountedRef.current) {
               const { trending, upcoming, recommended } = JSON.parse(cachedData);
               if (trending) setTrending(trending);
               if (upcoming) setUpcoming(upcoming);
@@ -138,7 +145,7 @@ export default function HomeScreen() {
                       genreCounts[g] = (genreCounts[g] || 0) + 5; 
                   });
               }
-          } catch(e) { console.log("Could not fetch user interests", e); }
+          } catch(e) {}
       }
 
       const history = await getContinueWatching();
@@ -157,10 +164,9 @@ export default function HomeScreen() {
       return sortedGenres.slice(0, 5); 
   };
 
-  // ✅ BUG FIX 2: isRefresh flag prevents UI destruction during pull-to-refresh
   const loadInitialData = async (isRefresh = false) => {
     try {
-      if (trending.length === 0 && !isRefresh) setLoading(true); 
+      if (trending.length === 0 && !isRefresh && isMountedRef.current) setLoading(true); 
       
       await loadHistory();
 
@@ -172,9 +178,12 @@ export default function HomeScreen() {
 
       const recommendedData = await getRecommendedAnime(userGenres);
 
-      setTrending(trendingData);
-      setUpcoming(upcomingData);
-      setRecommended(recommendedData);
+      // ✅ Safe state updates
+      if (isMountedRef.current) {
+          setTrending(trendingData);
+          setUpcoming(upcomingData);
+          setRecommended(recommendedData);
+      }
 
       await AsyncStorage.setItem(HOME_DATA_CACHE_KEY, JSON.stringify({
           trending: trendingData,
@@ -186,14 +195,15 @@ export default function HomeScreen() {
     } catch (error) {
       console.error("Network error, sticking to cache:", error);
     } finally {
-      if (!isRefresh) setLoading(false);
+      if (!isRefresh && isMountedRef.current) setLoading(false);
     }
   };
 
   const onRefresh = useCallback(async () => {
+    if (!isMountedRef.current) return;
     setRefreshing(true);
-    await loadInitialData(true); // ✅ Passed true to run silently
-    setRefreshing(false);
+    await loadInitialData(true);
+    if (isMountedRef.current) setRefreshing(false);
   }, []);
 
   const handleToggleFav = async (anime: any) => {
@@ -216,9 +226,9 @@ export default function HomeScreen() {
     setIsSearching(true);
     try {
       const results = await searchAnime(queryText);
-      setSearchResults(results);
+      if (isMountedRef.current) setSearchResults(results);
     } catch (error) { console.error(error); } 
-    finally { setSearchLoading(false); }
+    finally { if (isMountedRef.current) setSearchLoading(false); }
   };
 
   const clearSearch = () => {
@@ -296,7 +306,8 @@ export default function HomeScreen() {
             ) : (
                 <FlatList
                     data={searchResults}
-                    keyExtractor={(item) => item.mal_id.toString()}
+                    // ✅ BUG FIX 2: Added index to guarantee unique keys
+                    keyExtractor={(item, index) => `${item.mal_id}-${index}`}
                     renderItem={renderSearchItem}
                     contentContainerStyle={{ padding: 20 }}
                     ListEmptyComponent={

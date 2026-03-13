@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { doc, getDoc } from 'firebase/firestore';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -48,6 +48,9 @@ export default function ComicScreen() {
   const router = useRouter();
   const { theme } = useTheme();
   
+  // ✅ BUG FIX 1: Memory Leak Protection Ref
+  const isMountedRef = useRef(true);
+
   const [activeTab, setActiveTab] = useState('Discover'); 
   const [libraryType, setLibraryType] = useState('Favorites');
   
@@ -68,10 +71,11 @@ export default function ComicScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
+      isMountedRef.current = true;
       const loadCache = async () => {
           try {
               const cachedData = await AsyncStorage.getItem(MANGA_SCREEN_CACHE_KEY);
-              if (cachedData) {
+              if (cachedData && isMountedRef.current) {
                   const { top, all, favs, recs } = JSON.parse(cachedData);
                   if (top) setTopManga(top);
                   if (all) setAllManga(all);
@@ -82,6 +86,8 @@ export default function ComicScreen() {
           } catch (e) { console.log("Manga cache load failed", e); }
       };
       loadCache();
+      
+      return () => { isMountedRef.current = false; };
   }, []);
 
   useFocusEffect(
@@ -90,7 +96,6 @@ export default function ComicScreen() {
     }, [])
   );
 
-  // ✅ BUG FIX 2: Added isRefresh flag to prevent UI disruption
   const loadData = async (isRefresh = false) => {
     try {
         const down = await getMangaDownloads(); 
@@ -103,10 +108,11 @@ export default function ComicScreen() {
             groups[id].chapters.push(item);
         });
         Object.values(groups).forEach(g => { g.chapters.sort((a, b) => a.number - b.number); });
-        setGroupedDownloads(Object.values(groups));
+        
+        if (isMountedRef.current) setGroupedDownloads(Object.values(groups));
     } catch (e) { console.log("Error loading downloads", e); }
 
-    if (topManga.length === 0 && !isRefresh) setLoading(true); 
+    if (topManga.length === 0 && !isRefresh && isMountedRef.current) setLoading(true); 
     
     try {
         const top = await getTopManga();
@@ -142,27 +148,31 @@ export default function ComicScreen() {
             recs: recs
         })).catch(e => console.log("Cache save failed", e));
         
-        setTopManga(top);
-        setAllManga(all);
-        setLibrary(favs);
-        setRecommendedManga(recs);
+        // ✅ Safe state updates
+        if (isMountedRef.current) {
+            setTopManga(top);
+            setAllManga(all);
+            setLibrary(favs);
+            setRecommendedManga(recs);
+        }
     } catch (error) {
         console.error("Network error, staying with cache:", error);
     } finally {
-        if (!isRefresh) setLoading(false); 
+        if (!isRefresh && isMountedRef.current) setLoading(false); 
     }
   };
 
   const onRefresh = async () => {
+    if (!isMountedRef.current) return;
     setRefreshing(true);
-    await loadData(true); // ✅ Tell the function to run silently
-    setRefreshing(false);
+    await loadData(true); 
+    if (isMountedRef.current) setRefreshing(false);
   };
 
   const handleToggleFav = async (manga: any) => {
       await toggleMangaFavorite(manga);
       const favs = await getMangaFavorites();
-      setLibrary(favs);
+      if (isMountedRef.current) setLibrary(favs);
       AsyncStorage.setItem(MANGA_SCREEN_CACHE_KEY, JSON.stringify({
           top: topManga,
           all: allManga,
@@ -195,8 +205,10 @@ export default function ComicScreen() {
       setSearchLoading(true);
       setIsSearching(true);
       const results = await searchManga(searchQuery);
-      setSearchResults(results);
-      setSearchLoading(false);
+      if (isMountedRef.current) {
+          setSearchResults(results);
+          setSearchLoading(false);
+      }
   };
 
   const openMangaDetails = (item: any) => {
@@ -272,7 +284,8 @@ export default function ComicScreen() {
           ) : (
              <FlatList
                 data={groupedDownloads}
-                keyExtractor={(item) => item.mal_id.toString()}
+                // ✅ BUG FIX 2: Added index to keys
+                keyExtractor={(item, index) => `${item.mal_id}-${index}`}
                 renderItem={({ item }) => {
                     const isExpanded = expandedId === item.mal_id;
                     return (
@@ -368,7 +381,8 @@ export default function ComicScreen() {
                   ) : (
                       <FlatList
                           data={searchResults}
-                          keyExtractor={(item) => item.mal_id.toString()}
+                          // ✅ BUG FIX 2: Added index to keys
+                          keyExtractor={(item, index) => `${item.mal_id}-${index}`}
                           numColumns={3}
                           renderItem={renderGridItem}
                           contentContainerStyle={{ padding: 10 }}
