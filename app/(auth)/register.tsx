@@ -10,13 +10,16 @@ import {
     signOut,
     updateProfile
 } from 'firebase/auth';
-import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
-import React, { useState } from 'react';
+import { collection, doc, getDoc, getDocs, increment, query, setDoc, updateDoc, where } from 'firebase/firestore';
+import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator, KeyboardAvoidingView,
     Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Clipboard from 'expo-clipboard';
 
 import CustomAlert from '../../components/CustomAlert';
 import { auth, db } from '../../config/firebaseConfig';
@@ -34,6 +37,7 @@ export default function SignUpScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
+  const [inviteCode, setInviteCode] = useState(''); // ✅ Added State for the new text box
   const [loading, setLoading] = useState(false);
 
   const [alertConfig, setAlertConfig] = useState({
@@ -45,6 +49,80 @@ export default function SignUpScreen() {
 
   const showAlert = (type: 'success' | 'error' | 'warning' | 'info', title: string, message: string) => {
     setAlertConfig({ visible: true, type, title, message });
+  };
+
+  // ==========================================
+  // ✅ AUTO-FILL CLIPBOARD CATCHER
+  // ==========================================
+  useEffect(() => {
+      const catchReferralFromClipboard = async () => {
+          try {
+              const text = await Clipboard.getStringAsync();
+              
+              if (text && text.length > 3 && text.length < 20 && /^[a-zA-Z0-9-]+$/.test(text)) {
+                  
+                  const clickTracked = await AsyncStorage.getItem(`trackedClick_${text}`);
+                  
+                  if (!clickTracked) {
+                      const usersRef = collection(db, "users");
+                      const q = query(usersRef, where("affiliateCode", "==", text.toLowerCase()));
+                      const snapshot = await getDocs(q);
+
+                      if (!snapshot.empty) {
+                          const affiliateDoc = snapshot.docs[0];
+                          
+                          // ✅ 1. Auto-fill the UI text box!
+                          setInviteCode(text.toLowerCase());
+                          await AsyncStorage.setItem('referralCode', text.toLowerCase());
+
+                          // 2. Track +1 Click
+                          await updateDoc(doc(db, "users", affiliateDoc.id), {
+                              affiliateClicks: increment(1)
+                          });
+                          await AsyncStorage.setItem(`trackedClick_${text}`, 'true');
+                      }
+                  } else {
+                      // Even if we already tracked the click, auto-fill the text box for the user
+                      setInviteCode(text.toLowerCase());
+                  }
+              }
+          } catch (e) {
+              console.log("Clipboard check silently failed", e);
+          }
+      };
+
+      catchReferralFromClipboard();
+  }, []);
+
+  // ==========================================
+  // ✅ CONVERSION TRACKER HELPER
+  // ==========================================
+  const handleAffiliateSignupCredit = async (codeToUse: string) => {
+      try {
+          // Use what is in the text box. If empty, check the backpack as a backup.
+          let finalCode = codeToUse || await AsyncStorage.getItem('referralCode');
+          
+          if (finalCode) {
+              finalCode = finalCode.trim().toLowerCase();
+              const usersRef = collection(db, "users");
+              const q = query(usersRef, where("affiliateCode", "==", finalCode));
+              const snapshot = await getDocs(q);
+              
+              if (!snapshot.empty) {
+                  const affiliateDoc = snapshot.docs[0];
+                  // Give the affiliate +1 Signup
+                  await updateDoc(doc(db, "users", affiliateDoc.id), {
+                      affiliateSignups: increment(1)
+                  });
+              }
+              // Wipe the backpack
+              await AsyncStorage.removeItem('referralCode');
+              return finalCode;
+          }
+      } catch (e) {
+          console.log("Affiliate credit silently failed", e);
+      }
+      return null;
   };
 
   // --- SOCIAL SIGN UP ---
@@ -88,6 +166,9 @@ export default function SignUpScreen() {
       if (!userDoc.exists()) {
         const generatedUsername = user.displayName?.replace(/\s+/g, '').toLowerCase() || `user${Date.now().toString().slice(-6)}`;
         
+        // ✅ Pass the text box value to the credit function
+        const referredByCode = await handleAffiliateSignupCredit(inviteCode);
+
         await setDoc(userDocRef, {
             username: generatedUsername,
             displayName: user.displayName || "User",
@@ -101,7 +182,8 @@ export default function SignUpScreen() {
             createdAt: new Date(),
             lastActiveAt: new Date(),
             isVerified: false,
-            hasAcceptedTerms: false // ✅ Set to false so Gatekeeper triggers
+            hasAcceptedTerms: false, 
+            referredBy: referredByCode || null // ✅ Save who invited them
         });
         showAlert('success', 'Welcome!', 'Your account has been created successfully.');
       } else {
@@ -134,7 +216,6 @@ export default function SignUpScreen() {
 
     setLoading(true);
     try {
-        // Validate unique username BEFORE creating auth
         const usersRef = collection(db, "users");
         const q = query(usersRef, where("username", "==", username.toLowerCase()));
         const snapshot = await getDocs(q);
@@ -144,7 +225,6 @@ export default function SignUpScreen() {
             return showAlert('error', 'Username Taken', 'This username is already in use. Please choose another.');
         }
 
-        // All good -> execute Firebase Auth
         await executeFirebaseEmailSignUp();
 
     } catch (error: any) {
@@ -160,6 +240,9 @@ export default function SignUpScreen() {
 
           await updateProfile(user, { displayName: username });
 
+          // ✅ Pass the text box value to the credit function
+          const referredByCode = await handleAffiliateSignupCredit(inviteCode);
+
           await setDoc(doc(db, "users", user.uid), {
               username: username.toLowerCase(),
               displayName: username,
@@ -173,7 +256,8 @@ export default function SignUpScreen() {
               createdAt: new Date(),
               lastActiveAt: new Date(),
               isVerified: false,
-              hasAcceptedTerms: false // ✅ Set to false so Gatekeeper triggers
+              hasAcceptedTerms: false, 
+              referredBy: referredByCode || null // ✅ Save who invited them
           });
 
           showAlert('success', 'Welcome!', 'Your account has been created successfully.');
@@ -232,6 +316,19 @@ export default function SignUpScreen() {
                         value={password}
                         onChangeText={setPassword}
                         secureTextEntry
+                    />
+                </View>
+
+                {/* ✅ ADDED: Invite Code Text Box */}
+                <View style={[styles.inputContainer, { backgroundColor: theme.card, borderColor: theme.border }]}>
+                    <Ionicons name="gift-outline" size={20} color={theme.subText} style={styles.icon} />
+                    <TextInput 
+                        placeholder="Invite Code (Optional)" 
+                        placeholderTextColor={theme.subText} 
+                        style={[styles.input, { color: theme.text }]} 
+                        value={inviteCode}
+                        onChangeText={setInviteCode}
+                        autoCapitalize="none"
                     />
                 </View>
 

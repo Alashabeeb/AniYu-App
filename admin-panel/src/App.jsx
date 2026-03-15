@@ -5,8 +5,8 @@ import {
     query, serverTimestamp, updateDoc, where
 } from 'firebase/firestore';
 import {
-    Bell, BookOpen, ChevronDown, Edit, Eye, Flag,
-    LayoutDashboard, LifeBuoy, LogOut, Menu, MessageSquare, // ✅ IMPORTED LifeBuoy
+    Bell, BookOpen, ChevronDown, DollarSign, Edit, Eye, Flag,
+    LayoutDashboard, LifeBuoy, LogOut, Menu, MessageSquare,
     Settings, ThumbsUp, TrendingUp, Users as UsersIcon, Video, X
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -14,6 +14,7 @@ import { Link, Navigate, Route, BrowserRouter as Router, Routes, useLocation, us
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 // ✅ IMPORT PAGES
+import Affiliate from './Affiliate'; // ✅ IMPORTED AFFILIATE PAGE
 import Analytics from './Analytics';
 import AnimeUpload from './AnimeUpload';
 import Comments from './Comments';
@@ -22,7 +23,7 @@ import MangaUpload from './MangaUpload';
 import Notifications from './Notifications';
 import Reports from './Reports';
 import SettingsPage from './Settings';
-import Support from './Support'; // ✅ IMPORTED SUPPORT PAGE
+import Support from './Support';
 import Users from './Users';
 import { auth, db } from './firebase';
 
@@ -447,7 +448,11 @@ function Layout({ logout, role, userId }) {
                     <MessageSquare size={20} /> <span>Comments</span>
                 </Link>
 
-                {/* ✅ SUPPORT DESK LINK ADDED HERE */}
+                {/* ✅ AFFILIATE ROUTE LINK ADDED HERE */}
+                <Link to="/affiliates" className={isActive('/affiliates')}>
+                    <DollarSign size={20} /> <span>Affiliates</span>
+                </Link>
+
                 <Link to="/support" className={isActive('/support')}>
                     <LifeBuoy size={20} /> <span>Support Desk</span>
                 </Link>
@@ -518,7 +523,13 @@ function Layout({ logout, role, userId }) {
                     </ProtectedRoute>
                 } />
 
-                {/* ✅ SUPPORT DESK ROUTE ADDED HERE */}
+                {/* ✅ AFFILIATE ROUTE ADDED HERE */}
+                <Route path="/affiliates" element={
+                    <ProtectedRoute role={role} allowedRoles={['admin', 'super_admin']}>
+                        <Affiliate />
+                    </ProtectedRoute>
+                } />
+
                 <Route path="/support" element={
                     <ProtectedRoute role={role} allowedRoles={['admin', 'super_admin']}>
                         <Support />
