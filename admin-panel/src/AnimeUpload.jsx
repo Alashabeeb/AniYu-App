@@ -119,6 +119,11 @@ export default function AnimeUpload() {
   
   const [hasStreamingRights, setHasStreamingRights] = useState(true);
 
+  // ✅ NEW METADATA STATE
+  const [studio, setStudio] = useState('');
+  const [producer, setProducer] = useState('');
+  const [availableOn, setAvailableOn] = useState('');
+
   // BODY STATE (Episode Form)
   const [episodes, setEpisodes] = useState([]);
   const [deletedEpisodes, setDeletedEpisodes] = useState([]);
@@ -257,6 +262,9 @@ export default function AnimeUpload() {
     setIsEditMode(false);
     setAnimeTitle(''); setTotalEpisodes(''); setReleaseYear(''); setSynopsis(''); setSelectedGenres([]); setExistingCoverUrl(''); setAnimeCover(null);
     
+    // ✅ RESET NEW METADATA
+    setStudio(''); setProducer(''); setAvailableOn('');
+
     if (currentUser?.role === 'anime_producer') {
         setAnimeStatus('Pending');
     } else {
@@ -285,6 +293,11 @@ export default function AnimeUpload() {
     setAnimeStatus(anime.status || 'Ongoing');
     
     setHasStreamingRights(anime.hasStreamingRights !== false);
+
+    // ✅ LOAD NEW METADATA
+    setStudio(anime.studio || '');
+    setProducer(anime.producer || '');
+    setAvailableOn(anime.availableOn || '');
 
     setDeletedEpisodes([]);
     
@@ -459,6 +472,10 @@ export default function AnimeUpload() {
         type: 'TV', 
         status: finalStatus,
         hasStreamingRights, 
+        // ✅ SAVE NEW METADATA
+        studio,
+        producer,
+        availableOn,
         uploaderId: currentUser.uid, 
         updatedAt: serverTimestamp()
       };
@@ -494,7 +511,8 @@ export default function AnimeUpload() {
         const ep = episodes[i];
         setStatus(`Uploading Episode ${ep.number} media & subtitles...`);
         
-        if (!ep.videoFile && !ep.existingVideoUrl) continue;
+        // Skip video upload check if they are explicitly adding a tracker-only episode without a file
+        if (!ep.videoFile && !ep.existingVideoUrl && hasStreamingRights) continue;
 
         const vidResult = await uploadFile(ep.videoFile, `anime/${animeId}/episodes`);
         const thumbResult = await uploadFile(ep.thumbFile, 'episode_thumbnails');
@@ -508,7 +526,7 @@ export default function AnimeUpload() {
         const epData = {
           title: ep.title || `Episode ${ep.number}`, 
           number: Number(ep.number),
-          videoUrl: vidResult?.url || ep.existingVideoUrl,
+          videoUrl: vidResult?.url || ep.existingVideoUrl || '', // Allow empty string for tracker mode
           thumbnailUrl: thumbResult?.url || ep.existingThumbUrl || finalCoverUrl,
           size: vidResult?.size || ep.existingSize || 0,
           subtitles: finalSubtitles,
@@ -891,7 +909,15 @@ export default function AnimeUpload() {
                     <div className="form-group"><span className="form-label">Total Eps</span><input type="number" className="input-field" placeholder="12" value={totalEpisodes} onChange={e => setTotalEpisodes(e.target.value)} /></div>
                     <div className="form-group"><span className="form-label">Year</span><input type="number" className="input-field" placeholder="2024" value={releaseYear} onChange={e => setReleaseYear(e.target.value)} /></div>
                 </div>
-                <div className="form-group"><span className="form-label">Synopsis</span><textarea className="textarea-field" value={synopsis} onChange={e => setSynopsis(e.target.value)}></textarea></div>
+
+                {/* ✅ NEW METADATA ROW */}
+                <div className="grid-3" style={{marginTop: 15, display:'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20}}>
+                    <div className="form-group"><span className="form-label">Studio</span><input type="text" className="input-field" placeholder="e.g. MAPPA, Ufotable" value={studio} onChange={e => setStudio(e.target.value)} /></div>
+                    <div className="form-group"><span className="form-label">Producer</span><input type="text" className="input-field" placeholder="e.g. Aniplex" value={producer} onChange={e => setProducer(e.target.value)} /></div>
+                    <div className="form-group"><span className="form-label">Available On</span><input type="text" className="input-field" placeholder="Crunchyroll, Netflix..." value={availableOn} onChange={e => setAvailableOn(e.target.value)} /></div>
+                </div>
+
+                <div className="form-group" style={{marginTop: 15}}><span className="form-label">Synopsis</span><textarea className="textarea-field" value={synopsis} onChange={e => setSynopsis(e.target.value)}></textarea></div>
                 <div className="form-group"><span className="form-label">Genres</span><div className="chips-container">{GENRES_LIST.map(g => <div key={g} className={`chip ${selectedGenres.includes(g) ? 'selected' : ''}`} onClick={() => { if(selectedGenres.includes(g)) setSelectedGenres(prev=>prev.filter(x=>x!==g)); else if(selectedGenres.length<3) setSelectedGenres([...selectedGenres, g]); }}>{g}</div>)}</div></div>
                 <div className="form-group"><span className="form-label">Age Rating</span><div className="chips-container">{AGE_RATINGS.map(r => <div key={r} className={`chip ${selectedAge === r ? 'selected' : ''}`} onClick={() => setSelectedAge(r)}>{r}</div>)}</div></div>
               </div>
@@ -924,31 +950,32 @@ export default function AnimeUpload() {
                       </div>
                    </div>
                    <div>
-                      <div className="form-group">
-                         <span className="form-label">Video File {ep.existingVideoUrl && "(Uploaded)"}</span>
-                         <input type="file" accept="video/*, .mkv, .mp4, .avi, .mov, .flv, .wmv, .webm" className="hidden" id={`vid-${ep.id}`} onChange={(e) => updateEpisodeState(index, 'videoFile', e.target.files[0])} />
-                         <label htmlFor={`vid-${ep.id}`} className={`upload-zone ${ep.videoFile ? 'active' : ''}`} style={{ minHeight: 180 }}>
-                            {ep.videoFile ? <div style={{textAlign:'center', color:'#7c3aed'}}><FileVideo size={40}/><div>{ep.videoFile.name}</div></div> : ep.existingVideoUrl ? <div style={{textAlign:'center', color:'#10b981'}}><FileVideo size={40}/><div>Video Exists</div><div style={{fontSize:10}}>Click to Replace</div></div> : <div style={{textAlign:'center', color:'#9ca3af'}}><Upload size={40}/> Upload Video</div>}
+                      {/* Only require video upload visually if streaming is active */}
+                      <div className="form-group" style={{ opacity: hasStreamingRights ? 1 : 0.5 }}>
+                         <span className="form-label">Video File {ep.existingVideoUrl && "(Uploaded)"} {!hasStreamingRights && "- Optional (Tracker Mode)"}</span>
+                         <input type="file" accept="video/*" disabled={!hasStreamingRights && !ep.existingVideoUrl} className="hidden" id={`vid-${ep.id}`} onChange={(e) => updateEpisodeState(index, 'videoFile', e.target.files[0])} />
+                         <label htmlFor={`vid-${ep.id}`} className={`upload-zone ${ep.videoFile ? 'active' : ''}`} style={{ minHeight: 180, cursor: (!hasStreamingRights && !ep.existingVideoUrl) ? 'not-allowed' : 'pointer' }}>
+                            {ep.videoFile ? <div style={{textAlign:'center', color:'#7c3aed'}}><FileVideo size={40}/><div>{ep.videoFile.name}</div></div> : ep.existingVideoUrl ? <div style={{textAlign:'center', color:'#10b981'}}><FileVideo size={40}/><div>Video Exists</div></div> : <div style={{textAlign:'center', color:'#9ca3af'}}><Upload size={40}/> Upload Video</div>}
                          </label>
                       </div>
-                      <div className="form-group" style={{marginTop: 20, background: '#f8fafc', padding: 15, borderRadius: 12, border: '1px dashed #e2e8f0'}}>
+                      <div className="form-group" style={{marginTop: 20, background: '#f8fafc', padding: 15, borderRadius: 12, border: '1px dashed #e2e8f0', opacity: hasStreamingRights ? 1 : 0.5}}>
                           <div style={{display:'flex', justifyContent:'space-between', marginBottom:10}}>
                              <span className="form-label" style={{marginBottom:0}}>Subtitles ({ep.subtitles.length})</span>
-                             <button type="button" onClick={() => addSubtitle(index)} style={{fontSize:'0.75rem', fontWeight:700, color:'#2563eb', background:'none', border:'none', cursor:'pointer'}}>+ Add Language</button>
+                             <button type="button" onClick={() => addSubtitle(index)} disabled={!hasStreamingRights} style={{fontSize:'0.75rem', fontWeight:700, color:'#2563eb', background:'none', border:'none', cursor: hasStreamingRights ? 'pointer' : 'not-allowed'}}>+ Add Language</button>
                           </div>
                           <div style={{display:'flex', flexDirection:'column', gap:10}}>
                              {ep.subtitles.map((sub, subIdx) => (
                                 <div key={sub.id} style={{display:'flex', gap:10, alignItems:'center'}}>
-                                   <select className="input-field" style={{padding:'8px', fontSize:'0.85rem', width:120}} value={sub.language} onChange={(e) => updateSubtitle(index, subIdx, 'language', e.target.value)}>
+                                   <select className="input-field" style={{padding:'8px', fontSize:'0.85rem', width:120}} disabled={!hasStreamingRights} value={sub.language} onChange={(e) => updateSubtitle(index, subIdx, 'language', e.target.value)}>
                                       {LANGUAGES.map(l => <option key={l} value={l}>{l}</option>)}
                                    </select>
                                    <div style={{flex:1, position:'relative'}}>
-                                      <input type="file" className="hidden" id={`sub-${sub.id}`} onChange={(e) => updateSubtitle(index, subIdx, 'file', e.target.files[0])} />
-                                      <label htmlFor={`sub-${sub.id}`} style={{display:'block', padding:'8px 12px', background:'white', border:'1px solid #cbd5e1', borderRadius:8, fontSize:'0.85rem', cursor:'pointer', color:'#475569', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>
+                                      <input type="file" className="hidden" id={`sub-${sub.id}`} disabled={!hasStreamingRights} onChange={(e) => updateSubtitle(index, subIdx, 'file', e.target.files[0])} />
+                                      <label htmlFor={`sub-${sub.id}`} style={{display:'block', padding:'8px 12px', background:'white', border:'1px solid #cbd5e1', borderRadius:8, fontSize:'0.85rem', cursor: hasStreamingRights ? 'pointer' : 'not-allowed', color:'#475569', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>
                                          {sub.file ? sub.file.name : sub.url ? "Existing Subtitle" : "Select .SRT File"}
                                       </label>
                                    </div>
-                                   <button type="button" onClick={() => removeSubtitle(index, subIdx)} style={{color:'#ef4444', background:'none', border:'none', cursor:'pointer'}}><X size={16}/></button>
+                                   <button type="button" onClick={() => removeSubtitle(index, subIdx)} disabled={!hasStreamingRights} style={{color:'#ef4444', background:'none', border:'none', cursor: hasStreamingRights ? 'pointer' : 'not-allowed'}}><X size={16}/></button>
                                 </div>
                              ))}
                              {ep.subtitles.length === 0 && <div style={{fontSize:'0.8rem', color:'#94a3b8', fontStyle:'italic'}}>No subtitles added.</div>}
