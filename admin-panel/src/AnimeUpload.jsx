@@ -4,7 +4,6 @@ import {
 import { deleteObject, ref } from 'firebase/storage';
 import {
   ArrowLeft,
-  Bell,
   Captions,
   CheckCircle,
   Download,
@@ -39,45 +38,21 @@ const GENRES_LIST = [
   "Sports", "Supernatural", "Thriller", "Isekai"
 ];
 
+// ✅ UPDATED: Added Bilibili and WeTV with their brand colors
+const PLATFORMS_DATA = [
+  { id: "Crunchyroll", name: "Crunchyroll", color: "#F47521", logo: "https://img.icons8.com/color/512/crunchyroll.png" },
+  { id: "Netflix", name: "Netflix", color: "#E50914", logo: "https://img.icons8.com/color/512/netflix.png" },
+  { id: "Hulu", name: "Hulu", color: "#1CE783", logo: "https://img.icons8.com/color/512/hulu.png" },
+  { id: "Amazon Prime", name: "Amazon Prime", color: "#00A8E1", logo: "https://img.icons8.com/color/512/amazon-prime-video.png" },
+  { id: "Disney+", name: "Disney+", color: "#113CCF", logo: "https://img.icons8.com/color/512/disney-plus.png" },
+  { id: "YouTube", name: "YouTube", color: "#FF0000", logo: "https://img.icons8.com/color/512/youtube-play.png" },
+  { id: "Bilibili", name: "Bilibili", color: "#FB7299", logo: "https://img.icons8.com/color/512/bilibili.png" },
+  { id: "WeTV", name: "WeTV", color: "#FF5722", logo: "https://img.icons8.com/color/512/tencent-video.png" }
+];
+
 const AGE_RATINGS = ["All", "12+", "16+", "18+"];
 const LANGUAGES = ["English", "Spanish", "Portuguese", "French", "German", "Indonesian", "Arabic", "Russian", "Japanese", "Chinese"];
 const STATUS_OPTIONS = ["Pending", "Ongoing", "Completed", "Upcoming"];
-
-// ✅ HELPER: EXPO PUSH API
-const sendPushNotifications = async (expoPushTokens, title, body) => {
-    if (!expoPushTokens || expoPushTokens.length === 0) return;
-
-    const validTokens = expoPushTokens.filter(token => token);
-    if (validTokens.length === 0) return;
-
-    const messages = validTokens.map(token => ({
-        to: token,
-        sound: 'default',
-        title: title,
-        body: body,
-    }));
-
-    const chunks = [];
-    for (let i = 0; i < messages.length; i += 100) {
-        chunks.push(messages.slice(i, i + 100));
-    }
-
-    for (let chunk of chunks) {
-        try {
-            await fetch('https://exp.host/--/api/v2/push/send', {
-                method: 'POST',
-                headers: {
-                    Accept: 'application/json',
-                    'Accept-encoding': 'gzip, deflate',
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(chunk),
-            });
-        } catch (error) {
-            console.error("Error sending push notification chunk:", error);
-        }
-    }
-};
 
 export default function AnimeUpload() {
   // --- GLOBAL STATE ---
@@ -99,7 +74,6 @@ export default function AnimeUpload() {
   const [status, setStatus] = useState(''); 
   const [createdAnimeId, setCreatedAnimeId] = useState(null);
   const [isEditMode, setIsEditMode] = useState(false);
-  const [notifyUsers, setNotifyUsers] = useState(true);
 
   // --- DETAILS VIEW STATE ---
   const [selectedAnime, setSelectedAnime] = useState(null);
@@ -119,10 +93,10 @@ export default function AnimeUpload() {
   
   const [hasStreamingRights, setHasStreamingRights] = useState(true);
 
-  // ✅ NEW METADATA STATE
+  // ✅ METADATA STATE
   const [studio, setStudio] = useState('');
   const [producer, setProducer] = useState('');
-  const [availableOn, setAvailableOn] = useState('');
+  const [selectedPlatforms, setSelectedPlatforms] = useState([]); 
 
   // BODY STATE (Episode Form)
   const [episodes, setEpisodes] = useState([]);
@@ -199,31 +173,6 @@ export default function AnimeUpload() {
     }
   };
 
-  // ✅ SURGICAL UPDATE: Added Push Notification Blast
-  const sendAutoNotification = async (title, body, targetId = null) => {
-      try {
-          // 1. Save to database for in-app feed
-          await addDoc(collection(db, "announcements"), {
-              title,
-              body,
-              targetId,
-              type: 'anime_release',
-              createdAt: serverTimestamp()
-          });
-
-          // 2. Fetch all user push tokens
-          const tokenQuery = query(collection(db, "users"), where("expoPushToken", "!=", null));
-          const tokenSnap = await getDocs(tokenQuery);
-          const tokensToPush = tokenSnap.docs.map(doc => doc.data().expoPushToken).filter(Boolean);
-
-          // 3. Blast push notifications
-          if (tokensToPush.length > 0) {
-              await sendPushNotifications(tokensToPush, title, body);
-          }
-
-      } catch (e) { console.error("Notification failed:", e); }
-  };
-
   const generateKeywords = (title) => {
     if (!title) return [];
     const words = title.toLowerCase().split(/\s+/);
@@ -239,13 +188,6 @@ export default function AnimeUpload() {
       if (!window.confirm(`Approve "${anime.title}"? It will go live immediately.`)) return;
       try {
           await updateDoc(doc(db, 'anime', anime.id), { status: 'Ongoing' });
-          
-          await sendAutoNotification(
-              `New Release: ${anime.title}`,
-              `${anime.title} has just been approved and released! Watch it now on AniYu.`,
-              anime.id
-          );
-
           alert("Anime Approved & Published!");
           sessionStorage.removeItem(`admin_anime_cache_${currentUser.uid}`);
           fetchAnimeList(false, true);
@@ -263,7 +205,7 @@ export default function AnimeUpload() {
     setAnimeTitle(''); setTotalEpisodes(''); setReleaseYear(''); setSynopsis(''); setSelectedGenres([]); setExistingCoverUrl(''); setAnimeCover(null);
     
     // ✅ RESET NEW METADATA
-    setStudio(''); setProducer(''); setAvailableOn('');
+    setStudio(''); setProducer(''); setSelectedPlatforms([]);
 
     if (currentUser?.role === 'anime_producer') {
         setAnimeStatus('Pending');
@@ -274,7 +216,6 @@ export default function AnimeUpload() {
     setHasStreamingRights(true); 
     setEpisodes([{ id: Date.now(), number: 1, title: '', videoFile: null, thumbFile: null, subtitles: [], isNew: true }]);
     setDeletedEpisodes([]);
-    setNotifyUsers(true); 
     setView('form');
   };
 
@@ -289,7 +230,6 @@ export default function AnimeUpload() {
     setSelectedAge(anime.ageRating || '12+');
     setExistingCoverUrl(anime.images?.jpg?.image_url || '');
     setAnimeCover(null);
-    setNotifyUsers(true); 
     setAnimeStatus(anime.status || 'Ongoing');
     
     setHasStreamingRights(anime.hasStreamingRights !== false);
@@ -297,7 +237,7 @@ export default function AnimeUpload() {
     // ✅ LOAD NEW METADATA
     setStudio(anime.studio || '');
     setProducer(anime.producer || '');
-    setAvailableOn(anime.availableOn || '');
+    setSelectedPlatforms(anime.availableOn || []);
 
     setDeletedEpisodes([]);
     
@@ -472,10 +412,10 @@ export default function AnimeUpload() {
         type: 'TV', 
         status: finalStatus,
         hasStreamingRights, 
-        // ✅ SAVE NEW METADATA
+        // ✅ SAVE METADATA
         studio,
         producer,
-        availableOn,
+        availableOn: selectedPlatforms,
         uploaderId: currentUser.uid, 
         updatedAt: serverTimestamp()
       };
@@ -511,7 +451,6 @@ export default function AnimeUpload() {
         const ep = episodes[i];
         setStatus(`Uploading Episode ${ep.number} media & subtitles...`);
         
-        // Skip video upload check if they are explicitly adding a tracker-only episode without a file
         if (!ep.videoFile && !ep.existingVideoUrl && hasStreamingRights) continue;
 
         const vidResult = await uploadFile(ep.videoFile, `anime/${animeId}/episodes`);
@@ -526,7 +465,7 @@ export default function AnimeUpload() {
         const epData = {
           title: ep.title || `Episode ${ep.number}`, 
           number: Number(ep.number),
-          videoUrl: vidResult?.url || ep.existingVideoUrl || '', // Allow empty string for tracker mode
+          videoUrl: vidResult?.url || ep.existingVideoUrl || '', 
           thumbnailUrl: thumbResult?.url || ep.existingThumbUrl || finalCoverUrl,
           size: vidResult?.size || ep.existingSize || 0,
           subtitles: finalSubtitles,
@@ -544,22 +483,6 @@ export default function AnimeUpload() {
 
       setStatus('Success!');
       
-      // ✅ SURGICAL UPDATE: It now fires the upgraded push function
-      if (notifyUsers && finalStatus !== 'Pending') {
-          if (isEditMode) {
-             const newEpCount = episodes.filter(e => e.isNew).length;
-             if (newEpCount > 0) {
-                 await sendAutoNotification(
-                     `New Episode: ${animeTitle}`,
-                     `${newEpCount} new episode(s) added to ${animeTitle}. Watch now!`,
-                     animeId
-                 );
-             }
-          } else {
-             await sendAutoNotification(`New Anime Arrived! 🌟`, `${animeTitle} is now available on AniYu. Check it out!`, animeId);
-          }
-      }
-
       alert(finalStatus === 'Pending' ? "Submitted for Review! Waiting for Admin approval." : "Published Successfully!");
       setView('list'); 
       setLibraryTab(finalStatus); 
@@ -840,14 +763,6 @@ export default function AnimeUpload() {
         
         {!loading && (
            <div style={{display:'flex', gap: 15, alignItems:'center'}}>
-               <div 
-                 onClick={() => setNotifyUsers(!notifyUsers)}
-                 style={{display:'flex', alignItems:'center', gap: 8, cursor:'pointer', background:'white', padding:'10px 15px', borderRadius:10, border: notifyUsers ? '1px solid #2563eb' : '1px solid #e5e7eb'}}
-               >
-                   <Bell size={18} className={notifyUsers ? "text-blue-600 fill-current" : "text-gray-400"} />
-                   <span style={{fontWeight:700, fontSize:'0.9rem', color: notifyUsers ? '#2563eb' : '#6b7280'}}>Notify Users</span>
-               </div>
-
                <button onClick={handlePublish} className="btn-publish" style={{ width: 'auto', padding: '12px 30px', fontSize: '1rem' }}>
                    {currentUser?.role === 'anime_producer' ? "Submit for Review" : "Save All Changes"}
                </button>
@@ -910,11 +825,34 @@ export default function AnimeUpload() {
                     <div className="form-group"><span className="form-label">Year</span><input type="number" className="input-field" placeholder="2024" value={releaseYear} onChange={e => setReleaseYear(e.target.value)} /></div>
                 </div>
 
-                {/* ✅ NEW METADATA ROW */}
-                <div className="grid-3" style={{marginTop: 15, display:'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20}}>
+                {/* ✅ METADATA ROWS */}
+                <div className="grid-2" style={{marginTop: 15, display:'grid', gridTemplateColumns: '1fr 1fr', gap: 20}}>
                     <div className="form-group"><span className="form-label">Studio</span><input type="text" className="input-field" placeholder="e.g. MAPPA, Ufotable" value={studio} onChange={e => setStudio(e.target.value)} /></div>
                     <div className="form-group"><span className="form-label">Producer</span><input type="text" className="input-field" placeholder="e.g. Aniplex" value={producer} onChange={e => setProducer(e.target.value)} /></div>
-                    <div className="form-group"><span className="form-label">Available On</span><input type="text" className="input-field" placeholder="Crunchyroll, Netflix..." value={availableOn} onChange={e => setAvailableOn(e.target.value)} /></div>
+                </div>
+
+                {/* ✅ AVAILABLE ON (CHIPS WITH LOGOS) */}
+                <div className="form-group" style={{marginTop: 15}}>
+                    <span className="form-label">Available On</span>
+                    <div className="chips-container">
+                        {PLATFORMS_DATA.map(p => {
+                            const isSelected = selectedPlatforms.includes(p.id);
+                            return (
+                                <div 
+                                  key={p.id} 
+                                  className={`chip ${isSelected ? 'selected' : ''}`} 
+                                  style={isSelected ? { backgroundColor: p.color, borderColor: p.color, color: 'white', display: 'flex', alignItems: 'center', gap: 6 } : { display: 'flex', alignItems: 'center', gap: 6 }}
+                                  onClick={() => { 
+                                      if(isSelected) setSelectedPlatforms(prev=>prev.filter(x=>x!==p.id)); 
+                                      else setSelectedPlatforms([...selectedPlatforms, p.id]); 
+                                  }}
+                                >
+                                    <img src={p.logo} alt={p.name} style={{ width: 16, height: 16, objectFit: 'contain' }} />
+                                    {p.name}
+                                </div>
+                            );
+                        })}
+                    </div>
                 </div>
 
                 <div className="form-group" style={{marginTop: 15}}><span className="form-label">Synopsis</span><textarea className="textarea-field" value={synopsis} onChange={e => setSynopsis(e.target.value)}></textarea></div>

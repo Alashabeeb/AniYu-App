@@ -297,6 +297,28 @@ export default function MangaDetailScreen() {
                             </View>
                         ))}
                     </View>
+
+                    {/* ✅ NEW: METADATA SECTION (Publisher, Platforms) */}
+                    {manga.publisher && (
+                        <View style={{ marginTop: 20 }}>
+                            <Text style={{ color: theme.text, fontSize: 14 }}>
+                                <Text style={{ fontWeight: 'bold', color: theme.subText }}>Publisher:</Text> {manga.publisher}
+                            </Text>
+                        </View>
+                    )}
+
+                    {manga.availableOn && manga.availableOn.length > 0 && (
+                        <View style={{ marginTop: 25 }}>
+                            <Text style={[styles.sectionTitle, { color: theme.text, fontSize: 16 }]}>Available On</Text>
+                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 5 }}>
+                                {manga.availableOn.map((platform: string) => (
+                                    <View key={platform} style={{ backgroundColor: theme.tint + '15', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, marginRight: 10, marginBottom: 10, borderWidth: 1, borderColor: theme.tint + '50' }}>
+                                        <Text style={{ color: theme.tint, fontSize: 12, fontWeight: 'bold' }}>{platform}</Text>
+                                    </View>
+                                ))}
+                            </View>
+                        </View>
+                    )}
                 </View>
             )}
 

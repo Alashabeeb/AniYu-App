@@ -8,7 +8,6 @@ import {
 import { deleteObject, ref } from 'firebase/storage';
 import {
   ArrowLeft,
-  Bell,
   BookOpen,
   Eye,
   File as FileIcon,
@@ -36,41 +35,16 @@ const GENRES_LIST = [
 
 const STATUS_OPTIONS = ["Pending", "Ongoing", "Completed", "Hiatus"];
 
-// ✅ HELPER: EXPO PUSH API (Chunks and sends notifications directly to physical devices)
-const sendPushNotifications = async (expoPushTokens, title, body) => {
-    if (!expoPushTokens || expoPushTokens.length === 0) return;
-
-    const validTokens = expoPushTokens.filter(token => token);
-    if (validTokens.length === 0) return;
-
-    const messages = validTokens.map(token => ({
-        to: token,
-        sound: 'default',
-        title: title,
-        body: body,
-    }));
-
-    const chunks = [];
-    for (let i = 0; i < messages.length; i += 100) {
-        chunks.push(messages.slice(i, i + 100));
-    }
-
-    for (let chunk of chunks) {
-        try {
-            await fetch('https://exp.host/--/api/v2/push/send', {
-                method: 'POST',
-                headers: {
-                    Accept: 'application/json',
-                    'Accept-encoding': 'gzip, deflate',
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(chunk),
-            });
-        } catch (error) {
-            console.error("Error sending push notification chunk:", error);
-        }
-    }
-};
+// ✅ NEW: Dictionary with official brand colors and logo URLs tailored for Manga
+const PLATFORMS_DATA = [
+  { id: "Manga Plus", name: "Manga Plus", color: "#E50012", logo: "https://img.icons8.com/color/512/manga.png" },
+  { id: "Viz Media", name: "Viz Media", color: "#FF0000", logo: "https://img.icons8.com/ios-filled/512/v.png" },
+  { id: "Webtoon", name: "Webtoon", color: "#00D564", logo: "https://img.icons8.com/color/512/line-webtoon.png" },
+  { id: "Shonen Jump", name: "Shonen Jump", color: "#E50012", logo: "https://img.icons8.com/ios-filled/512/open-book.png" },
+  { id: "Bilibili Comics", name: "Bilibili", color: "#FB7299", logo: "https://img.icons8.com/color/512/bilibili.png" },
+  { id: "Tapas", name: "Tapas", color: "#FFCE00", logo: "https://img.icons8.com/color/512/tapas.png" },
+  { id: "Tappytoon", name: "Tappytoon", color: "#6121FF", logo: "https://img.icons8.com/ios-filled/512/t.png" }
+];
 
 export default function MangaUpload() {
   const [view, setView] = useState('list');
@@ -92,7 +66,6 @@ export default function MangaUpload() {
   const [status, setStatus] = useState(''); 
   const [createdMangaId, setCreatedMangaId] = useState(null);
   const [isEditMode, setIsEditMode] = useState(false);
-  const [notifyUsers, setNotifyUsers] = useState(true);
 
   const [selectedManga, setSelectedManga] = useState(null);
   const [selectedMangaChapters, setSelectedMangaChapters] = useState([]);
@@ -109,6 +82,10 @@ export default function MangaUpload() {
   const [mangaStatus, setMangaStatus] = useState('Ongoing'); 
   
   const [hasReadingRights, setHasReadingRights] = useState(true);
+
+  // ✅ METADATA STATE
+  const [publisher, setPublisher] = useState('');
+  const [selectedPlatforms, setSelectedPlatforms] = useState([]);
 
   // BODY STATE
   const [chapters, setChapters] = useState([]);
@@ -185,31 +162,10 @@ export default function MangaUpload() {
     }
   };
 
-  // ✅ SURGICAL UPDATE: Upgraded to send actual Push Notifications
-  const sendAutoNotification = async (title, body, targetId = null) => {
-      try {
-          // 1. Save to database for in-app feed
-          await addDoc(collection(db, "announcements"), {
-              title, body, targetId, type: 'manga_release', createdAt: serverTimestamp()
-          });
-
-          // 2. Fetch all user push tokens
-          const tokenQuery = query(collection(db, "users"), where("expoPushToken", "!=", null));
-          const tokenSnap = await getDocs(tokenQuery);
-          const tokensToPush = tokenSnap.docs.map(doc => doc.data().expoPushToken).filter(Boolean);
-
-          // 3. Blast push notifications
-          if (tokensToPush.length > 0) {
-              await sendPushNotifications(tokensToPush, title, body);
-          }
-      } catch (e) { console.error("Notification failed:", e); }
-  };
-
   const handleApprove = async (manga) => {
       if (!window.confirm(`Approve "${manga.title}"? It will go live immediately.`)) return;
       try {
           await updateDoc(doc(db, 'manga', manga.id), { status: 'Ongoing' });
-          await sendAutoNotification(`New Manga: ${manga.title}`, `Read ${manga.title} now on AniYu!`, manga.id);
           alert("Approved & Published!");
           
           sessionStorage.removeItem(`admin_manga_cache_${currentUser.uid}`);
@@ -227,11 +183,13 @@ export default function MangaUpload() {
     setIsEditMode(false);
     setMangaTitle(''); setAuthor(''); setReleaseYear(''); setSynopsis(''); setSelectedGenres([]); setExistingCoverUrl(''); setMangaCover(null);
     
+    // ✅ RESET NEW METADATA
+    setPublisher(''); setSelectedPlatforms([]);
+
     if (currentUser?.role === 'manga_producer') setMangaStatus('Pending'); else setMangaStatus('Ongoing'); 
     setHasReadingRights(true); 
     setChapters([{ id: Date.now(), number: 1, title: '', chapterFile: null, existingFileUrl: null, isNew: true }]);
     setDeletedChapters([]);
-    setNotifyUsers(true);
     setView('form');
   };
 
@@ -245,10 +203,13 @@ export default function MangaUpload() {
     setSelectedGenres(manga.genres || []);
     setExistingCoverUrl(manga.coverUrl || manga.images?.jpg?.image_url || '');
     setMangaCover(null);
-    setNotifyUsers(true);
     setMangaStatus(manga.status || 'Ongoing');
     
     setHasReadingRights(manga.hasReadingRights !== false);
+
+    // ✅ LOAD NEW METADATA
+    setPublisher(manga.publisher || '');
+    setSelectedPlatforms(manga.availableOn || []);
 
     setDeletedChapters([]);
     setStatus('Fetching chapters...');
@@ -383,6 +344,9 @@ export default function MangaUpload() {
         type: 'Manga', 
         status: finalStatus,
         hasReadingRights,
+        // ✅ SAVE METADATA
+        publisher,
+        availableOn: selectedPlatforms,
         uploaderId: currentUser.uid,
         updatedAt: serverTimestamp()
       };
@@ -408,7 +372,7 @@ export default function MangaUpload() {
         setStatus(`Uploading Chapter ${ch.number} file...`);
         let finalFileUrl = ch.existingFileUrl;
 
-        if (ch.chapterFile) {
+        if (ch.chapterFile && hasReadingRights) {
             const result = await uploadFile(ch.chapterFile, `manga_pages/${mangaId}/ch_${ch.number}`);
             finalFileUrl = result?.url || result; 
         }
@@ -429,9 +393,6 @@ export default function MangaUpload() {
       }
 
       setStatus('Success!');
-      if (notifyUsers && finalStatus !== 'Pending') {
-          await sendAutoNotification(isEditMode ? `New Chapter: ${mangaTitle}` : `New Manga: ${mangaTitle}`, `Read ${mangaTitle} now on AniYu!`, mangaId);
-      }
 
       alert(finalStatus === 'Pending' ? "Submitted for Review! Waiting for Admin approval." : "Published!");
       setView('list'); setLibraryTab(finalStatus);
@@ -570,10 +531,6 @@ export default function MangaUpload() {
         <div className="page-title"><h1>{isEditMode ? "Manage Manga" : "New Manga Upload"}</h1></div>
         {!loading && (
            <div style={{display:'flex', gap: 15, alignItems:'center'}}>
-               <div onClick={() => setNotifyUsers(!notifyUsers)} style={{display:'flex', alignItems:'center', gap: 8, cursor:'pointer', background:'white', padding:'10px 15px', borderRadius:10, border: notifyUsers ? '1px solid #db2777' : '1px solid #e5e7eb'}}>
-                   <Bell size={18} className={notifyUsers ? "text-pink-600 fill-current" : "text-gray-400"} />
-                   <span style={{fontWeight:700, fontSize:'0.9rem', color: notifyUsers ? '#db2777' : '#6b7280'}}>Notify Users</span>
-               </div>
                <button onClick={handlePublish} className="btn-publish" style={{ width: 'auto', padding: '12px 30px', fontSize: '1rem', background: '#db2777' }}>
                    {currentUser?.role === 'manga_producer' ? "Submit for Review" : "Save All Changes"}
                </button>
@@ -629,7 +586,35 @@ export default function MangaUpload() {
                     <div className="form-group"><span className="form-label">Author</span><input type="text" className="input-field" value={author} onChange={e => setAuthor(e.target.value)} /></div>
                     <div className="form-group"><span className="form-label">Year</span><input type="number" className="input-field" placeholder="2024" value={releaseYear} onChange={e => setReleaseYear(e.target.value)} /></div>
                 </div>
-                <div className="form-group"><span className="form-label">Synopsis</span><textarea className="textarea-field" value={synopsis} onChange={e => setSynopsis(e.target.value)}></textarea></div>
+
+                {/* ✅ NEW METADATA ROWS */}
+                <div className="form-group" style={{marginTop: 15}}><span className="form-label">Publisher</span><input type="text" className="input-field" placeholder="e.g. Shueisha, Kodansha" value={publisher} onChange={e => setPublisher(e.target.value)} /></div>
+
+                {/* ✅ AVAILABLE ON (CHIPS WITH LOGOS) */}
+                <div className="form-group" style={{marginTop: 15}}>
+                    <span className="form-label">Available On</span>
+                    <div className="chips-container">
+                        {PLATFORMS_DATA.map(p => {
+                            const isSelected = selectedPlatforms.includes(p.id);
+                            return (
+                                <div 
+                                  key={p.id} 
+                                  className={`chip ${isSelected ? 'selected' : ''}`} 
+                                  style={isSelected ? { backgroundColor: p.color, borderColor: p.color, color: 'white', display: 'flex', alignItems: 'center', gap: 6 } : { display: 'flex', alignItems: 'center', gap: 6 }}
+                                  onClick={() => { 
+                                      if(isSelected) setSelectedPlatforms(prev=>prev.filter(x=>x!==p.id)); 
+                                      else setSelectedPlatforms([...selectedPlatforms, p.id]); 
+                                  }}
+                                >
+                                    <img src={p.logo} alt={p.name} style={{ width: 16, height: 16, objectFit: 'contain' }} />
+                                    {p.name}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                <div className="form-group" style={{marginTop: 15}}><span className="form-label">Synopsis</span><textarea className="textarea-field" value={synopsis} onChange={e => setSynopsis(e.target.value)}></textarea></div>
                 <div className="form-group"><span className="form-label">Genres</span><div className="chips-container">{GENRES_LIST.map(g => <div key={g} className={`chip ${selectedGenres.includes(g) ? 'selected' : ''}`} onClick={() => { if(selectedGenres.includes(g)) setSelectedGenres(prev=>prev.filter(x=>x!==g)); else if(selectedGenres.length<3) setSelectedGenres([...selectedGenres, g]); }}>{g}</div>)}</div></div>
               </div>
             </div>
@@ -647,10 +632,10 @@ export default function MangaUpload() {
               <div className="card-body" style={{ padding: 20 }}>
                 <div className="grid-2">
                    <div>
-                      <div className="form-group">
-                         <span className="form-label">File Upload (CBZ, PDF, ZIP)</span>
-                         <input type="file" className="hidden" id={`pages-${ch.id}`} onChange={(e) => handleChapterFileUpload(index, e.target.files[0])} />
-                         <label htmlFor={`pages-${ch.id}`} className="upload-zone" style={{ minHeight: 120 }}>
+                      <div className="form-group" style={{ opacity: hasReadingRights ? 1 : 0.5 }}>
+                         <span className="form-label">File Upload (CBZ, PDF, ZIP) {!hasReadingRights && "- Optional (Tracker Mode)"}</span>
+                         <input type="file" disabled={!hasReadingRights && !ch.existingFileUrl} className="hidden" id={`pages-${ch.id}`} onChange={(e) => handleChapterFileUpload(index, e.target.files[0])} />
+                         <label htmlFor={`pages-${ch.id}`} className="upload-zone" style={{ minHeight: 120, cursor: (!hasReadingRights && !ch.existingFileUrl) ? 'not-allowed' : 'pointer' }}>
                             <div style={{textAlign:'center', color:'#db2777'}}><FileImage size={30}/> {ch.chapterFile ? "Replace File" : "Upload Chapter File"}</div>
                          </label>
                       </div>
@@ -660,7 +645,7 @@ export default function MangaUpload() {
                       </div>
                    </div>
                    
-                   <div style={{ background: '#f8fafc', padding: 10, borderRadius: 10, maxHeight: 300, overflowY: 'auto' }}>
+                   <div style={{ background: '#f8fafc', padding: 10, borderRadius: 10, maxHeight: 300, overflowY: 'auto', opacity: hasReadingRights ? 1 : 0.5 }}>
                        <span className="form-label">File Preview</span>
                        <div style={{ display: 'flex', flexDirection:'column', gap: 10 }}>
                            {ch.existingFileUrl && (
