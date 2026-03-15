@@ -6,6 +6,10 @@ import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'rea
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 
+// ✅ IMPORT ADMOB HOOKS & IDS
+import { useInterstitialAd } from 'react-native-google-mobile-ads';
+import { AdUnitIds } from '../constants/AdIds';
+
 import { useTheme } from '../context/ThemeContext';
 import { getMangaHistory, saveReadProgress } from '../services/historyService';
 import { getAdjacentChapter } from '../services/mangaService';
@@ -20,6 +24,31 @@ export default function MangaReaderScreen() {
   const [localPdfData, setLocalPdfData] = useState<string | null>(null);
   const [initialPage, setInitialPage] = useState(1);
   const [isHistoryReady, setIsHistoryReady] = useState(false);
+
+  // ✅ ADMOB: State to track which direction they are trying to go while the ad plays
+  const [pendingDirection, setPendingDirection] = useState<'next' | 'prev' | null>(null);
+
+  // ✅ ADMOB: Initialize the Interstitial Ad Hook
+  const { isLoaded, isClosed, load, show } = useInterstitialAd(AdUnitIds.interstitial, {
+      requestNonPersonalizedAdsOnly: true,
+  });
+
+  // ✅ ADMOB: Pre-load the ad securely in the background
+  useEffect(() => {
+      load();
+  }, [load]);
+
+  // ✅ ADMOB: Listen for when the ad is closed to execute the navigation
+  useEffect(() => {
+      if (isClosed) {
+          if (pendingDirection) {
+              performNavigation(pendingDirection);
+              setPendingDirection(null);
+          }
+          // Load the next ad just in case they read multiple chapters!
+          load(); 
+      }
+  }, [isClosed, pendingDirection, load]);
 
   // Load Progress
   useEffect(() => {
@@ -51,8 +80,20 @@ export default function MangaReaderScreen() {
       prepareFile();
   }, [url]);
 
-  // ✅ OPTIMIZED NAVIGATION (Efficient Fetch)
-  const handleNavigate = async (direction: 'next' | 'prev') => {
+  // ✅ ADMOB: The Interceptor. Triggered when the user clicks Next or Prev.
+  const handleNavigate = (direction: 'next' | 'prev') => {
+      // As requested, we only trigger the Ad on the "Next" button. 
+      if (direction === 'next' && isLoaded) {
+          setPendingDirection(direction);
+          show(); // Show the full screen ad
+      } else {
+          // Fallback: If ad failed to load, or if they clicked 'prev', navigate normally
+          performNavigation(direction);
+      }
+  };
+
+  // ✅ RENAMED: This contains your exact original logic.
+  const performNavigation = async (direction: 'next' | 'prev') => {
       // 1. Save Progress
       if (mangaId && direction === 'next') {
         saveReadProgress(
@@ -65,7 +106,6 @@ export default function MangaReaderScreen() {
       setLoading(true);
 
       // 2. Fetch Single Document
-      // ✅ FIX: Added ': any' here to solve the TypeScript error
       const nextChap: any = await getAdjacentChapter(mangaId as string, Number(chapterNum), direction);
       
       if (!nextChap) {
@@ -248,6 +288,7 @@ export default function MangaReaderScreen() {
       </View>
       {!loading && (
           <View style={styles.footer}>
+              {/* ✅ UPDATED: Now triggers handleNavigate */}
               <TouchableOpacity onPress={() => handleNavigate('prev')} style={styles.navBtn}>
                   <Ionicons name="chevron-back" size={24} color="white" />
                   <Text style={{color:'white', marginLeft: 5}}>Prev</Text>

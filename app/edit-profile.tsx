@@ -4,10 +4,10 @@ import * as ImagePicker from 'expo-image-picker';
 import { Stack, useRouter } from 'expo-router';
 // ✅ ADDED: collection, getDocs, query, where
 import { collection, doc, getDoc, getDocs, query, updateDoc, where } from 'firebase/firestore';
-// ✅ REMOVED FIREBASE STORAGE IMPORTS
 import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
+    Alert,
     KeyboardAvoidingView,
     Platform,
     ScrollView,
@@ -18,12 +18,17 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import CustomAlert from '../components/CustomAlert';
-import { auth, db } from '../config/firebaseConfig'; // ✅ REMOVED storage
-import { useTheme } from '../context/ThemeContext';
-import { uploadToR2 } from '../services/r2Storage'; // ✅ IMPORTED R2 UPLOAD
 
-// ✅ NEW: Genres for the user to select their interests
+// ✅ IMPORT ADMOB
+import { useRewardedAd } from 'react-native-google-mobile-ads';
+import { AdUnitIds } from '../constants/AdIds';
+
+import CustomAlert from '../components/CustomAlert';
+import { auth, db } from '../config/firebaseConfig';
+import { useTheme } from '../context/ThemeContext';
+import { uploadToR2 } from '../services/r2Storage';
+
+// ✅ Genres for the user to select their interests
 const GENRES = [
     "Action", "Adventure", "Romance", "Fantasy", "Drama", "Comedy", 
     "Sci-Fi", "Slice of Life", "Sports", "Mystery", "Isekai", "Horror", 
@@ -43,7 +48,7 @@ export default function EditProfileScreen() {
   const [avatar, setAvatar] = useState('');
   const [banner, setBanner] = useState('');
 
-  // ✅ NEW: State to hold user interests
+  // ✅ State to hold user interests
   const [interests, setInterests] = useState<string[]>([]);
 
   const [alertConfig, setAlertConfig] = useState({
@@ -56,6 +61,30 @@ export default function EditProfileScreen() {
   const showAlert = (type: 'success' | 'error' | 'warning' | 'info', title: string, message: string) => {
     setAlertConfig({ visible: true, type, title, message });
   };
+
+  // ✅ ADMOB: Initialize the Rewarded Ad Hook
+  const { isLoaded, isClosed, isEarnedReward, load, show } = useRewardedAd(AdUnitIds.rewarded, {
+      requestNonPersonalizedAdsOnly: true,
+  });
+
+  // ✅ ADMOB: Pre-load the ad securely when the screen opens
+  useEffect(() => {
+      load();
+  }, [load]);
+
+  // ✅ ADMOB: Listen for when the ad finishes to execute the save
+  useEffect(() => {
+      if (isClosed) {
+          if (isEarnedReward) {
+              performSave(); // The user watched the ad, now actually save it!
+          } else {
+              // User skipped the ad
+              setLoading(false);
+              showAlert('warning', 'Save Canceled', 'You must watch the full ad to save your profile changes.');
+          }
+          load(); // Load the next ad just in case they want to try again
+      }
+  }, [isClosed, isEarnedReward, load]);
 
   useEffect(() => {
     loadUserData();
@@ -73,7 +102,6 @@ export default function EditProfileScreen() {
         setBio(data.bio || '');
         setAvatar(data.avatar || '');
         setBanner(data.banner || '');
-        // ✅ NEW: Load existing interests
         setInterests(data.interests || data.favoriteGenres || []);
     }
   };
@@ -91,7 +119,6 @@ export default function EditProfileScreen() {
     }
   };
 
-  // ✅ UPDATED: Now uses Cloudflare R2 directly
   const uploadImage = async (uri: string, type: 'avatar' | 'banner') => {
       setUploading(true);
       try {
@@ -112,7 +139,6 @@ export default function EditProfileScreen() {
       }
   };
 
-  // ✅ NEW: Handle toggling interests (max 5)
   const toggleInterest = (genre: string) => {
       if (interests.includes(genre)) {
           setInterests(interests.filter(i => i !== genre));
@@ -125,16 +151,39 @@ export default function EditProfileScreen() {
       }
   };
 
-  // ✅ UPDATED: Handle Save with Unique Username Check
-  const handleSave = async () => {
+  // ✅ ADMOB: The Interceptor Function. This triggers when they click "Save"
+  const handleSaveClick = async () => {
+      if (!username.trim() || !displayName.trim()) {
+          return showAlert('warning', 'Missing Info', 'Username and Display Name are required.');
+      }
+
+      if (isLoaded) {
+          Alert.alert(
+              "Save Profile",
+              "Watch a quick ad to save your changes?",
+              [
+                  { text: "Cancel", style: "cancel" },
+                  { 
+                      text: "Watch Ad", 
+                      onPress: () => {
+                          setLoading(true); // Show loading spinner while ad is playing
+                          show(); // Trigger the Ad
+                      }
+                  }
+              ]
+          );
+      } else {
+          // Fallback: If ad failed to load, just save it normally so they don't get frustrated
+          setLoading(true);
+          performSave();
+      }
+  };
+
+  // ✅ UPDATED: Renamed to performSave. This holds your exact original save logic.
+  const performSave = async () => {
     const user = auth.currentUser;
     if (!user) return;
 
-    if (!username.trim() || !displayName.trim()) {
-        return showAlert('warning', 'Missing Info', 'Username and Display Name are required.');
-    }
-
-    setLoading(true);
     try {
         const lowerCaseUsername = username.trim().toLowerCase();
 
@@ -146,7 +195,6 @@ export default function EditProfileScreen() {
         // 2. Only check uniqueness if the username is DIFFERENT from what they already have
         if (currentData && currentData.username !== lowerCaseUsername) {
             const usersRef = collection(db, "users");
-            // Query for ANY user with this username
             const q = query(usersRef, where("username", "==", lowerCaseUsername));
             const querySnapshot = await getDocs(q);
 
@@ -156,14 +204,14 @@ export default function EditProfileScreen() {
             }
         }
 
-        // 3. Update Profile (✅ Added interests)
+        // 3. Update Profile 
         await updateDoc(userDocRef, {
             displayName: displayName.trim(),
-            username: lowerCaseUsername, // Always save as lowercase for consistency
+            username: lowerCaseUsername, 
             bio: bio.trim(),
             avatar,
             banner,
-            interests // Saved for the "For You" algorithm
+            interests 
         });
         showAlert('success', 'Profile Updated', 'Your changes have been saved successfully.');
     } catch (error) {
@@ -186,7 +234,8 @@ export default function EditProfileScreen() {
                         <Ionicons name="close" size={28} color={theme.text} />
                     </TouchableOpacity>
                     <Text style={[styles.title, { color: theme.text }]}>Edit Profile</Text>
-                    <TouchableOpacity onPress={handleSave} disabled={loading || uploading}>
+                    {/* ✅ UPDATED: Now triggers handleSaveClick which fires the ad */}
+                    <TouchableOpacity onPress={handleSaveClick} disabled={loading || uploading}>
                         {loading ? <ActivityIndicator color={theme.tint} /> : (
                             <Text style={[styles.saveBtn, { color: theme.tint }]}>Save</Text>
                         )}
@@ -245,7 +294,6 @@ export default function EditProfileScreen() {
                     />
                 </View>
 
-                {/* ✅ NEW: Favorite Genres Selector */}
                 <View style={styles.interestsSection}>
                     <View style={styles.interestsHeader}>
                         <Text style={[styles.label, { color: theme.subText, marginBottom: 0 }]}>Favorite Genres</Text>
@@ -310,7 +358,6 @@ const styles = StyleSheet.create({
   label: { marginBottom: 5, fontSize: 12, fontWeight: '600', textTransform: 'uppercase' },
   input: { padding: 15, borderRadius: 8, marginBottom: 20, fontSize: 16 },
   
-  // ✅ NEW: Interests Styles
   interestsSection: { marginTop: 10, paddingTop: 20, borderTopWidth: 0.5, borderTopColor: 'rgba(150,150,150,0.3)' },
   interestsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 },
   chipsContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },

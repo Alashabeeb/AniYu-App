@@ -11,6 +11,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+// ✅ IMPORT ADMOB HOOKS & IDS
+import { useRewardedAd } from 'react-native-google-mobile-ads';
+import { AdUnitIds } from '../../constants/AdIds';
+
 import { auth, db } from '../../config/firebaseConfig';
 import { useTheme } from '../../context/ThemeContext';
 
@@ -79,11 +83,44 @@ export default function AnimeDetailScreen() {
   const [currentEpId, setCurrentEpId] = useState<string | null>(null);
   const [currentVideoSource, setCurrentVideoSource] = useState<string | null>(null);
 
+  // ✅ ADMOB: States to hold the item and the ACTION (Play vs Download)
+  const [pendingEpisode, setPendingEpisode] = useState<any>(null);
+  const [pendingAction, setPendingAction] = useState<'play' | 'download' | null>(null);
+
   const resumeTimeRef = useRef<number | null>(null);
 
   const player = useVideoPlayer(currentVideoSource, player => { 
       player.loop = false; 
   });
+
+  // ✅ ADMOB: Initialize the Rewarded Ad Hook
+  const { isLoaded, isClosed, isEarnedReward, load, show } = useRewardedAd(AdUnitIds.rewarded, {
+      requestNonPersonalizedAdsOnly: true,
+  });
+
+  // ✅ ADMOB: Pre-load the ad securely
+  useEffect(() => {
+      load();
+  }, [load]);
+
+  // ✅ ADMOB: Listen for when the ad is closed to grant the exact reward requested
+  useEffect(() => {
+      if (isClosed) {
+          if (isEarnedReward && pendingEpisode) {
+              if (pendingAction === 'play') {
+                  setCurrentEpId(String(pendingEpisode.mal_id));
+              } else if (pendingAction === 'download') {
+                  performDownload(pendingEpisode);
+              }
+          } else if (!isEarnedReward && pendingEpisode) {
+              Alert.alert("Ad Canceled", "You must watch the full ad to unlock this feature.");
+          }
+          
+          setPendingEpisode(null);
+          setPendingAction(null);
+          load(); 
+      }
+  }, [isClosed, isEarnedReward, load, pendingEpisode, pendingAction]);
 
   useFocusEffect(
     useCallback(() => {
@@ -362,8 +399,29 @@ export default function AnimeDetailScreen() {
       await toggleAnimeReaction(id as string, user.uid, type);
   };
 
+  // ✅ ADMOB: Trigger Play Reward
   const handleEpisodePress = (ep: any) => {
-    setCurrentEpId(String(ep.mal_id));
+    if (currentEpId === String(ep.mal_id)) return; 
+
+    if (isLoaded) {
+        Alert.alert(
+            "Unlock Episode",
+            "Watch a short ad to unlock and play this episode?",
+            [
+                { text: "Cancel", style: "cancel" },
+                { 
+                    text: "Watch Ad", 
+                    onPress: () => {
+                        setPendingEpisode(ep);
+                        setPendingAction('play'); // Set action to PLAY
+                        show();
+                    }
+                }
+            ]
+        );
+    } else {
+        setCurrentEpId(String(ep.mal_id));
+    }
   };
 
   const performDownload = async (ep: any) => {
@@ -403,6 +461,7 @@ export default function AnimeDetailScreen() {
     }
   };
 
+  // ✅ ADMOB: Trigger Download Reward
   const handleDownload = async (ep: any) => {
     const epId = String(ep.mal_id);
 
@@ -417,7 +476,25 @@ export default function AnimeDetailScreen() {
         return;
     }
 
-    performDownload(ep);
+    if (isLoaded) {
+        Alert.alert(
+            "Download Episode",
+            "Watch a short ad to unlock the offline download for this episode?",
+            [
+                { text: "Cancel", style: "cancel" },
+                { 
+                    text: "Watch Ad", 
+                    onPress: () => {
+                        setPendingEpisode(ep);
+                        setPendingAction('download'); // Set action to DOWNLOAD
+                        show();
+                    }
+                }
+            ]
+        );
+    } else {
+        performDownload(ep);
+    }
   };
 
   const submitReview = async () => {

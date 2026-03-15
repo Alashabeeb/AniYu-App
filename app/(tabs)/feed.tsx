@@ -32,6 +32,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import PostCard from '../../components/PostCard';
+// ✅ IMPORT AD BANNER
+import AdBanner from '../../components/AdBanner';
+
 import { db } from '../../config/firebaseConfig';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -113,7 +116,6 @@ export default function FeedScreen() {
       loadUserPreferences();
   }, [currentUser]);
 
-  // Ensure active posts are immediately filtered if the blocked list updates
   useEffect(() => {
       if (blockedUsers.length > 0) {
           setPosts(prev => prev.filter(p => {
@@ -127,13 +129,11 @@ export default function FeedScreen() {
   const calculatePostScore = (post: any, interests: string[], userId: string) => {
       let score = 0;
       
-      // 1. Interest Matching (Base Relevance)
       if (post.tags && Array.isArray(post.tags) && interests.length > 0) {
           const matches = post.tags.filter((tag: string) => interests.includes(tag));
           score += (matches.length * 50); 
       }
       
-      // 2. Engagement Metrics (Value)
       const likes = post.likeCount || 0;
       const comments = post.commentCount || 0;
       const reposts = post.repostCount || 0;
@@ -143,13 +143,11 @@ export default function FeedScreen() {
       score += comments * 3;
       score += reposts * 5;
 
-      // 3. Engagement Rate Multiplier
       if (views > 50) {
           const engagementRate = (likes + comments + reposts) / views;
           score *= (1 + Math.min(engagementRate, 0.2)); 
       }
       
-      // 4. Time Decay (Gravity Decay)
       if (post.createdAt?.seconds) {
           const hoursOld = Math.max(0, (Date.now() / 1000 - post.createdAt.seconds) / 3600);
           
@@ -160,7 +158,6 @@ export default function FeedScreen() {
           }
       }
 
-      // 5. Content Diversity (Personalized Jitter)
       const seedString = userId + post.id + sessionShuffleSeed;
       let hash = 0;
       for (let i = 0; i < Math.min(seedString.length, 20); i++) {
@@ -229,7 +226,6 @@ export default function FeedScreen() {
 
           const currentUserId = currentUser?.uid || 'guest_user';
 
-          // Completely filter out blocked users (both direct posts and reposts)
           let fetchedChunk = Array.from(postMap.values())
               .filter(p => {
                   if (blockedUsers.includes(p.userId)) return false;
@@ -243,13 +239,11 @@ export default function FeedScreen() {
               const originalIds = [...new Set(reposts.map(p => p.originalPostId))];
               if (originalIds.length > 0) {
                   try {
-                      // Chunk the IDs into arrays of 10 to bypass Firestore's "in" query limit
                       const chunks = [];
                       for (let i = 0; i < originalIds.length; i += 10) {
                           chunks.push(originalIds.slice(i, i + 10));
                       }
 
-                      // Fetch all chunks in parallel
                       const snapPromises = chunks.map(chunk => 
                           getDocs(query(collection(db, 'posts'), where(documentId(), 'in', chunk)))
                       );
@@ -260,8 +254,6 @@ export default function FeedScreen() {
                           snap.docs.forEach(d => origMap.set(d.id, d.data()));
                       });
 
-                      // ✅ BUG 1 FIX: Obliterate Zombie Reposts. 
-                      // If the original post doesn't exist in origMap, it returns null and is filtered out.
                       fetchedChunk = fetchedChunk.map(p => {
                           if (p.isRepost) {
                               if (origMap.has(p.originalPostId)) {
@@ -278,12 +270,11 @@ export default function FeedScreen() {
                                       mediaUrl: master.mediaUrl || p.mediaUrl
                                   };
                               } else {
-                                  // The Master Post was deleted! Return null to destroy this zombie repost.
                                   return null; 
                               }
                           }
                           return p;
-                      }).filter(Boolean); // <-- Safely removes the nulls!
+                      }).filter(Boolean); 
 
                   } catch (syncErr) { console.log("Failed to sync master posts", syncErr); }
               }
@@ -492,25 +483,32 @@ export default function FeedScreen() {
                     ) : null
                 }
                 
-                renderItem={({ item }: { item: any }) => (
-                    <PostCard 
-                        post={item as any} 
-                        isVisible={playingPostId === item.id} 
-                        onDelete={(deletedId) => {
-                            setPosts(prev => prev.filter(p => p.id !== deletedId));
-                        }}
-                        onBlock={(blockedId) => {
-                            setPosts(prev => prev.filter(p => p.userId !== blockedId && p.originalUserId !== blockedId));
-                            const newBlocked = [...blockedUsers, blockedId];
-                            setBlockedUsers(newBlocked);
-                            if (currentUser) {
-                                AsyncStorage.setItem(`prefs_${currentUser.uid}`, JSON.stringify({
-                                    blockedUsers: newBlocked,
-                                    interests: userInterests
-                                })).catch(()=>{});
-                            }
-                        }}
-                    />
+                renderItem={({ item, index }: { item: any, index: number }) => (
+                    <React.Fragment>
+                        <PostCard 
+                            post={item as any} 
+                            isVisible={playingPostId === item.id} 
+                            onDelete={(deletedId) => {
+                                setPosts(prev => prev.filter(p => p.id !== deletedId));
+                            }}
+                            onBlock={(blockedId) => {
+                                setPosts(prev => prev.filter(p => p.userId !== blockedId && p.originalUserId !== blockedId));
+                                const newBlocked = [...blockedUsers, blockedId];
+                                setBlockedUsers(newBlocked);
+                                if (currentUser) {
+                                    AsyncStorage.setItem(`prefs_${currentUser.uid}`, JSON.stringify({
+                                        blockedUsers: newBlocked,
+                                        interests: userInterests
+                                    })).catch(()=>{});
+                                }
+                            }}
+                        />
+                        {(index + 1) % 3 === 0 && (
+                            <View style={{ marginVertical: 8 }}>
+                                <AdBanner />
+                            </View>
+                        )}
+                    </React.Fragment>
                 )}
             />
         )}

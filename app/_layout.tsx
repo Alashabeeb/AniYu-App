@@ -10,6 +10,10 @@ import { ThemeProvider } from '../context/ThemeContext';
 import { ToastProvider } from '../context/ToastContext';
 import { useUserHeartbeat } from '../hooks/useUserHeartbeat';
 
+// ✅ IMPORT ADMOB
+import mobileAds from 'react-native-google-mobile-ads';
+import ReturningUserAd from '../components/ReturningUserAd';
+
 // ✅ EXPO FOREGROUND NOTIFICATION HANDLER
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -51,6 +55,13 @@ function RootLayoutNav() {
   useUserHeartbeat();
 
   useEffect(() => {
+    // ✅ INITIALIZE ADMOB SDK ON APP START
+    mobileAds()
+      .initialize()
+      .then(adapterStatuses => {
+        console.log('AdMob SDK Initialized');
+      });
+
     // If Firebase is still checking local storage, do absolutely nothing.
     if (loading) return;
     
@@ -83,6 +94,7 @@ function RootLayoutNav() {
       <ToastProvider>
         <NotificationListener /> 
         <GlobalGatekeeper />
+        <ReturningUserAd /> {/* ✅ DROP IT HERE. IT WILL RUN SILENTLY IN THE BACKGROUND! */}
         <Stack>
           <Stack.Screen name="(auth)" options={{ headerShown: false }} />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />

@@ -2,7 +2,7 @@ export default {
   expo: {
     name: "AniYu",
     slug: "AniYu",
-    version: "1.0.5",
+    version: "1.0.6",
     orientation: "portrait",
     icon: "./assets/images/icon.png",
     scheme: "aniyu",
@@ -66,8 +66,13 @@ export default {
       ],
       "expo-video",
       "expo-font",
-      // ❌ REMOVED: react-native-google-mobile-ads plugin block
-      
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-9826157970378029~7056657389", 
+          "iosAppId": "ca-app-pub-9826157970378029~7998052970"     
+        }
+      ],      
       "@react-native-google-signin/google-signin",
       "expo-apple-authentication"
     ],

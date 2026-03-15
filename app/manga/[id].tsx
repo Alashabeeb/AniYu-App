@@ -2,13 +2,18 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage'; // ✅ Added AsyncStorage
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { DocumentSnapshot } from 'firebase/firestore';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
     ActivityIndicator, Alert, Image,
     Linking,
     Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
+// ✅ IMPORT ADMOB HOOKS & IDS
+import { useRewardedAd } from 'react-native-google-mobile-ads';
+import { AdUnitIds } from '../../constants/AdIds';
+
 import { auth } from '../../config/firebaseConfig';
 import { useTheme } from '../../context/ThemeContext';
 import { downloadChapterToFile, getMangaDownloads } from '../../services/downloadService';
@@ -49,6 +54,39 @@ export default function MangaDetailScreen() {
   const [submittingReview, setSubmittingReview] = useState(false);
 
   const [activeTab, setActiveTab] = useState('Overview');
+
+  // ✅ ADMOB: States to hold the item and the ACTION (Read vs Download)
+  const [pendingChapter, setPendingChapter] = useState<any>(null);
+  const [pendingAction, setPendingAction] = useState<'read' | 'download' | null>(null);
+
+  // ✅ ADMOB: Initialize the Rewarded Ad Hook
+  const { isLoaded, isClosed, isEarnedReward, load, show } = useRewardedAd(AdUnitIds.rewarded, {
+      requestNonPersonalizedAdsOnly: true,
+  });
+
+  // ✅ ADMOB: Pre-load the ad securely
+  useEffect(() => {
+      load();
+  }, [load]);
+
+  // ✅ ADMOB: Listen for when the ad is closed to grant the exact reward requested
+  useEffect(() => {
+      if (isClosed) {
+          if (isEarnedReward && pendingChapter) {
+              if (pendingAction === 'read') {
+                  performReadChapter(pendingChapter);
+              } else if (pendingAction === 'download') {
+                  performDownload(pendingChapter);
+              }
+          } else if (!isEarnedReward && pendingChapter) {
+              Alert.alert("Ad Canceled", "You must watch the full ad to unlock this feature.");
+          }
+          
+          setPendingChapter(null);
+          setPendingAction(null);
+          load(); 
+      }
+  }, [isClosed, isEarnedReward, load, pendingChapter, pendingAction]);
 
   useFocusEffect(useCallback(() => { if (id) loadStatus(); }, [id]));
   useFocusEffect(useCallback(() => { if(id) loadData(); }, [id]));
@@ -92,7 +130,6 @@ export default function MangaDetailScreen() {
       setLoadingMore(false);
   };
 
-  // ✅ COST SAVER 3: Replaced expensive Firestore reads with free local cache
   const checkAndIncrementView = async () => {
       const user = auth.currentUser;
       if (!user || !id) return;
@@ -133,13 +170,33 @@ export default function MangaDetailScreen() {
       finally { setDownloadingIds(prev => prev.filter(id => id !== chId)); }
   };
 
+  // ✅ ADMOB: Trigger Download Reward
   const handleDownload = (chapter: any) => {
       const chId = String(chapter.id || chapter.number);
       if (downloadedChapters.includes(chId)) return; 
-      performDownload(chapter);
+      
+      if (isLoaded) {
+          Alert.alert(
+              "Download Chapter",
+              "Watch a short ad to unlock the offline download for this chapter?",
+              [
+                  { text: "Cancel", style: "cancel" },
+                  { 
+                      text: "Watch Ad", 
+                      onPress: () => {
+                          setPendingChapter(chapter);
+                          setPendingAction('download'); 
+                          show();
+                      }
+                  }
+              ]
+          );
+      } else {
+          performDownload(chapter); // Fallback if ad hasn't loaded
+      }
   };
 
-  const handleReadChapter = (chapter: any) => {
+  const performReadChapter = (chapter: any) => {
       const chId = String(chapter.id || chapter.number);
       const fileUrl = chapter.pages?.[0];
 
@@ -155,6 +212,29 @@ export default function MangaDetailScreen() {
               chapterNum: chapter.number
           }
       });
+  };
+
+  // ✅ ADMOB: Trigger Read Reward
+  const handleReadChapter = (chapter: any) => {
+      if (isLoaded) {
+          Alert.alert(
+              "Unlock Chapter",
+              "Watch a short ad to unlock and read this chapter?",
+              [
+                  { text: "Cancel", style: "cancel" },
+                  { 
+                      text: "Watch Ad", 
+                      onPress: () => {
+                          setPendingChapter(chapter);
+                          setPendingAction('read'); 
+                          show();
+                      }
+                  }
+              ]
+          );
+      } else {
+          performReadChapter(chapter); // Fallback if ad hasn't loaded
+      }
   };
 
   const openSocial = (url: string) => {
@@ -268,7 +348,11 @@ export default function MangaDetailScreen() {
                                                 </View>
                                             </TouchableOpacity>
                                             <TouchableOpacity onPress={() => handleDownload(ch)} style={{padding: 10}}>
-                                                <Ionicons name={downloadedChapters.includes(chId) ? "checkmark-circle" : "download-outline"} size={24} color={downloadedChapters.includes(chId) ? "#10b981" : theme.subText} />
+                                                {downloadingIds.includes(chId) ? (
+                                                    <ActivityIndicator size="small" color={theme.tint} />
+                                                ) : (
+                                                    <Ionicons name={downloadedChapters.includes(chId) ? "checkmark-circle" : "download-outline"} size={24} color={downloadedChapters.includes(chId) ? "#10b981" : theme.subText} />
+                                                )}
                                             </TouchableOpacity>
                                         </View>
                                     );
