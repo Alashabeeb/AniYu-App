@@ -4,7 +4,7 @@ import {
     ChevronRight,
     Copy,
     Link as LinkIcon,
-    Loader2, // ✅ Fixed: Swapped ActivityIndicator for Loader2
+    Loader2,
     MousePointerClick,
     Search,
     Trash2,
@@ -94,7 +94,8 @@ export default function Affiliate() {
               affiliateCode: code,
               affiliateClicks: 0,
               affiliateSignups: 0,
-              affiliateCreatedAt: new Date()
+              affiliateCreatedAt: new Date(),
+              role: 'creator' // ✅ UPDATED: Automatically sets them as a Creator
           });
 
           alert(`${user.displayName || 'User'} is now an affiliate!`);
@@ -111,7 +112,8 @@ export default function Affiliate() {
       if (!window.confirm(`WARNING: Are you sure you want to revoke affiliate access for ${affiliate.displayName}? Their tracking link will stop working.`)) return;
       try {
           await updateDoc(doc(db, 'users', affiliate.id), {
-              isAffiliate: false
+              isAffiliate: false,
+              role: 'user' // ✅ UPDATED: Reverts them back to a standard User
           });
           if (selectedAffiliate?.id === affiliate.id) setSelectedAffiliate(null);
           fetchAffiliates();

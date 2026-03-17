@@ -140,9 +140,25 @@ export default function ProfileScreen() {
              </View>
           </View>
           
-          <Text style={[styles.displayName, { color: theme.text }]}>
-            {userData?.displayName || "New User"}
-          </Text>
+          {/* ✅ GOLDEN CREATOR/MODERATOR BADGE NEXT TO NAME */}
+          <View style={styles.nameRow}>
+            <Text style={[styles.displayName, { color: theme.text }]}>
+              {userData?.displayName || "New User"}
+            </Text>
+            
+            {userData?.role === 'creator' && (
+                <View style={styles.goldenBadge}>
+                    <Text style={styles.goldenBadgeText}>C</Text>
+                </View>
+            )}
+
+            {userData?.role === 'moderator' && (
+                <View style={styles.goldenBadge}>
+                    <Text style={styles.goldenBadgeText}>M</Text>
+                </View>
+            )}
+          </View>
+
           <Text style={[styles.username, { color: theme.subText }]}>
             @{userData?.username || "username"}
           </Text>
@@ -291,7 +307,13 @@ const styles = StyleSheet.create({
       alignItems: 'center'
   },
   rankText: { fontSize: 10, fontWeight: 'bold', color: 'black' },
-  displayName: { fontSize: 22, fontWeight: 'bold', marginTop: 12 },
+  
+  // ✅ NEW GOLDEN BADGE STYLES
+  nameRow: { flexDirection: 'row', alignItems: 'center', marginTop: 12 },
+  displayName: { fontSize: 22, fontWeight: 'bold' },
+  goldenBadge: { backgroundColor: '#FFD700', width: 20, height: 20, borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginLeft: 6 },
+  goldenBadgeText: { color: '#000', fontSize: 12, fontWeight: '900' },
+
   username: { fontSize: 14, marginTop: 2 },
   bio: { marginTop: 8, textAlign: 'center', paddingHorizontal: 40, fontSize: 13, lineHeight: 18 },
   editBtn: { marginTop: 15, paddingHorizontal: 20, paddingVertical: 8, borderRadius: 20, borderWidth: 1 },

@@ -25,7 +25,7 @@ import CustomAlert from '../components/CustomAlert';
 import { auth, db } from '../config/firebaseConfig';
 import { useTheme } from '../context/ThemeContext';
 import { sendSocialNotification } from '../services/notificationService';
-import { deleteFromR2 } from '../services/r2Storage'; // ✅ IMPORTED R2 DELETE FUNCTION
+import { deleteFromR2 } from '../services/r2Storage';
 import { getFriendlyErrorMessage } from '../utils/errorHandler';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -158,10 +158,6 @@ export default function PostDetailsScreen() {
               const commentId = viewToken.item.id;
               if (!viewedCommentSessionIds.has(commentId)) {
                   viewedCommentSessionIds.add(commentId);
-                  // ✅ BILLING TRAP FIXED: Commented out updateDoc to stop catastrophic Firebase billing drain from comment views!
-                  // try {
-                  //     updateDoc(doc(db, 'posts', commentId), { views: increment(1) });
-                  // } catch (e) { console.log("Error incrementing comment view", e); }
               }
           }
       });
@@ -340,6 +336,7 @@ export default function PostDetailsScreen() {
       const realUsername = userData.username || user.email?.split('@')[0] || "user"; 
       const realDisplayName = userData.displayName || user.displayName || "Anonymous";
       const realAvatar = userData.avatar || user.photoURL;
+      const realRole = userData.role || 'user'; // ✅ FETCHES ROLE FOR THE BADGE
 
       const batch = writeBatch(db);
 
@@ -350,6 +347,7 @@ export default function PostDetailsScreen() {
         username: realUsername,        
         displayName: realDisplayName, 
         userAvatar: realAvatar,
+        role: realRole, // ✅ SAVES THE ROLE IN THE COMMENT
         createdAt: serverTimestamp(),
         parentId: postId, 
         likes: [],
@@ -436,12 +434,29 @@ export default function PostDetailsScreen() {
             onPress={() => goToDetails(item.id)} 
             activeOpacity={0.7}
         >
-            <Image source={{ uri: item.userAvatar }} style={styles.commentAvatar} />
+            <TouchableOpacity onPress={(e) => { e.stopPropagation(); router.push({ pathname: '/feed-profile', params: { userId: item.userId } }); }}>
+                <Image source={{ uri: item.userAvatar }} style={styles.commentAvatar} />
+            </TouchableOpacity>
             <View style={{ flex: 1 }}>
-                <View style={styles.row}>
+                {/* ✅ GOLDEN BADGE LOGIC FOR COMMENTS */}
+                <View style={[styles.row, { flexWrap: 'wrap' }]}>
                     <Text style={[styles.commentName, { color: theme.text }]} numberOfLines={1}>{item.displayName || item.username}</Text>
+                    
+                    {(item.role === 'creator' || item.userRole === 'creator') && (
+                        <View style={styles.commentGoldenBadge}>
+                            <Text style={styles.commentGoldenBadgeText}>C</Text>
+                        </View>
+                    )}
+                    
+                    {(item.role === 'moderator' || item.userRole === 'moderator') && (
+                        <View style={styles.commentGoldenBadge}>
+                            <Text style={styles.commentGoldenBadgeText}>M</Text>
+                        </View>
+                    )}
+
                     <Text style={[styles.commentHandle, { color: theme.subText }]} numberOfLines={1}>@{item.username} · {timeAgo}</Text>
                 </View>
+                
                 <Text style={{ color: theme.text, marginTop: 2, marginBottom: 8 }}>{item.text}</Text>
                 
                 <View style={styles.commentActions}>
@@ -503,9 +518,27 @@ export default function PostDetailsScreen() {
             ListHeaderComponent={() => (
                <View style={[styles.mainPost, { borderBottomColor: theme.border }]}>
                   <View style={styles.row}>
-                     <Image source={{ uri: post.userAvatar }} style={styles.avatar} />
+                     <TouchableOpacity onPress={(e) => { e.stopPropagation(); router.push({ pathname: '/feed-profile', params: { userId: post.userId } }); }}>
+                         <Image source={{ uri: post.userAvatar }} style={styles.avatar} />
+                     </TouchableOpacity>
                      <View style={{ marginLeft: 10 }}>
-                        <Text style={[styles.name, { color: theme.text }]}>{post.displayName || post.username}</Text>
+                        {/* ✅ GOLDEN BADGE LOGIC FOR MAIN POST */}
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <Text style={[styles.name, { color: theme.text }]}>{post.displayName || post.username}</Text>
+                            
+                            {(post.role === 'creator' || post.userRole === 'creator') && (
+                                <View style={styles.postGoldenBadge}>
+                                    <Text style={styles.postGoldenBadgeText}>C</Text>
+                                </View>
+                            )}
+                            
+                            {(post.role === 'moderator' || post.userRole === 'moderator') && (
+                                <View style={styles.postGoldenBadge}>
+                                    <Text style={styles.postGoldenBadgeText}>M</Text>
+                                </View>
+                            )}
+                        </View>
+
                         <Text style={[styles.handle, { color: theme.subText }]}>@{post.username}</Text>
                      </View>
                   </View>
@@ -668,6 +701,11 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center' },
   avatar: { width: 50, height: 50, borderRadius: 25 },
   name: { fontWeight: 'bold', fontSize: 16 },
+  
+  // ✅ MAIN POST BADGE STYLES
+  postGoldenBadge: { backgroundColor: '#FFD700', width: 16, height: 16, borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginLeft: 6 },
+  postGoldenBadgeText: { color: '#000', fontSize: 10, fontWeight: '900' },
+
   handle: { fontSize: 14 },
   postText: { fontSize: 18, marginTop: 10, lineHeight: 26 },
   
@@ -679,6 +717,11 @@ const styles = StyleSheet.create({
   commentItem: { flexDirection: 'row', padding: 15, borderBottomWidth: 0.5 },
   commentAvatar: { width: 35, height: 35, borderRadius: 17.5, marginRight: 10 },
   commentName: { fontWeight: 'bold', fontSize: 14, marginRight: 5 },
+  
+  // ✅ COMMENT BADGE STYLES
+  commentGoldenBadge: { backgroundColor: '#FFD700', width: 12, height: 12, borderRadius: 6, justifyContent: 'center', alignItems: 'center', marginRight: 4, marginTop: 1 },
+  commentGoldenBadgeText: { color: '#000', fontSize: 8, fontWeight: '900' },
+
   commentHandle: { fontSize: 12 }, 
   commentActions: { flexDirection: 'row', justifyContent: 'space-between', paddingRight: 40, marginTop: 5 },
   actionButton: { flexDirection: 'row', alignItems: 'center' },

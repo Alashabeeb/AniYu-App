@@ -184,10 +184,8 @@ export default function FeedProfileScreen() {
 
           const snapshot = await getDocs(q);
           
-          // ✅ TS BUG FIX: Explicitly typed as any[] so TypeScript knows we can access .isRepost and .originalPostId
           let newPosts: any[] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-          // ✅ BUG 1 FIX: Filter out Zombie Reposts on User Profiles
           const originalIds = [...new Set(newPosts.map(p => p.originalPostId))];
           if (originalIds.length > 0) {
               try {
@@ -222,11 +220,11 @@ export default function FeedProfileScreen() {
                                   mediaUrl: master.mediaUrl || p.mediaUrl
                               };
                           } else {
-                              return null; // Master was deleted, kill the zombie
+                              return null; 
                           }
                       }
                       return p;
-                  }).filter(Boolean) as any[]; // ✅ TS BUG FIX: Cast the filtered result back to any[]
+                  }).filter(Boolean) as any[]; 
               } catch (syncErr) { console.log("Failed to sync profile master posts", syncErr); }
           }
 
@@ -431,7 +429,23 @@ export default function FeedProfileScreen() {
           </View>
 
           <View style={styles.nameSection}>
-              <Text style={[styles.displayName, { color: theme.text }]}>{userData?.displayName || "Anonymous"}</Text>
+              {/* ✅ GOLDEN CREATOR/MODERATOR BADGE NEXT TO NAME */}
+              <View style={styles.nameRow}>
+                  <Text style={[styles.displayName, { color: theme.text }]}>{userData?.displayName || "Anonymous"}</Text>
+                  
+                  {userData?.role === 'creator' && (
+                      <View style={styles.goldenBadge}>
+                          <Text style={styles.goldenBadgeText}>C</Text>
+                      </View>
+                  )}
+
+                  {userData?.role === 'moderator' && (
+                      <View style={styles.goldenBadge}>
+                          <Text style={styles.goldenBadgeText}>M</Text>
+                      </View>
+                  )}
+              </View>
+              
               <Text style={[styles.username, { color: theme.subText }]}>@{userData?.username || "username"}</Text>
               
               {userData?.bio ? (
@@ -522,8 +536,14 @@ const styles = StyleSheet.create({
   rankBadge: { position: 'absolute', bottom: 0, right: -5, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, borderWidth: 2, zIndex: 5 },
   rankText: { fontSize: 9, fontWeight: 'bold', color: 'black' },
   editBtn: { paddingHorizontal: 15, paddingVertical: 6, borderRadius: 20, borderWidth: 1, marginBottom: 5 },
+  
+  // ✅ NEW GOLDEN BADGE STYLES
   nameSection: { paddingHorizontal: 15, marginTop: 5 },
+  nameRow: { flexDirection: 'row', alignItems: 'center' },
   displayName: { fontSize: 20, fontWeight: 'bold' },
+  goldenBadge: { backgroundColor: '#FFD700', width: 20, height: 20, borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginLeft: 6 },
+  goldenBadgeText: { color: '#000', fontSize: 12, fontWeight: '900' },
+
   username: { fontSize: 14 },
   bio: { marginTop: 8, fontSize: 14, lineHeight: 20 },
   statsRow: { flexDirection: 'row', paddingHorizontal: 15, marginTop: 15, marginBottom: 15 },

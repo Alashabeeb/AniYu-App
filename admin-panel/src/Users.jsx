@@ -37,6 +37,14 @@ const formatDate = (timestamp) => {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 };
 
+// ✅ HELPER: EXTRACT ONLY THE COUNTRY FROM LOCATION STRING
+const extractCountry = (locationString) => {
+    if (!locationString) return null;
+    const parts = locationString.split(',');
+    // Returns the last part of the string after the comma and removes extra spaces
+    return parts[parts.length - 1].trim(); 
+};
+
 export default function Users() {
   const location = useLocation(); 
   const [view, setView] = useState('list'); 
@@ -47,7 +55,6 @@ export default function Users() {
   // Filter States
   const [filterRole, setFilterRole] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
-  // ✅ SURGICAL UPDATE: Added new filter states
   const [filterLocation, setFilterLocation] = useState('all');
   const [filterVersion, setFilterVersion] = useState('all');
 
@@ -76,7 +83,6 @@ export default function Users() {
   const [loadingSocials, setLoadingSocials] = useState(false);
   const [socialTab, setSocialTab] = useState('device'); 
 
-  // ✅ AUTO-OPEN USER FROM NAVIGATION STATE
   useEffect(() => {
       const targetId = location.state?.targetUserId;
       if (targetId) {
@@ -178,7 +184,7 @@ export default function Users() {
           alert(`Success! Created ${newUser.role} account for "${newUser.username}".`);
           setShowCreateModal(false);
           setNewUser({ email: '', password: '', username: '', role: 'user' });
-          fetchUsers(); // Refresh
+          fetchUsers(); 
 
       } catch (error) {
           alert("Error creating user: " + error.message);
@@ -378,7 +384,6 @@ export default function Users() {
     alert("UID Copied!");
   };
 
-  // ✅ SURGICAL UPDATE: Added App Version and Location filtering logic
   const filteredUsers = users.filter(user => {
     const matchesSearch = 
         user.username?.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -391,15 +396,16 @@ export default function Users() {
                           (filterStatus === 'banned' && user.isBanned) || 
                           (filterStatus === 'active' && !user.isBanned);
 
-    const matchesLocation = filterLocation === 'all' || user.deviceInfo?.location === filterLocation;
+    // ✅ Match location based on the extracted country
+    const matchesLocation = filterLocation === 'all' || extractCountry(user.deviceInfo?.location) === filterLocation;
     
     const matchesVersion = filterVersion === 'all' || user.deviceInfo?.appVersion === filterVersion;
 
     return matchesSearch && matchesRole && matchesStatus && matchesLocation && matchesVersion;
   });
 
-  // ✅ SURGICAL UPDATE: Dynamically extract unique locations and versions for the dropdown menus
-  const uniqueLocations = [...new Set(users.map(u => u.deviceInfo?.location).filter(Boolean))].sort();
+  // ✅ Extract unique countries for the dropdown instead of full state/country
+  const uniqueLocations = [...new Set(users.map(u => extractCountry(u.deviceInfo?.location)).filter(Boolean))].sort();
   const uniqueVersions = [...new Set(users.map(u => u.deviceInfo?.appVersion).filter(Boolean))].sort();
 
   return (
@@ -533,6 +539,8 @@ export default function Users() {
                 >
                     <option value="all">All Roles</option>
                     <option value="user">User</option>
+                    <option value="creator">Creator</option>
+                    <option value="moderator">Moderator</option>
                     <option value="anime_producer">Anime Producer</option>
                     <option value="manga_producer">Manga Producer</option>
                     <option value="admin">Admin</option>
@@ -550,7 +558,7 @@ export default function Users() {
                     <option value="banned">Banned</option>
                 </select>
 
-                {/* ✅ SURGICAL UPDATE: Added Location Filter dynamically extracted */}
+                {/* Location Filter */}
                 <select 
                     className="filter-select" 
                     value={filterLocation} 
@@ -560,7 +568,7 @@ export default function Users() {
                     {uniqueLocations.map(loc => <option key={loc} value={loc}>{loc}</option>)}
                 </select>
 
-                {/* ✅ SURGICAL UPDATE: Added App Version Filter dynamically extracted */}
+                {/* App Version Filter */}
                 <select 
                     className="filter-select" 
                     value={filterVersion} 
@@ -601,13 +609,16 @@ export default function Users() {
                           <span className="form-label">Username</span>
                           <input type="text" required className="form-input" value={newUser.username} onChange={e => setNewUser({...newUser, username: e.target.value})} />
                       </div>
+                      {/* ✅ UPDATED CREATE ACCOUNT ROLES */}
                       <div className="form-group">
                           <span className="form-label">Account Role</span>
                           <select className="form-input" value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})}>
                               <option value="user">Regular User</option>
+                              <option value="creator">Creator (Affiliate)</option>
+                              <option value="moderator">Moderator (Affiliate)</option>
                               <option value="anime_producer">Anime Producer (Upload Only)</option>
                               <option value="manga_producer">Manga Producer (Upload Only)</option>
-                              {myRole === 'super_admin' && <option value="admin">Admin (Moderator)</option>}
+                              {myRole === 'super_admin' && <option value="admin">Full Admin</option>}
                           </select>
                       </div>
                       <button type="submit" disabled={creating} className="btn-submit">
@@ -687,9 +698,10 @@ export default function Users() {
                           {user.deviceInfo?.ipAddress || 'N/A'}
                       </span>
                   </td>
+                  {/* ✅ ONLY DISPLAY COUNTRY IN LOCATION COLUMN */}
                   <td>
                       <span style={{ fontSize: '0.8rem', color: '#4b5563', fontWeight: 500 }}>
-                          {user.deviceInfo?.location || <span style={{ color: '#9ca3af', fontStyle: 'italic' }}>N/A</span>}
+                          {user.deviceInfo?.location ? extractCountry(user.deviceInfo.location) : <span style={{ color: '#9ca3af', fontStyle: 'italic' }}>N/A</span>}
                       </span>
                   </td>
 
@@ -797,6 +809,7 @@ export default function Users() {
                                     </select>
                                 </div>
 
+                                {/* ✅ UPDATED EDIT ACCOUNT ROLES */}
                                 <div className="form-group">
                                     <span className="form-label">Role</span>
                                     <select 
@@ -806,9 +819,11 @@ export default function Users() {
                                         disabled={selectedUser.role === 'super_admin' && myRole !== 'super_admin'}
                                     >
                                         <option value="user">User</option>
+                                        <option value="creator">Creator (Affiliate)</option>
+                                        <option value="moderator">Moderator (Affiliate)</option>
                                         <option value="anime_producer">Anime Producer</option>
                                         <option value="manga_producer">Manga Producer</option>
-                                        <option value="admin">Admin (Moderator)</option>
+                                        <option value="admin">Full Admin</option>
                                         {myRole === 'super_admin' && <option value="super_admin">Super Admin</option>}
                                     </select>
                                 </div>
@@ -897,9 +912,10 @@ export default function Users() {
                                                                     <span className="stat-label">IP Address</span>
                                                                     <span className="stat-value" style={{ fontFamily: 'monospace', color: '#dc2626' }}>{selectedUser.deviceInfo.ipAddress}</span>
                                                                 </div>
+                                                                {/* ✅ ONLY DISPLAY COUNTRY IN LOCATION DETAILS */}
                                                                 <div className="stat-row">
                                                                     <span className="stat-label">Location</span>
-                                                                    <span className="stat-value">{selectedUser.deviceInfo.location || 'N/A'}</span>
+                                                                    <span className="stat-value">{selectedUser.deviceInfo.location ? extractCountry(selectedUser.deviceInfo.location) : 'N/A'}</span>
                                                                 </div>
                                                             </div>
                                                         ) : (

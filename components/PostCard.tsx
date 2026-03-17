@@ -202,7 +202,8 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
                 reposts: post.reposts || [], 
                 repostCount: post.repostCount || 0,
                 commentCount: post.commentCount || 0,
-                views: post.views || 0
+                views: post.views || 0,
+                role: post.role || 'user' // Ensures role is carried over in reposts
             });
             sendSocialNotification(authorId, 'repost', { uid: currentUser.uid, name: currentUser.displayName || 'User', avatar: currentUser.photoURL || '' }, '', targetPostId);
         } else {
@@ -374,8 +375,22 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
 
         <View style={{ flex: 1, marginLeft: 12 }}>
           <View style={styles.headerRow}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, flexWrap: 'wrap' }}>
               <Text style={[styles.name, { color: theme.text }]} numberOfLines={1}>{post.displayName}</Text>
+              
+              {/* ✅ GOLDEN BADGES FOR FEED */}
+              {(post.role === 'creator' || post.userRole === 'creator') && (
+                  <View style={styles.postGoldenBadge}>
+                      <Text style={styles.postGoldenBadgeText}>C</Text>
+                  </View>
+              )}
+              
+              {(post.role === 'moderator' || post.userRole === 'moderator') && (
+                  <View style={styles.postGoldenBadge}>
+                      <Text style={styles.postGoldenBadgeText}>M</Text>
+                  </View>
+              )}
+
               <Text style={[styles.handle, { color: theme.subText }]} numberOfLines={1}>@{post.username} · {timeAgo}</Text>
             </View>
             {showMenu && (
@@ -514,6 +529,11 @@ const styles = StyleSheet.create({
   avatar: { width: 45, height: 45, borderRadius: 22.5, backgroundColor: '#eee' },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 },
   name: { fontWeight: 'bold', fontSize: 15, marginRight: 6, flexShrink: 1 },
+  
+  // ✅ NEW FEED BADGE STYLES
+  postGoldenBadge: { backgroundColor: '#FFD700', width: 14, height: 14, borderRadius: 7, justifyContent: 'center', alignItems: 'center', marginRight: 6, marginTop: 1 },
+  postGoldenBadgeText: { color: '#000', fontSize: 9, fontWeight: '900' },
+
   handle: { fontSize: 14, flexShrink: 1 },
   dotsButton: { padding: 5, marginTop: -5 },
   text: { fontSize: 15, lineHeight: 22, marginBottom: 8 },
