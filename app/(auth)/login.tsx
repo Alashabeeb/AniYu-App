@@ -112,7 +112,11 @@ export default function LoginScreen() {
             hasAcceptedTerms: false 
         });
       } else {
-        if (userDoc.data()?.role !== 'user') {
+        // ✅ ALLOW USERS, CREATORS, AND MODERATORS
+        const userData = userDoc.data();
+        const allowedAppRoles = ['user', 'creator', 'moderator'];
+        
+        if (!allowedAppRoles.includes(userData?.role || 'user')) {
            await signOut(auth); 
            throw new Error("Access Denied: Admins must use web dashboard.");
         }
@@ -132,9 +136,13 @@ export default function LoginScreen() {
       const userDocRef = doc(db, "users", userCredential.user.uid);
       const userDoc = await getDoc(userDocRef);
       
-      if (userDoc.exists() && userDoc.data()?.role !== 'user') {
+      // ✅ ALLOW USERS, CREATORS, AND MODERATORS
+      const userData = userDoc.data();
+      const allowedAppRoles = ['user', 'creator', 'moderator'];
+
+      if (userDoc.exists() && !allowedAppRoles.includes(userData?.role || 'user')) {
           await signOut(auth); 
-          return showAlert('error', 'Access Denied', 'This app is for Viewers only.');
+          return showAlert('error', 'Access Denied', 'This app is for Users, Creators, and Moderators only.');
       }
     } catch (error: any) {
       if (error.code === 'auth/user-disabled') {

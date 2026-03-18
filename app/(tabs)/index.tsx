@@ -42,14 +42,16 @@ export default function HomeScreen() {
   const { theme, isDark } = useTheme();
   const currentUser = auth.currentUser;
 
-  // ✅ BUG FIX 1: Memory Leak Protection Ref
   const isMountedRef = useRef(true);
 
   const [trending, setTrending] = useState<any[]>([]);
   const [upcoming, setUpcoming] = useState<any[]>([]); 
   const [recommended, setRecommended] = useState<any[]>([]); 
   const [favorites, setFavorites] = useState<any[]>([]);
+  
+  // ✅ TWO SEPARATE STATES NOW
   const [continueWatching, setContinueWatching] = useState<any[]>([]);
+  const [recentlyViewed, setRecentlyViewed] = useState<any[]>([]);
   
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -66,7 +68,7 @@ export default function HomeScreen() {
       loadFromCache(); 
       loadInitialData(); 
       
-      return () => { isMountedRef.current = false; }; // Cleanup on unmount
+      return () => { isMountedRef.current = false; }; 
   }, []);
 
   useFocusEffect(
@@ -114,7 +116,14 @@ export default function HomeScreen() {
 
   const loadHistory = async () => {
       const history = await getContinueWatching();
-      if (isMountedRef.current) setContinueWatching(history);
+      if (isMountedRef.current) {
+          // ✅ SPLIT THE HISTORY INTO TWO ARRAYS (Max 5 each)
+          const activeWatches = history.filter(item => item.progress > 0 && item.episodeId !== 'preview').slice(0, 5);
+          const recentViews = history.filter(item => item.progress === 0 || item.episodeId === 'preview').slice(0, 5);
+          
+          setContinueWatching(activeWatches);
+          setRecentlyViewed(recentViews);
+      }
   };
 
   const loadFromCache = async () => {
@@ -178,7 +187,6 @@ export default function HomeScreen() {
 
       const recommendedData = await getRecommendedAnime(userGenres);
 
-      // ✅ Safe state updates
       if (isMountedRef.current) {
           setTrending(trendingData);
           setUpcoming(upcomingData);
@@ -211,12 +219,14 @@ export default function HomeScreen() {
       await loadFavorites();
   };
 
-  const handleContinueWatching = (item: any) => {
-      if (item.episodeId) {
-          router.push({ pathname: '/anime/[id]', params: { id: item.mal_id, episodeId: item.episodeId } });
-      } else {
-          router.push(`/anime/${item.mal_id}`);
-      }
+  // ✅ HANDLER 1: Jumps straight into the player where they left off
+  const handleContinueWatchingClick = (item: any) => {
+      router.push({ pathname: '/anime/[id]', params: { id: item.mal_id, episodeId: item.episodeId } });
+  };
+
+  // ✅ HANDLER 2: Jumps to the overview/details screen
+  const handleRecentlyViewedClick = (item: any) => {
+      router.push(`/anime/${item.mal_id}`);
   };
 
   const handleSearch = async () => {
@@ -306,7 +316,6 @@ export default function HomeScreen() {
             ) : (
                 <FlatList
                     data={searchResults}
-                    // ✅ BUG FIX 2: Added index to guarantee unique keys
                     keyExtractor={(item, index) => `${item.mal_id}-${index}`}
                     renderItem={renderSearchItem}
                     contentContainerStyle={{ padding: 20 }}
@@ -323,11 +332,21 @@ export default function HomeScreen() {
         >
           <HeroCarousel data={trending.slice(0, 5)} />
           
+          {/* ✅ RAIL 1: CONTINUE WATCHING */}
           {continueWatching.length > 0 && (
               <TrendingRail 
                   title="Continue Watching" 
                   data={continueWatching} 
-                  onItemPress={handleContinueWatching}
+                  onItemPress={handleContinueWatchingClick}
+              />
+          )}
+
+          {/* ✅ RAIL 2: RECENTLY VIEWED */}
+          {recentlyViewed.length > 0 && (
+              <TrendingRail 
+                  title="Recently Viewed" 
+                  data={recentlyViewed} 
+                  onItemPress={handleRecentlyViewedClick}
               />
           )}
 

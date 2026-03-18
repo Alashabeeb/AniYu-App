@@ -5,6 +5,9 @@ const HISTORY_BASE_KEY = 'watch_history';
 const MANGA_HISTORY_BASE_KEY = 'manga_history';
 const READ_CHAPTERS_BASE_KEY = 'read_chapters_list';
 
+// ✅ INCREASED TO 20 so we can filter into two separate 5-item lists on the Home Screen
+const MAX_HISTORY_LENGTH = 20;
+
 const getUserKey = (baseKey: string) => {
   const userId = auth.currentUser?.uid || 'guest';
   return `user_${userId}_${baseKey}`;
@@ -33,7 +36,6 @@ export interface MangaHistoryItem {
   date: number;
 }
 
-// ✅ FIX: Promise Queues to prevent Race Conditions
 let historySavePromise = Promise.resolve();
 let mangaSavePromise = Promise.resolve();
 
@@ -54,7 +56,6 @@ export const saveWatchProgress = (
     progress: number, 
     totalDuration: number
 ) => {
-  // ✅ FIX: Queueing logic
   historySavePromise = historySavePromise.then(async () => {
       try {
         const current = await getContinueWatching();
@@ -77,7 +78,7 @@ export const saveWatchProgress = (
           totalDuration
         };
 
-        const newHistory = [newItem, ...filtered].slice(0, 20);
+        const newHistory = [newItem, ...filtered].slice(0, MAX_HISTORY_LENGTH);
         const key = getUserKey(HISTORY_BASE_KEY);
         await AsyncStorage.setItem(key, JSON.stringify(newHistory));
       } catch (error) {
@@ -99,7 +100,6 @@ export const getMangaHistory = async (): Promise<MangaHistoryItem[]> => {
 };
 
 export const saveReadProgress = (manga: any, chapter: any, page: number) => {
-  // ✅ FIX: Queueing logic
   mangaSavePromise = mangaSavePromise.then(async () => {
       try {
         const current = await getMangaHistory();
@@ -121,7 +121,7 @@ export const saveReadProgress = (manga: any, chapter: any, page: number) => {
           date: Date.now(),
         };
 
-        const newHistory = [newItem, ...filtered].slice(0, 20); 
+        const newHistory = [newItem, ...filtered].slice(0, MAX_HISTORY_LENGTH); 
         const key = getUserKey(MANGA_HISTORY_BASE_KEY);
         await AsyncStorage.setItem(key, JSON.stringify(newHistory));
 
@@ -134,7 +134,6 @@ export const saveReadProgress = (manga: any, chapter: any, page: number) => {
   return mangaSavePromise;
 };
 
-// ... Rest of file (getReadChapterIds, markChapterAsRead, clearHistory) remains unchanged
 export const getReadChapterIds = async (): Promise<string[]> => {
     try {
         const key = getUserKey(READ_CHAPTERS_BASE_KEY); 

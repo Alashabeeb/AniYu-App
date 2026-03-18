@@ -188,7 +188,11 @@ export default function SignUpScreen() {
         showAlert('success', 'Welcome!', 'Your account has been created successfully.');
       } else {
         const userData = userDoc.data();
-        if (userData?.role !== 'user') {
+        
+        // ✅ Allow 'user', 'creator', and 'moderator' to access the mobile app
+        const allowedAppRoles = ['user', 'creator', 'moderator'];
+        
+        if (!allowedAppRoles.includes(userData?.role || 'user')) {
             await signOut(auth); 
             throw new Error("Access Denied: This account is restricted to the Web Dashboard.");
         }

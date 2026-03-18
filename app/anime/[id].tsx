@@ -72,7 +72,6 @@ export default function AnimeDetailScreen() {
   const [userRating, setUserRating] = useState(0);
   const [submittingReview, setSubmittingReview] = useState(false);
 
-  // ✅ NEW: State for the Licensor / Content Unavailable Modal
   const [licensorModalVisible, setLicensorModalVisible] = useState(false);
 
   const [commentText, setCommentText] = useState('');
@@ -86,7 +85,6 @@ export default function AnimeDetailScreen() {
   const [currentEpId, setCurrentEpId] = useState<string | null>(null);
   const [currentVideoSource, setCurrentVideoSource] = useState<string | null>(null);
 
-  // ✅ ADMOB: States to hold the item and the ACTION (Play vs Download)
   const [pendingEpisode, setPendingEpisode] = useState<any>(null);
   const [pendingAction, setPendingAction] = useState<'play' | 'download' | null>(null);
 
@@ -96,17 +94,14 @@ export default function AnimeDetailScreen() {
       player.loop = false; 
   });
 
-  // ✅ ADMOB: Initialize the Rewarded Ad Hook
   const { isLoaded, isClosed, isEarnedReward, load, show } = useRewardedAd(AdUnitIds.rewarded, {
       requestNonPersonalizedAdsOnly: true,
   });
 
-  // ✅ ADMOB: Pre-load the ad securely
   useEffect(() => {
       load();
   }, [load]);
 
-  // ✅ ADMOB: Listen for when the ad is closed to grant the exact reward requested
   useEffect(() => {
       if (isClosed) {
           if (isEarnedReward && pendingEpisode) {
@@ -328,6 +323,15 @@ export default function AnimeDetailScreen() {
       ]);
       setAnime(detailsData);
       setEpisodes(episodesData);
+
+      // ✅ CONDITIONAL TRIGGER: ONLY Save to "Recently Viewed" if NO streaming rights
+      const user = auth.currentUser;
+      if (user && detailsData) {
+          const animeData = detailsData as any;
+          if (animeData.hasStreamingRights === false) {
+              await saveWatchProgress(animeData, { id: 'preview', mal_id: 'preview', title: 'Preview' }, 0, 0);
+          }
+      }
       
       const animeData = detailsData as any; 
       
@@ -336,7 +340,6 @@ export default function AnimeDetailScreen() {
           setDislikesCount(animeData.dislikes || 0);
       }
 
-      const user = auth.currentUser;
       if(user && id) {
           const reaction = await getUserReaction(id as string, user.uid);
           setUserReaction(reaction);
@@ -402,9 +405,7 @@ export default function AnimeDetailScreen() {
       await toggleAnimeReaction(id as string, user.uid, type);
   };
 
-  // ✅ UPDATED: Trigger Play Reward OR Content Unavailable Popup
   const handleEpisodePress = (ep: any) => {
-    // Check global switch first!
     if (anime.hasStreamingRights === false) {
         setLicensorModalVisible(true);
         return;
@@ -422,7 +423,7 @@ export default function AnimeDetailScreen() {
                     text: "Watch Ad", 
                     onPress: () => {
                         setPendingEpisode(ep);
-                        setPendingAction('play'); // Set action to PLAY
+                        setPendingAction('play'); 
                         show();
                     }
                 }
@@ -494,7 +495,7 @@ export default function AnimeDetailScreen() {
                     text: "Watch Ad", 
                     onPress: () => {
                         setPendingEpisode(ep);
-                        setPendingAction('download'); // Set action to DOWNLOAD
+                        setPendingAction('download');
                         show();
                     }
                 }
@@ -656,7 +657,6 @@ export default function AnimeDetailScreen() {
                             ))}
                         </View>
 
-                        {/* ✅ NEW: METADATA SECTION (Studio, Producer, Platforms) */}
                         {(anime.studio || anime.producer) && (
                             <View style={{ marginTop: 20 }}>
                                 {anime.studio && (
@@ -686,7 +686,6 @@ export default function AnimeDetailScreen() {
                         )}
                     </View>
 
-                    {/* ✅ UPDATED: Always show the Episode List, but adapt the UI for Tracker Mode */}
                     <View style={styles.sectionHeader}>
                         <Text style={[styles.sectionTitle, { color: theme.text, marginLeft: 20, marginBottom: 10 }]}>Episodes ({episodes.length})</Text>
                     </View>
@@ -725,7 +724,6 @@ export default function AnimeDetailScreen() {
                                                 <Text style={{ color: theme.subText, fontSize: 12 }}>
                                                     {ep.aired ? new Date(ep.aired).toLocaleDateString() : 'Ep ' + ep.number}
                                                 </Text>
-                                                {/* Only show file size if streaming is enabled */}
                                                 {anime.hasStreamingRights !== false && (
                                                     <Text style={{ color: theme.subText, fontSize: 12 }}>• {formatSize(ep.size)}</Text>
                                                 )}
@@ -734,7 +732,6 @@ export default function AnimeDetailScreen() {
                                         </View>
                                     </TouchableOpacity>
 
-                                    {/* ✅ Hide the download button completely if they don't have streaming rights */}
                                     {anime.hasStreamingRights !== false && (
                                         <View style={styles.actionContainer}>
                                             {isDownloading ? (
@@ -840,7 +837,6 @@ export default function AnimeDetailScreen() {
             </View>
         </Modal>
 
-        {/* ✅ NEW: Content Unavailable Modal */}
         <Modal
             animationType="slide"
             transparent={true}
