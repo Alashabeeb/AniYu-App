@@ -254,6 +254,7 @@ export default function LoginScreen() {
                     autoCapitalize="none"
                     maxLength={100}
                   />
+                  
                   <View style={styles.modalButtons}>
                       <TouchableOpacity onPress={() => setResetModalVisible(false)} style={styles.cancelBtn_forgot}><Text style={{ color: theme.subText }}>Cancel</Text></TouchableOpacity>
                       <TouchableOpacity onPress={handleForgotPassword} style={[styles.confirmBtn, { backgroundColor: theme.tint }]}>
