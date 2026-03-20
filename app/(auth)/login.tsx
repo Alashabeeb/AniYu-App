@@ -27,6 +27,9 @@ import { auth, db } from '../../config/firebaseConfig';
 import { useTheme } from '../../context/ThemeContext';
 import { getFriendlyErrorMessage } from '../../utils/errorHandler';
 
+// 🔐 SECURITY: Email format validator
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 GoogleSignin.configure({
   webClientId: "891600067276-gd325gpe02fi1ceps35ri17ab7gnlonk.apps.googleusercontent.com", 
 });
@@ -38,6 +41,7 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   
   const [resetModalVisible, setResetModalVisible] = useState(false);
   const [resetEmail, setResetEmail] = useState('');
@@ -56,9 +60,11 @@ export default function LoginScreen() {
 
   const handleForgotPassword = async () => {
     if (!resetEmail) return Alert.alert("Error", "Please enter your email address.");
+    // 🔐 SECURITY: Validate email format before sending reset
+    if (!EMAIL_REGEX.test(resetEmail.trim())) return Alert.alert("Error", "Please enter a valid email address.");
     setResetLoading(true);
     try {
-      await sendPasswordResetEmail(auth, resetEmail);
+      await sendPasswordResetEmail(auth, resetEmail.trim());
       setResetModalVisible(false);
       showAlert('success', 'Email Sent', 'Check your inbox or spam folder for password reset instructions.');
     } catch (error: any) {
@@ -129,10 +135,15 @@ export default function LoginScreen() {
   };
 
   const handleLoginClick = async () => {
-    if(!email || !password) return showAlert('warning', 'Missing Info', 'Please fill in both email and password fields.');
+    if (!email || !password) return showAlert('warning', 'Missing Info', 'Please fill in both email and password fields.');
+    // 🔐 SECURITY: Validate email format
+    if (!EMAIL_REGEX.test(email.trim())) return showAlert('warning', 'Invalid Email', 'Please enter a valid email address.');
+    // 🔐 SECURITY: Validate password length
+    if (password.length < 6) return showAlert('warning', 'Invalid Password', 'Password must be at least 6 characters.');
+    if (password.length > 15) return showAlert('warning', 'Invalid Password', 'Password cannot exceed 15 characters.');
     setLoading(true);
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
       const userDocRef = doc(db, "users", userCredential.user.uid);
       const userDoc = await getDoc(userDocRef);
       
@@ -163,12 +174,37 @@ export default function LoginScreen() {
 
         <View style={styles.inputContainer}>
           <Text style={[styles.label, { color: theme.text }]}>Email</Text>
-          <TextInput style={[styles.input, { backgroundColor: theme.card, color: theme.text, borderColor: theme.border }]} placeholder="Enter your email" placeholderTextColor={theme.subText} value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
+          <TextInput
+            style={[styles.input, { backgroundColor: theme.card, color: theme.text, borderColor: theme.border }]}
+            placeholder="Enter your email"
+            placeholderTextColor={theme.subText}
+            value={email}
+            onChangeText={setEmail}
+            autoCapitalize="none"
+            keyboardType="email-address"
+            maxLength={100}
+          />
         </View>
 
         <View style={styles.inputContainer}>
           <Text style={[styles.label, { color: theme.text }]}>Password</Text>
-          <TextInput style={[styles.input, { backgroundColor: theme.card, color: theme.text, borderColor: theme.border }]} placeholder="Enter your password" placeholderTextColor={theme.subText} value={password} onChangeText={setPassword} secureTextEntry />
+          <View style={{ position: 'relative' }}>
+            <TextInput
+              style={[styles.input, { backgroundColor: theme.card, color: theme.text, borderColor: theme.border, paddingRight: 50 }]}
+              placeholder="Enter your password"
+              placeholderTextColor={theme.subText}
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry={!showPassword}
+              maxLength={15}
+            />
+            <TouchableOpacity
+              onPress={() => setShowPassword(prev => !prev)}
+              style={{ position: 'absolute', right: 15, top: 0, bottom: 0, justifyContent: 'center' }}
+            >
+              <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={20} color={theme.subText} />
+            </TouchableOpacity>
+          </View>
           <TouchableOpacity onPress={() => { setResetEmail(email); setResetModalVisible(true); }} style={{ alignSelf: 'flex-end', marginTop: 8 }}>
             <Text style={{ color: theme.tint, fontWeight: '600' }}>Forgot Password?</Text>
           </TouchableOpacity>
@@ -209,7 +245,15 @@ export default function LoginScreen() {
               <View style={[styles.modalContent, { backgroundColor: theme.card }]}>
                   <Text style={[styles.modalTitle, { color: theme.text }]}>Reset Password</Text>
                   <Text style={{ color: theme.subText, marginBottom: 15 }}>Enter your email to receive a reset link.</Text>
-                  <TextInput style={[styles.input, { backgroundColor: theme.background, color: theme.text, borderColor: theme.border, width: '100%' }]} placeholder="Email Address" placeholderTextColor={theme.subText} value={resetEmail} onChangeText={setResetEmail} autoCapitalize="none" />
+                  <TextInput
+                    style={[styles.input, { backgroundColor: theme.background, color: theme.text, borderColor: theme.border, width: '100%' }]}
+                    placeholder="Email Address"
+                    placeholderTextColor={theme.subText}
+                    value={resetEmail}
+                    onChangeText={setResetEmail}
+                    autoCapitalize="none"
+                    maxLength={100}
+                  />
                   <View style={styles.modalButtons}>
                       <TouchableOpacity onPress={() => setResetModalVisible(false)} style={styles.cancelBtn_forgot}><Text style={{ color: theme.subText }}>Cancel</Text></TouchableOpacity>
                       <TouchableOpacity onPress={handleForgotPassword} style={[styles.confirmBtn, { backgroundColor: theme.tint }]}>
@@ -241,7 +285,6 @@ const styles = StyleSheet.create({
   socialRow: { flexDirection: 'row', gap: 15 },
   socialBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 12, borderRadius: 12, borderWidth: 1, gap: 10 },
   socialText: { fontWeight: '600', fontSize: 16 },
-
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
   modalContent: { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 25, paddingBottom: 40, elevation: 10 },
   modalTitle: { fontSize: 22, fontWeight: 'bold' },

@@ -26,6 +26,10 @@ import { auth, db } from '../../config/firebaseConfig';
 import { useTheme } from '../../context/ThemeContext';
 import { getFriendlyErrorMessage } from '../../utils/errorHandler';
 
+// 🔐 SECURITY: Validators
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const USERNAME_REGEX = /^[a-zA-Z0-9_]+$/;
+
 GoogleSignin.configure({
   webClientId: "891600067276-gd325gpe02fi1ceps35ri17ab7gnlonk.apps.googleusercontent.com", 
 });
@@ -39,6 +43,7 @@ export default function SignUpScreen() {
   const [username, setUsername] = useState('');
   const [inviteCode, setInviteCode] = useState(''); // ✅ Added State for the new text box
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const [alertConfig, setAlertConfig] = useState({
     visible: false,
@@ -214,14 +219,32 @@ export default function SignUpScreen() {
     if (!email || !password || !username) {
         return showAlert('warning', 'Missing Fields', 'Please fill in all fields to continue.');
     }
+    // 🔐 SECURITY: Validate email format
+    if (!EMAIL_REGEX.test(email.trim())) {
+        return showAlert('warning', 'Invalid Email', 'Please enter a valid email address.');
+    }
+    // 🔐 SECURITY: Validate username format and length
+    if (username.length < 3) {
+        return showAlert('warning', 'Username Too Short', 'Username must be at least 3 characters.');
+    }
+    if (username.length > 15) {
+        return showAlert('warning', 'Username Too Long', 'Username cannot exceed 15 characters.');
+    }
+    if (!USERNAME_REGEX.test(username)) {
+        return showAlert('warning', 'Invalid Username', 'Username can only contain letters, numbers, and underscores. No spaces.');
+    }
+    // 🔐 SECURITY: Validate password length
     if (password.length < 6) {
         return showAlert('warning', 'Weak Password', 'Password must be at least 6 characters long.');
+    }
+    if (password.length > 15) {
+        return showAlert('warning', 'Password Too Long', 'Password cannot exceed 15 characters.');
     }
 
     setLoading(true);
     try {
         const usersRef = collection(db, "users");
-        const q = query(usersRef, where("username", "==", username.toLowerCase()));
+        const q = query(usersRef, where("username", "==", username.trim().toLowerCase()));
         const snapshot = await getDocs(q);
 
         if (!snapshot.empty) {
@@ -239,21 +262,21 @@ export default function SignUpScreen() {
 
   const executeFirebaseEmailSignUp = async () => {
       try {
-          const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+          const userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);
           const user = userCredential.user;
 
-          await updateProfile(user, { displayName: username });
+          await updateProfile(user, { displayName: username.trim() });
 
           // ✅ Pass the text box value to the credit function
           const referredByCode = await handleAffiliateSignupCredit(inviteCode);
 
           await setDoc(doc(db, "users", user.uid), {
-              username: username.toLowerCase(),
-              displayName: username,
-              email: email,
+              username: username.trim().toLowerCase(),
+              displayName: username.trim(),
+              email: email.trim(),
               role: 'user',
               rank: 'GENIN',
-              avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=' + username,
+              avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=' + username.trim(),
               bio: "I'm new here!",
               followers: [],
               following: [],
@@ -289,12 +312,13 @@ export default function SignUpScreen() {
                 <View style={[styles.inputContainer, { backgroundColor: theme.card, borderColor: theme.border }]}>
                     <Ionicons name="person-outline" size={20} color={theme.subText} style={styles.icon} />
                     <TextInput 
-                        placeholder="Username" 
+                        placeholder="Username (3-15 chars, letters/numbers/_)" 
                         placeholderTextColor={theme.subText} 
                         style={[styles.input, { color: theme.text }]} 
                         value={username}
                         onChangeText={setUsername}
                         autoCapitalize="none"
+                        maxLength={15}
                     />
                 </View>
 
@@ -308,19 +332,24 @@ export default function SignUpScreen() {
                         onChangeText={setEmail}
                         keyboardType="email-address"
                         autoCapitalize="none"
+                        maxLength={100}
                     />
                 </View>
 
                 <View style={[styles.inputContainer, { backgroundColor: theme.card, borderColor: theme.border }]}>
                     <Ionicons name="lock-closed-outline" size={20} color={theme.subText} style={styles.icon} />
                     <TextInput 
-                        placeholder="Password" 
+                        placeholder="Password (6-15 characters)" 
                         placeholderTextColor={theme.subText} 
                         style={[styles.input, { color: theme.text }]} 
                         value={password}
                         onChangeText={setPassword}
-                        secureTextEntry
+                        secureTextEntry={!showPassword}
+                        maxLength={15}
                     />
+                    <TouchableOpacity onPress={() => setShowPassword(prev => !prev)} style={{ padding: 5 }}>
+                        <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={20} color={theme.subText} />
+                    </TouchableOpacity>
                 </View>
 
                 {/* ✅ ADDED: Invite Code Text Box */}
@@ -333,6 +362,7 @@ export default function SignUpScreen() {
                         value={inviteCode}
                         onChangeText={setInviteCode}
                         autoCapitalize="none"
+                        maxLength={20}
                     />
                 </View>
 
