@@ -19,6 +19,30 @@ const r2Client = new S3Client({
   },
 });
 
+// 🔐 SECURITY: Rate Limiter — max requests per user per hour per action
+const checkRateLimit = async (uid: string, action: string, maxRequests: number): Promise<boolean> => {
+  const now = Date.now();
+  const windowMs = 60 * 60 * 1000; // 1 hour window
+  const docRef = admin.firestore().collection("rateLimits").doc(`${uid}_${action}`);
+
+  const doc = await docRef.get();
+  if (doc.exists) {
+    const data = doc.data()!;
+    // Reset window if it has expired
+    if (now - data.windowStart > windowMs) {
+      await docRef.set({ count: 1, windowStart: now });
+      return true;
+    }
+    // Block if limit exceeded
+    if (data.count >= maxRequests) return false;
+    await docRef.update({ count: admin.firestore.FieldValue.increment(1) });
+    return true;
+  }
+  // First request from this user for this action
+  await docRef.set({ count: 1, windowStart: now });
+  return true;
+};
+
 // 2. GENERATE UPLOAD URL FUNCTION
 export const generateUploadUrl = onRequest((req, res) => {
   cors(req, res, async () => {
@@ -30,10 +54,18 @@ export const generateUploadUrl = onRequest((req, res) => {
     }
     const idToken = authHeader.split("Bearer ")[1];
 
+    let decodedToken;
     try {
-      await admin.auth().verifyIdToken(idToken);
+      decodedToken = await admin.auth().verifyIdToken(idToken);
     } catch (e) {
       res.status(401).json({ error: "Invalid Token" });
+      return;
+    }
+
+    // 🔐 SECURITY: Rate limit — 20 upload requests per user per hour
+    const allowed = await checkRateLimit(decodedToken.uid, "upload", 20);
+    if (!allowed) {
+      res.status(429).json({ error: "Too many upload requests. Please try again later." });
       return;
     }
 
@@ -81,10 +113,18 @@ export const deleteR2File = onRequest((req, res) => {
     }
     const idToken = authHeader.split("Bearer ")[1];
 
+    let decodedToken;
     try {
-      await admin.auth().verifyIdToken(idToken);
+      decodedToken = await admin.auth().verifyIdToken(idToken);
     } catch (e) {
       res.status(401).json({ error: "Invalid Token" });
+      return;
+    }
+
+    // 🔐 SECURITY: Rate limit — 30 delete requests per user per hour
+    const allowed = await checkRateLimit(decodedToken.uid, "delete", 30);
+    if (!allowed) {
+      res.status(429).json({ error: "Too many delete requests. Please try again later." });
       return;
     }
 
@@ -114,6 +154,249 @@ export const deleteR2File = onRequest((req, res) => {
 
     } catch (error) {
       console.error("Error deleting file from R2:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  });
+});
+
+// 🔐 SECURITY: Create Post via Cloud Function (Rate Limited)
+export const createPost = onRequest((req, res) => {
+  cors(req, res, async () => {
+    // A. Security Check: Ensure user is logged in
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const idToken = authHeader.split("Bearer ")[1];
+
+    let decodedToken;
+    try {
+      decodedToken = await admin.auth().verifyIdToken(idToken);
+    } catch (e) {
+      res.status(401).json({ error: "Invalid Token" });
+      return;
+    }
+
+    // B. Rate limit — 5 posts per hour per user
+    const allowed = await checkRateLimit(decodedToken.uid, "createPost", 5);
+    if (!allowed) {
+      res.status(429).json({ error: "You are posting too fast. Please wait before posting again." });
+      return;
+    }
+
+    // C. Validate inputs
+    const { text, mediaUrl, mediaType, tags, displayName, username, userAvatar } = req.body;
+    if (!text && !mediaUrl) {
+      res.status(400).json({ error: "Post must have text or media." });
+      return;
+    }
+    if (text && text.length > 120) {
+      res.status(400).json({ error: "Post text cannot exceed 120 characters." });
+      return;
+    }
+    if (!tags || tags.length === 0 || tags.length > 3) {
+      res.status(400).json({ error: "Post must have between 1 and 3 tags." });
+      return;
+    }
+
+    try {
+      // D. Write post to Firestore
+      const newPostRef = admin.firestore().collection("posts").doc();
+      const batch = admin.firestore().batch();
+
+      batch.set(newPostRef, {
+        text: text || "",
+        mediaUrl: mediaUrl || null,
+        mediaType: mediaType || null,
+        userId: decodedToken.uid,
+        displayName: displayName || "Anonymous",
+        username: username || "anonymous",
+        userAvatar: userAvatar || null,
+        tags: tags,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        likes: [],
+        reposts: [],
+        likeCount: 0,
+        repostCount: 0,
+        commentCount: 0,
+        parentId: null,
+        views: 0
+      });
+
+      const userRef = admin.firestore().collection("users").doc(decodedToken.uid);
+      batch.update(userRef, { lastPostedAt: admin.firestore.FieldValue.serverTimestamp() });
+
+      await batch.commit();
+
+      res.status(200).json({ success: true, postId: newPostRef.id });
+
+    } catch (error) {
+      console.error("Error creating post:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  });
+});
+
+// 🔐 SECURITY: Create Comment via Cloud Function (Rate Limited)
+export const createComment = onRequest((req, res) => {
+  cors(req, res, async () => {
+    // A. Security Check: Ensure user is logged in
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const idToken = authHeader.split("Bearer ")[1];
+
+    let decodedToken;
+    try {
+      decodedToken = await admin.auth().verifyIdToken(idToken);
+    } catch (e) {
+      res.status(401).json({ error: "Invalid Token" });
+      return;
+    }
+
+    // B. Rate limit — 20 comments per hour per user
+    const allowed = await checkRateLimit(decodedToken.uid, "createComment", 20);
+    if (!allowed) {
+      res.status(429).json({ error: "You are commenting too fast. Please wait before commenting again." });
+      return;
+    }
+
+    // C. Validate inputs
+    const { text, parentId, displayName, username, userAvatar, role } = req.body;
+    if (!text || !text.trim()) {
+      res.status(400).json({ error: "Comment cannot be empty." });
+      return;
+    }
+    if (text.length > 300) {
+      res.status(400).json({ error: "Comment cannot exceed 300 characters." });
+      return;
+    }
+    if (!parentId) {
+      res.status(400).json({ error: "Missing parent post ID." });
+      return;
+    }
+
+    try {
+      // D. Write comment and update parent post count
+      const newCommentRef = admin.firestore().collection("posts").doc();
+      const batch = admin.firestore().batch();
+
+      batch.set(newCommentRef, {
+        text: text,
+        userId: decodedToken.uid,
+        username: username || "anonymous",
+        displayName: displayName || "Anonymous",
+        userAvatar: userAvatar || null,
+        role: role || "user",
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        parentId: parentId,
+        likes: [],
+        reposts: [],
+        likeCount: 0,
+        repostCount: 0,
+        commentCount: 0,
+        views: 0
+      });
+
+      const parentPostRef = admin.firestore().collection("posts").doc(parentId);
+      batch.update(parentPostRef, { commentCount: admin.firestore.FieldValue.increment(1) });
+
+      const userRef = admin.firestore().collection("users").doc(decodedToken.uid);
+      batch.update(userRef, { lastPostedAt: admin.firestore.FieldValue.serverTimestamp() });
+
+      await batch.commit();
+
+      res.status(200).json({ success: true, commentId: newCommentRef.id });
+
+    } catch (error) {
+      console.error("Error creating comment:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  });
+});
+
+// 🔐 SECURITY: Create Support Message via Cloud Function (Rate Limited)
+export const createSupportMessage = onRequest((req, res) => {
+  cors(req, res, async () => {
+    // A. Security Check: Ensure user is logged in
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const idToken = authHeader.split("Bearer ")[1];
+
+    let decodedToken;
+    try {
+      decodedToken = await admin.auth().verifyIdToken(idToken);
+    } catch (e) {
+      res.status(401).json({ error: "Invalid Token" });
+      return;
+    }
+
+    // B. Rate limit — 20 messages per hour per user
+    const allowed = await checkRateLimit(decodedToken.uid, "supportMessage", 20);
+    if (!allowed) {
+      res.status(429).json({ error: "You are sending too many messages. Please wait before sending again." });
+      return;
+    }
+
+    // C. Validate inputs
+    const { ticketId, text, imageUrl } = req.body;
+    if (!ticketId) {
+      res.status(400).json({ error: "Missing ticket ID." });
+      return;
+    }
+    if (!text && !imageUrl) {
+      res.status(400).json({ error: "Message must have text or an image." });
+      return;
+    }
+    if (text && text.length > 500) {
+      res.status(400).json({ error: "Message cannot exceed 500 characters." });
+      return;
+    }
+
+    try {
+      // D. Verify ticket belongs to this user
+      const ticketRef = admin.firestore().collection("supportTickets").doc(ticketId);
+      const ticketSnap = await ticketRef.get();
+      if (!ticketSnap.exists || ticketSnap.data()?.userId !== decodedToken.uid) {
+        res.status(403).json({ error: "Forbidden." });
+        return;
+      }
+
+      // E. Write message and update ticket
+      const batch = admin.firestore().batch();
+
+      const msgRef = admin.firestore()
+        .collection("supportTickets")
+        .doc(ticketId)
+        .collection("messages")
+        .doc();
+
+      batch.set(msgRef, {
+        senderId: decodedToken.uid,
+        senderModel: 'user',
+        text: text?.trim() || "",
+        imageUrl: imageUrl || null,
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      batch.update(ticketRef, {
+        lastMessage: text?.trim() || 'Sent an attachment',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        unreadAdmin: true
+      });
+
+      await batch.commit();
+
+      res.status(200).json({ success: true });
+
+    } catch (error) {
+      console.error("Error creating support message:", error);
       res.status(500).json({ error: "Internal Server Error" });
     }
   });

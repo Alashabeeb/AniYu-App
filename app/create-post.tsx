@@ -3,15 +3,12 @@ import { ResizeMode, Video } from 'expo-av';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { Stack, useRouter } from 'expo-router';
-import {
-  collection,
-  doc,
-  getDoc,
-  serverTimestamp,
-  writeBatch
-} from 'firebase/firestore';
 // ✅ REMOVED FIREBASE STORAGE IMPORTS
 // import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import {
+  doc,
+  getDoc
+} from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -26,6 +23,9 @@ import { useTheme } from '../context/ThemeContext';
 import { getFriendlyErrorMessage } from '../utils/errorHandler';
 // ✅ IMPORT R2 SERVICE
 import { uploadToR2 } from '../services/r2Storage';
+
+// 🔐 SECURITY: Post creation now goes through rate-limited Cloud Function
+const CREATE_POST_URL = "https://us-central1-aniyu-b841b.cloudfunctions.net/createPost";
 
 const GENRES = ["Action", "Adventure", "Romance", "Fantasy", "Drama", "Comedy", "Sci-Fi", "Slice of Life", "Sports", "Mystery"];
 
@@ -137,6 +137,12 @@ export default function CreatePostScreen() {
     }
 
     if (!text.trim() && !media) return;
+
+    // 🔐 SECURITY FIX: Hard length guard before Cloud Function call
+    if (text.length > MAX_CHARS) {
+        return showAlert('warning', 'Too Long', `Post text cannot exceed ${MAX_CHARS} characters.`);
+    }
+
     setLoading(true);
     try {
       if (!user) throw new Error("Not logged in");
@@ -157,32 +163,35 @@ export default function CreatePostScreen() {
           mediaUrl = await uploadMediaToStorage(media.uri, mediaType);
       }
 
-      const batch = writeBatch(db);
-      const newPostRef = doc(collection(db, 'posts'));
-      
-      batch.set(newPostRef, {
-        text: text,
-        mediaUrl: mediaUrl,   
-        mediaType: mediaType,
-        userId: user.uid,
-        displayName: realDisplayName, 
-        username: realUsername,       
-        userAvatar: realAvatar,
-        tags: selectedTags,
-        createdAt: serverTimestamp(),
-        likes: [],
-        reposts: [],
-        likeCount: 0,
-        repostCount: 0,
-        commentCount: 0,
-        parentId: null,
-        views: 0 
+      // 🔐 SECURITY: Route post creation through rate-limited Cloud Function
+      const idToken = await user.getIdToken();
+      const response = await fetch(CREATE_POST_URL, {
+          method: 'POST',
+          headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${idToken}`
+          },
+          body: JSON.stringify({
+              text: text,
+              mediaUrl: mediaUrl,
+              mediaType: mediaType,
+              tags: selectedTags,
+              displayName: realDisplayName,
+              username: realUsername,
+              userAvatar: realAvatar
+          })
       });
 
-      const userRef = doc(db, 'users', user.uid);
-      batch.update(userRef, { lastPostedAt: serverTimestamp() });
+      const result = await response.json();
 
-      await batch.commit();
+      if (!response.ok) {
+          if (response.status === 429) {
+              showAlert('error', '⛔ Slow Down', result.error || 'You are posting too fast. Please wait.');
+          } else {
+              showAlert('error', 'Post Failed', result.error || 'Something went wrong.');
+          }
+          return;
+      }
 
       router.back(); 
     } catch (error: any) {

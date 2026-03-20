@@ -31,6 +31,12 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { uploadToR2 } from '../services/r2Storage';
 
+// 🔐 SECURITY: Support message creation now goes through rate-limited Cloud Function
+const CREATE_SUPPORT_MESSAGE_URL = "https://us-central1-aniyu-b841b.cloudfunctions.net/createSupportMessage";
+
+// 🔐 SECURITY: Max message length guard
+const MAX_MESSAGE_CHARS = 500;
+
 export default function LiveChatScreen() {
     const router = useRouter();
     const { theme } = useTheme();
@@ -133,6 +139,13 @@ export default function LiveChatScreen() {
     // --- 4. SEND MESSAGE ---
     const handleSend = async () => {
         if ((!inputText.trim() && !imageUri) || !user || !activeTicket || sending) return;
+
+        // 🔐 SECURITY FIX: Hard length guard before Cloud Function call
+        if (inputText.length > MAX_MESSAGE_CHARS) {
+            Alert.alert("Too Long", `Message cannot exceed ${MAX_MESSAGE_CHARS} characters.`);
+            return;
+        }
+
         setSending(true);
 
         try {
@@ -145,19 +158,31 @@ export default function LiveChatScreen() {
                 uploadedImageUrl = typeof result === 'string' ? result : (result as any).url;
             }
 
-            await addDoc(collection(db, 'supportTickets', currentTicketId, 'messages'), {
-                senderId: currentUser.uid, 
-                senderModel: 'user',
-                text: inputText.trim(),
-                imageUrl: uploadedImageUrl,
-                createdAt: serverTimestamp()
+            // 🔐 SECURITY: Route message creation through rate-limited Cloud Function
+            const idToken = await currentUser.getIdToken();
+            const response = await fetch(CREATE_SUPPORT_MESSAGE_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${idToken}`
+                },
+                body: JSON.stringify({
+                    ticketId: currentTicketId,
+                    text: inputText.trim(),
+                    imageUrl: uploadedImageUrl
+                })
             });
 
-            await updateDoc(doc(db, 'supportTickets', currentTicketId), {
-                lastMessage: inputText.trim() || 'Sent an attachment',
-                updatedAt: serverTimestamp(),
-                unreadAdmin: true 
-            });
+            const result = await response.json();
+
+            if (!response.ok) {
+                if (response.status === 429) {
+                    Alert.alert("⛔ Slow Down", result.error || "You are sending too many messages. Please wait.");
+                } else {
+                    Alert.alert("Error", result.error || "Could not send your message.");
+                }
+                return;
+            }
 
             setInputText('');
             setImageUri(null);
@@ -389,7 +414,7 @@ export default function LiveChatScreen() {
                                 value={inputText}
                                 onChangeText={setInputText}
                                 multiline
-                                maxLength={500}
+                                maxLength={MAX_MESSAGE_CHARS}
                             />
                             
                             <TouchableOpacity 

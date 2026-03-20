@@ -30,6 +30,12 @@ import { getFriendlyErrorMessage } from '../utils/errorHandler';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
+// 🔐 SECURITY: Comment creation now goes through rate-limited Cloud Function
+const CREATE_COMMENT_URL = "https://us-central1-aniyu-b841b.cloudfunctions.net/createComment";
+
+// 🔐 SECURITY: Max comment length guard
+const MAX_COMMENT_CHARS = 300;
+
 const REPORT_REASONS = [
   "Offensive content",
   "Abusive behavior",
@@ -329,6 +335,12 @@ export default function PostDetailsScreen() {
 
   const handleSendComment = async () => {
     if (!newComment.trim() || !user) return;
+
+    // 🔐 SECURITY FIX: Hard length guard before Cloud Function call
+    if (newComment.length > MAX_COMMENT_CHARS) {
+        return showAlert('warning', 'Too Long', `Comments cannot exceed ${MAX_COMMENT_CHARS} characters.`);
+    }
+
     setSending(true);
     try {
       const userDoc = await getDoc(doc(db, "users", user.uid));
@@ -338,34 +350,35 @@ export default function PostDetailsScreen() {
       const realAvatar = userData.avatar || user.photoURL;
       const realRole = userData.role || 'user'; // ✅ FETCHES ROLE FOR THE BADGE
 
-      const batch = writeBatch(db);
-
-      const newCommentRef = doc(collection(db, 'posts'));
-      batch.set(newCommentRef, {
-        text: newComment,
-        userId: user.uid,
-        username: realUsername,        
-        displayName: realDisplayName, 
-        userAvatar: realAvatar,
-        role: realRole, // ✅ SAVES THE ROLE IN THE COMMENT
-        createdAt: serverTimestamp(),
-        parentId: postId, 
-        likes: [],
-        reposts: [],
-        likeCount: 0,
-        repostCount: 0,
-        commentCount: 0,
-        views: 0
+      // 🔐 SECURITY: Route comment creation through rate-limited Cloud Function
+      const idToken = await user.getIdToken();
+      const response = await fetch(CREATE_COMMENT_URL, {
+          method: 'POST',
+          headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${idToken}`
+          },
+          body: JSON.stringify({
+              text: newComment,
+              parentId: postId,
+              displayName: realDisplayName,
+              username: realUsername,
+              userAvatar: realAvatar,
+              role: realRole // ✅ SAVES THE ROLE IN THE COMMENT
+          })
       });
 
-      const parentPostRef = doc(db, 'posts', postId as string);
-      batch.update(parentPostRef, { commentCount: increment(1) });
+      const result = await response.json();
 
-      const userRef = doc(db, 'users', user.uid);
-      batch.update(userRef, { lastPostedAt: serverTimestamp() });
+      if (!response.ok) {
+          if (response.status === 429) {
+              showAlert('error', '⛔ Slow Down', result.error || 'You are commenting too fast. Please wait.');
+          } else {
+              showAlert('error', 'Comment Failed', result.error || 'Something went wrong.');
+          }
+          return;
+      }
 
-      await batch.commit();
-      
       if (post && post.userId && post.userId !== user.uid) {
           sendSocialNotification(
               post.userId, 
@@ -480,7 +493,6 @@ export default function PostDetailsScreen() {
                         <Ionicons name="share-social-outline" size={16} color={theme.subText} />
                     </TouchableOpacity>
                 </View>
-
             </View>
         </TouchableOpacity>
       );
@@ -590,6 +602,7 @@ export default function PostDetailsScreen() {
                   placeholderTextColor={theme.subText}
                   value={newComment}
                   onChangeText={setNewComment}
+                  maxLength={MAX_COMMENT_CHARS}
               />
               <TouchableOpacity onPress={handleSendComment} disabled={!newComment.trim() || sending}>
                   {sending ? <ActivityIndicator color={theme.tint} /> : <Ionicons name="send" size={24} color={theme.tint} />}
