@@ -297,6 +297,7 @@ export default function SignUpScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
+        
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.content}>
         
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
@@ -402,7 +403,7 @@ export default function SignUpScreen() {
                 </TouchableOpacity>
             </View>
         </ScrollView>
-        
+
         <CustomAlert 
             visible={alertConfig.visible}
             type={alertConfig.type}
