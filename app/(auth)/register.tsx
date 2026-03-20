@@ -402,7 +402,6 @@ export default function SignUpScreen() {
                 </TouchableOpacity>
             </View>
         </ScrollView>
-
         <CustomAlert 
             visible={alertConfig.visible}
             type={alertConfig.type}
