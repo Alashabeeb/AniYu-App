@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "891600067276",
+    "project_id": "aniyu-b841b",
+    "storage_bucket": "aniyu-b841b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:891600067276:android:a8e61aeaded9af79530069",
+        "android_client_info": {
+          "package_name": "com.aniyu.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "891600067276-krpjmdmj3nqr1uqqlakfd4e1aqvf9pjd.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.aniyu.app",
+            "certificate_hash": "de9e0a17d5daea6d5079d04320a80ca7c4ad6e37"
+          }
+        },
+        {
+          "client_id": "891600067276-gd325gpe02fi1ceps35ri17ab7gnlonk.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAawyM-VRUajbR6UzS7Ih9WHuv6bXl-dd8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "891600067276-gd325gpe02fi1ceps35ri17ab7gnlonk.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "891600067276-o7pm441aah696kd2e3vevvsu7o2j0fjn.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.aniyu.app"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
