@@ -6,16 +6,15 @@ import {
 } from 'firebase/firestore';
 import {
     Bell, BookOpen, ChevronDown, DollarSign, Edit, Eye, Flag,
-    LayoutDashboard, LifeBuoy, LogOut, Menu, MessageSquare,
-    Settings, ThumbsUp, TrendingUp, Users as UsersIcon, Video, X
+    LayoutDashboard, LifeBuoy,
+    LogOut, Menu, MessageSquare, PieChart as PieChartIcon, RefreshCw, Settings, ThumbsUp, TrendingUp, Users as UsersIcon, Video, X
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, Navigate, Route, BrowserRouter as Router, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 // ✅ IMPORT PAGES
-import Affiliate from './Affiliate'; // ✅ IMPORTED AFFILIATE PAGE
-import Analytics from './Analytics';
+import Affiliate from './Affiliate';
 import AnimeUpload from './AnimeUpload';
 import Comments from './Comments';
 import Login from './Login';
@@ -26,6 +25,8 @@ import SettingsPage from './Settings';
 import Support from './Support';
 import Users from './Users';
 import { auth, db } from './firebase';
+
+const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'];
 
 // --- HELPER: FORMAT DATES ---
 const formatDateLabel = (date, range) => {
@@ -52,31 +53,89 @@ function Dashboard({ role, userId }) {
   const [contentList, setContentList] = useState([]); 
   const [stats, setStats] = useState({ users: 0, activeUsers: 0, anime: 0, manga: 0, reports: 0, totalViews: 0, totalLikes: 0 });
 
+  // Embedded Analytics State
+  const [topAnime, setTopAnime] = useState([]);
+  const [topManga, setTopManga] = useState([]);
+  const [genreData, setGenreData] = useState([]);
+  const [growthData, setGrowthData] = useState([]);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+
   const isSuperAdmin = role === 'super_admin';
   const isAdmin = role === 'admin' || isSuperAdmin;
   const isProducer = role === 'anime_producer' || role === 'manga_producer';
+
+  // --- FETCH ADVANCED ANALYTICS ---
+  const fetchAnalytics = async (forceRefresh = false) => {
+    if (!isAdmin) return;
+    setAnalyticsLoading(true);
+    try {
+        const CACHE_KEY = 'admin_analytics_cache';
+        if (!forceRefresh) {
+            const cachedData = sessionStorage.getItem(CACHE_KEY);
+            if (cachedData) {
+                const parsed = JSON.parse(cachedData);
+                setTopAnime(parsed.topAnime);
+                setTopManga(parsed.topManga);
+                setGenreData(parsed.genreData);
+                setGrowthData(parsed.growthData);
+                setAnalyticsLoading(false);
+                return;
+            }
+        }
+
+        const animeSnap = await getDocs(query(collection(db, "anime"), orderBy("views", "desc"), limit(5)));
+        const finalTopAnime = animeSnap.docs.map(d => ({ name: (d.data().title || 'Unknown').substring(0, 15) + '...', views: d.data().views || 0 }));
+        setTopAnime(finalTopAnime);
+
+        const mangaSnap = await getDocs(query(collection(db, "manga"), orderBy("views", "desc"), limit(5)));
+        const finalTopManga = mangaSnap.docs.map(d => ({ name: (d.data().title || 'Unknown').substring(0, 15) + '...', views: d.data().views || 0 }));
+        setTopManga(finalTopManga);
+
+        const sampleAnimeSnap = await getDocs(query(collection(db, "anime"), limit(50)));
+        const genreCounts = {};
+        sampleAnimeSnap.docs.forEach(d => {
+            const item = d.data();
+            let genres = [];
+            if (Array.isArray(item.genres)) genres = item.genres;
+            else if (typeof item.genres === 'string') genres = item.genres.split(',').map(g => g.trim());
+            else if (Array.isArray(item.genre)) genres = item.genre;
+            genres.forEach(g => { if (g) genreCounts[g] = (genreCounts[g] || 0) + 1; });
+        });
+        const finalGenreData = Object.keys(genreCounts).map(key => ({ name: key, value: genreCounts[key] })).sort((a, b) => b.value - a.value).slice(0, 6);
+        setGenreData(finalGenreData);
+
+        const usersSnap = await getDocs(query(collection(db, "users"), orderBy("createdAt", "desc"), limit(100)));
+        const dateMap = {};
+        usersSnap.docs.forEach(d => {
+            const u = d.data();
+            if(u.createdAt && u.createdAt.toDate) {
+                const date = u.createdAt.toDate().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                dateMap[date] = (dateMap[date] || 0) + 1;
+            }
+        });
+        const finalGrowthData = Object.keys(dateMap).map(k => ({ date: k, users: dateMap[k] })).reverse().slice(-7);
+        setGrowthData(finalGrowthData);
+
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify({ topAnime: finalTopAnime, topManga: finalTopManga, genreData: finalGenreData, growthData: finalGrowthData }));
+    } catch (error) {
+        console.error("Error fetching analytics:", error);
+    } finally {
+        setAnalyticsLoading(false);
+    }
+  };
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         if (isAdmin) {
             const usersCountSnap = await getCountFromServer(collection(db, "users"));
-            
             const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
             const activeCountSnap = await getCountFromServer(query(collection(db, "users"), where("lastActiveAt", ">=", yesterday)));
-
             const rSnap = await getCountFromServer(collection(db, "reports"));
             const aSnap = await getCountFromServer(collection(db, "anime"));
             const mSnap = await getCountFromServer(collection(db, "manga"));
             
-            setStats(prev => ({ 
-                ...prev, 
-                users: usersCountSnap.data().count, 
-                activeUsers: activeCountSnap.data().count,
-                anime: aSnap.data().count, 
-                manga: mSnap.data().count, 
-                reports: rSnap.data().count 
-            }));
+            setStats({ users: usersCountSnap.data().count, activeUsers: activeCountSnap.data().count, anime: aSnap.data().count, manga: mSnap.data().count, reports: rSnap.data().count });
 
             const usersQ = query(collection(db, "users"), orderBy("createdAt", "desc"), limit(500));
             const usersSnapshot = await getDocs(usersQ);
@@ -87,6 +146,7 @@ function Dashboard({ role, userId }) {
               lastActiveAt: doc.data().lastActiveAt?.toDate ? doc.data().lastActiveAt.toDate() : new Date(0), 
             }));
             setRecentUsers(usersData); 
+            fetchAnalytics(); // Fetch advanced charts
         } 
         else if (isProducer) {
             const collectionName = role === 'anime_producer' ? 'anime' : 'manga';
@@ -110,20 +170,14 @@ function Dashboard({ role, userId }) {
   useEffect(() => {
     if (!isAdmin || recentUsers.length === 0) return;
     const now = new Date();
-    let startTime = new Date();
     let buckets = [];
-    
     if (timeRange === '24h') {
-        startTime = new Date(now.getTime() - (24 * 60 * 60 * 1000));
         for (let i = 6; i >= 0; i--) { const d = new Date(now.getTime() - (i * 4 * 60 * 60 * 1000)); buckets.push({ date: d, label: formatDateLabel(d, '24h') }); }
     } else if (timeRange === 'week') {
-        startTime = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000));
         for (let i = 6; i >= 0; i--) { const d = new Date(); d.setDate(now.getDate() - i); d.setHours(0,0,0,0); buckets.push({ date: d, label: formatDateLabel(d, 'week') }); }
     } else if (timeRange === 'month') {
-        startTime = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
         for (let i = 5; i >= 0; i--) { const d = new Date(); d.setDate(now.getDate() - (i * 5)); d.setHours(0,0,0,0); buckets.push({ date: d, label: formatDateLabel(d, 'month') }); }
     } else {
-        startTime = new Date(0); 
         for (let i = 5; i >= 0; i--) { const d = new Date(); d.setDate(now.getDate() - (i * 5)); buckets.push({ date: d, label: formatDateLabel(d, 'month') }); }
     }
     
@@ -142,7 +196,6 @@ function Dashboard({ role, userId }) {
       return (
         <div className="dashboard-container">
             <h1 className="page-title"><Video className="text-blue"/> Studio Dashboard</h1>
-            
             <div className="stats-grid">
                 <div className="stat-card">
                     <p className="stat-label">Total Views</p>
@@ -159,7 +212,6 @@ function Dashboard({ role, userId }) {
                     </h2>
                 </div>
             </div>
-            
             <div className="chart-container">
                 <h3 className="chart-title">Top 5 Most Viewed</h3>
                 <ResponsiveContainer width="100%" height="100%">
@@ -172,7 +224,6 @@ function Dashboard({ role, userId }) {
                     </BarChart>
                 </ResponsiveContainer>
             </div>
-
             <div className="table-wrapper">
                 <div className="table-header">
                     <h3>My Library</h3>
@@ -239,14 +290,7 @@ function Dashboard({ role, userId }) {
             <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#9ca3af', fontSize: 12}} dy={10} />
             <YAxis axisLine={false} tickLine={false} tick={{fill: '#9ca3af', fontSize: 12}} />
             <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-            <Area 
-                type="monotone" 
-                dataKey="value" 
-                stroke={metric === 'registrations' ? "#2563eb" : "#16a34a"} 
-                strokeWidth={3} 
-                fillOpacity={1} 
-                fill="url(#colorValue)" 
-            />
+            <Area type="monotone" dataKey="value" stroke={metric === 'registrations' ? "#2563eb" : "#16a34a"} strokeWidth={3} fillOpacity={1} fill="url(#colorValue)" />
           </AreaChart>
         </ResponsiveContainer>
       </div>
@@ -270,6 +314,96 @@ function Dashboard({ role, userId }) {
         </div>
       </div>
 
+      {/* --- EMBEDDED ANALYTICS SECTION --- */}
+      <div className="section" style={{ marginTop: '40px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 className="section-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <TrendingUp size={24} className="text-blue-600" /> Advanced Analytics
+              </h2>
+              <button onClick={() => fetchAnalytics(true)} className="btn-refresh">
+                  <RefreshCw size={16} /> Refresh Data
+              </button>
+          </div>
+
+          {analyticsLoading ? (
+              <div style={{ padding: 40, textAlign: 'center', color: '#6b7280' }}>Loading advanced metrics...</div>
+          ) : (
+              <>
+                  <div className="grid-2">
+                      <div className="analytics-chart-card">
+                          <div className="chart-header">
+                              <h3 className="chart-title"><Video size={20} className="text-blue-500"/> Top 5 Anime</h3>
+                          </div>
+                          <div style={{ width: '100%', height: 300 }}>
+                              <ResponsiveContainer>
+                                  <BarChart data={topAnime} layout="vertical" margin={{left: 0, right: 30}}>
+                                      <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
+                                      <XAxis type="number" hide />
+                                      <YAxis dataKey="name" type="category" width={100} tick={{fontSize: 12}} />
+                                      <Tooltip />
+                                      <Bar dataKey="views" fill="#3b82f6" radius={[0, 4, 4, 0]} barSize={20} />
+                                  </BarChart>
+                              </ResponsiveContainer>
+                          </div>
+                      </div>
+
+                      <div className="analytics-chart-card">
+                          <div className="chart-header">
+                              <h3 className="chart-title"><BookOpen size={20} className="text-purple-500"/> Top 5 Manga</h3>
+                          </div>
+                          <div style={{ width: '100%', height: 300 }}>
+                              <ResponsiveContainer>
+                                  <BarChart data={topManga} layout="vertical" margin={{left: 0, right: 30}}>
+                                      <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
+                                      <XAxis type="number" hide />
+                                      <YAxis dataKey="name" type="category" width={100} tick={{fontSize: 12}} />
+                                      <Tooltip />
+                                      <Bar dataKey="views" fill="#8b5cf6" radius={[0, 4, 4, 0]} barSize={20} />
+                                  </BarChart>
+                              </ResponsiveContainer>
+                          </div>
+                      </div>
+                  </div>
+
+                  <div className="grid-2">
+                      <div className="analytics-chart-card">
+                          <div className="chart-header">
+                              <h3 className="chart-title"><PieChartIcon size={20} className="text-green-500"/> Popular Genres</h3>
+                          </div>
+                          <div style={{ width: '100%', height: 300 }}>
+                              <ResponsiveContainer>
+                                  <PieChart>
+                                      <Pie data={genreData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} fill="#8884d8" paddingAngle={5} dataKey="value">
+                                          {genreData.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                                      </Pie>
+                                      <Tooltip />
+                                      <Legend />
+                                  </PieChart>
+                              </ResponsiveContainer>
+                          </div>
+                      </div>
+
+                      <div className="analytics-chart-card">
+                          <div className="chart-header">
+                              <h3 className="chart-title"><UsersIcon size={20} className="text-orange-500"/> User Growth Trend</h3>
+                          </div>
+                          <div style={{ width: '100%', height: 300 }}>
+                              <ResponsiveContainer>
+                                  <LineChart data={growthData} margin={{left: -20}}>
+                                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                                      <XAxis dataKey="date" tick={{fontSize: 12}} />
+                                      <YAxis tick={{fontSize: 12}} />
+                                      <Tooltip />
+                                      <Line type="monotone" dataKey="users" stroke="#f97316" strokeWidth={3} dot={{r: 4}} />
+                                  </LineChart>
+                              </ResponsiveContainer>
+                          </div>
+                      </div>
+                  </div>
+              </>
+          )}
+      </div>
+
       <div className="section">
         <h2 className="section-title">User Management</h2>
         <div className="table-wrapper"><Users /></div>
@@ -289,7 +423,6 @@ function Layout({ logout, role, userId }) {
   const isAnimeProducer = role === 'anime_producer';
   const isMangaProducer = role === 'manga_producer';
 
-  // Admin Heartbeat
   useEffect(() => {
     const updateHeartbeat = async () => {
         if (userId) {
@@ -302,13 +435,11 @@ function Layout({ logout, role, userId }) {
     return () => clearInterval(interval);
   }, [userId]);
 
-  // Close sidebar on route change
   useEffect(() => { setSidebarOpen(false); }, [location]);
 
   return (
     <>
     <style>{`
-        /* --- LAYOUT STYLES --- */
         .app-wrapper { display: flex; height: 100vh; background-color: #f9fafb; font-family: sans-serif; overflow: hidden; }
         
         /* Sidebar */
@@ -325,7 +456,7 @@ function Layout({ logout, role, userId }) {
         .nav-item.active { background-color: #eff6ff; color: #2563eb; font-weight: 600; }
         
         .sidebar-footer { padding: 16px; border-top: 1px solid #f3f4f6; }
-        .btn-logout { w-width: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 16px; color: #ef4444; background: none; border: none; border-radius: 8px; cursor: pointer; font-weight: 500; width: 100%; text-align: left; }
+        .btn-logout { display: flex; align-items: center; gap: 12px; padding: 12px 16px; color: #ef4444; background: none; border: none; border-radius: 8px; cursor: pointer; font-weight: 500; width: 100%; text-align: left; }
         .btn-logout:hover { background-color: #fef2f2; }
 
         /* Main Content */
@@ -374,9 +505,18 @@ function Layout({ logout, role, userId }) {
         .status-badge { background: #f3f4f6; color: #4b5563; padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; }
         .btn-edit { background: #eff6ff; color: #2563eb; border: 1px solid #bfdbfe; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: 700; font-size: 0.75rem; display: flex; align-items: center; gap: 6px; }
 
+        /* Embedded Analytics Styles */
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
+        .analytics-chart-card { background: white; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .chart-title { font-size: 1.1rem; font-weight: 700; color: #374151; display: flex; align-items: center; gap: 8px; margin: 0; }
+        .btn-refresh { display: flex; align-items: center; gap: 6px; padding: 8px 16px; background: white; border: 1px solid #e5e7eb; border-radius: 8px; color: #4b5563; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+        .btn-refresh:hover { background: #f9fafb; color: #2563eb; border-color: #bfdbfe; }
+
         /* RESPONSIVE MEDIA QUERIES */
         @media (max-width: 1024px) {
             .stats-grid { grid-template-columns: 1fr 1fr; }
+            .grid-2 { grid-template-columns: 1fr; }
         }
 
         @media (max-width: 768px) {
@@ -448,17 +588,12 @@ function Layout({ logout, role, userId }) {
                     <MessageSquare size={20} /> <span>Comments</span>
                 </Link>
 
-                {/* ✅ AFFILIATE ROUTE LINK ADDED HERE */}
                 <Link to="/affiliates" className={isActive('/affiliates')}>
                     <DollarSign size={20} /> <span>Affiliates</span>
                 </Link>
 
                 <Link to="/support" className={isActive('/support')}>
                     <LifeBuoy size={20} /> <span>Support Desk</span>
-                </Link>
-
-                <Link to="/analytics" className={isActive('/analytics')}>
-                    <TrendingUp size={20} /> <span>Analytics</span>
                 </Link>
                 <Link to="/settings" className={isActive('/settings')}>
                     <Settings size={20} /> <span>Settings</span>
@@ -523,7 +658,6 @@ function Layout({ logout, role, userId }) {
                     </ProtectedRoute>
                 } />
 
-                {/* ✅ AFFILIATE ROUTE ADDED HERE */}
                 <Route path="/affiliates" element={
                     <ProtectedRoute role={role} allowedRoles={['admin', 'super_admin']}>
                         <Affiliate />
@@ -533,12 +667,6 @@ function Layout({ logout, role, userId }) {
                 <Route path="/support" element={
                     <ProtectedRoute role={role} allowedRoles={['admin', 'super_admin']}>
                         <Support />
-                    </ProtectedRoute>
-                } />
-
-                <Route path="/analytics" element={
-                    <ProtectedRoute role={role} allowedRoles={['admin', 'super_admin']}>
-                        <Analytics />
                     </ProtectedRoute>
                 } />
 

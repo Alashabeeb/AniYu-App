@@ -552,4 +552,7 @@ const styles = StyleSheet.create({
   fab: { position: 'absolute', bottom: 20, right: 20, width: 56, height: 56, borderRadius: 28, justifyContent: 'center', alignItems: 'center', elevation: 6, shadowColor: "#000", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.3, shadowRadius: 4.65 },
   chatPlaceholderContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30, paddingBottom: 80 },
   chatIconWrapper: { width: 120, height: 120, borderRadius: 60, justifyContent: 'center', alignItems: 'center', marginBottom: 24 },
-  chatTitle: { fontSize: 24, fontWeight: 'bold', m
+  chatTitle: { fontSize: 24, fontWeight: 'bold', marginBottom: 12, textAlign: 'center' },
+  chatSubtitle: { fontSize: 15, textAlign: 'center', lineHeight: 22, marginBottom: 30 },
+  premiumBadge: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 20, borderWidth: 1, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 3, elevation: 3 }
+});

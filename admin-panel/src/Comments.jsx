@@ -1,12 +1,13 @@
 import {
-    collection, deleteDoc, doc, getDoc, getDocs,
+    collection, deleteDoc, doc, documentId, getDoc, getDocs,
     limit, orderBy, query, serverTimestamp,
     startAfter,
     where, writeBatch
 } from 'firebase/firestore';
 import {
-    Ban, ChevronDown, ChevronUp, Clock, Copy, FileText, // ✅ IMPORTED COPY ICON
-    Loader2, MessageSquare, RefreshCw, Search, ShieldAlert, Trash2, User
+    Ban,
+    Clock, Copy, Heart,
+    Loader2, MessageSquare, RefreshCw, Repeat, Search, ShieldAlert, Trash2, User, X
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -17,6 +18,13 @@ const formatDate = (timestamp) => {
     if (!timestamp) return 'Just now';
     const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit' });
+};
+
+// ✅ SURGICAL ADDITION: Helper to determine if media is a video
+const isVideoMedia = (post) => {
+    if (post.mediaType === 'video') return true;
+    if (!post.mediaUrl || typeof post.mediaUrl !== 'string') return false;
+    return /\.(mp4|webm|ogg|mov)(\?.*)?$/i.test(post.mediaUrl);
 };
 
 export default function Comments() {
@@ -33,6 +41,9 @@ export default function Comments() {
     const [lastVisible, setLastVisible] = useState(null);
     const [hasMore, setHasMore] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
+
+    // Modal state for Likes & Reposts
+    const [interactionModal, setInteractionModal] = useState({ isOpen: false, title: '', users: [], loading: false });
 
     useEffect(() => {
         fetchPosts(true);
@@ -110,6 +121,38 @@ export default function Comments() {
     const handleViewProfile = (userId) => {
         if (userId) {
             navigate('/users', { state: { targetUserId: userId } });
+        }
+        setInteractionModal({ isOpen: false, title: '', users: [], loading: false }); // Close modal if viewing profile
+    };
+
+    // Fetch users who liked/reposted
+    const handleViewInteractions = async (uids, title) => {
+        if (!uids || uids.length === 0) {
+            alert(`No ${title.toLowerCase()} on this post yet.`);
+            return;
+        }
+
+        setInteractionModal({ isOpen: true, title, users: [], loading: true });
+
+        try {
+            // Firebase "in" queries are limited to 10 items, so we chunk the UIDs array
+            const chunks = [];
+            for (let i = 0; i < Math.min(uids.length, 100); i += 10) { // Limit to 100 max to prevent crazy reads
+                chunks.push(uids.slice(i, i + 10));
+            }
+
+            let fetchedUsers = [];
+            for (const chunk of chunks) {
+                const q = query(collection(db, 'users'), where(documentId(), 'in', chunk));
+                const snap = await getDocs(q);
+                snap.docs.forEach(d => fetchedUsers.push({ id: d.id, ...d.data() }));
+            }
+
+            setInteractionModal({ isOpen: true, title, users: fetchedUsers, loading: false });
+        } catch (error) {
+            console.error(`Error fetching ${title.toLowerCase()}:`, error);
+            setInteractionModal(prev => ({ ...prev, loading: false }));
+            alert("Error loading users.");
         }
     };
 
@@ -238,16 +281,22 @@ export default function Comments() {
             .time { font-size: 0.8rem; color: #9ca3af; display: flex; align-items: center; gap: 4px; }
             
             .text-content { color: #374151; line-height: 1.5; font-size: 0.95rem; white-space: pre-wrap; margin-bottom: 10px; }
-            .media-indicator { font-size: 0.8rem; color: #2563eb; display: flex; align-items: center; gap: 5px; background: #eff6ff; padding: 5px 10px; border-radius: 6px; width: fit-content; }
+            
+            /* ✅ SURGICAL ADDITION: STYLING FOR ACTUAL MEDIA */
+            .post-media { max-width: 100%; max-height: 450px; border-radius: 8px; margin-top: 10px; background-color: #f3f4f6; object-fit: contain; border: 1px solid #e5e7eb; }
 
             /* AI FLAG STYLING */
             .ai-flag { margin-top: 10px; padding: 6px 10px; background-color: #faf5ff; border: 1px solid #e9d5ff; border-radius: 6px; display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem; color: #9333ea; font-weight: 700; flex-wrap: wrap; }
             .uid-copy-btn { margin-left: 8px; padding: 2px 6px; background-color: #f3e8ff; border-radius: 4px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; color: #7e22ce; font-family: monospace; font-size: 0.7rem; border: 1px solid #d8b4fe; }
             .uid-copy-btn:hover { background-color: #e9d5ff; }
 
-            .post-footer { background: #f9fafb; padding: 10px 20px; border-top: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center; }
-            .comment-toggle { border: none; background: none; font-weight: 600; color: #4b5563; cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 0.9rem; }
-            .comment-toggle:hover { color: #2563eb; }
+            /* APP-LIKE INTERACTION BAR */
+            .interaction-bar { display: flex; justify-content: flex-start; gap: 24px; padding: 0 20px 15px 75px; }
+            .interaction-btn { background: none; border: none; display: flex; align-items: center; gap: 6px; color: #6b7280; font-weight: 600; font-size: 0.9rem; cursor: pointer; padding: 4px; border-radius: 6px; transition: all 0.2s; }
+            .interaction-btn:hover { color: #2563eb; background: #eff6ff; }
+            .interaction-btn.active { color: #2563eb; }
+
+            .post-footer { background: #f9fafb; padding: 10px 20px; border-top: 1px solid #e5e7eb; display: flex; justify-content: flex-end; align-items: center; }
 
             .action-group { display: flex; gap: 8px; }
             .btn-action { padding: 6px 10px; border-radius: 6px; border: 1px solid transparent; cursor: pointer; display: flex; align-items: center; gap: 5px; font-size: 0.8rem; font-weight: 600; }
@@ -287,6 +336,7 @@ export default function Comments() {
                 .page-container { padding: 15px; }
                 .header-bar { flex-direction: column; align-items: stretch; }
                 .search-box { width: 100%; }
+                .interaction-bar { padding-left: 20px; }
             }
         `}</style>
 
@@ -341,7 +391,7 @@ export default function Comments() {
                                         {post.text || <span style={{fontStyle:'italic', color:'#9ca3af'}}>No text content</span>}
                                     </div>
                                     
-                                    {/* ✅ SURGICAL UPDATE: Display Gemini Flag with Copy UID Button */}
+                                    {/* AI Flag Styling */}
                                     {post.moderationFlag && (
                                         <div className="ai-flag">
                                             <ShieldAlert size={14} /> AI Flagged: {post.moderationFlag}
@@ -359,21 +409,57 @@ export default function Comments() {
                                         </div>
                                     )}
 
+                                    {/* ✅ SURGICAL ADDITION: RENDER ACTUAL MEDIA (VIDEO OR IMAGE) */}
                                     {post.mediaUrl && (
-                                        <div className="media-indicator" style={{ marginTop: post.moderationFlag ? 10 : 0 }}>
-                                            <FileText size={14}/> Attachment
+                                        <div style={{ width: '100%', display: 'flex', flexDirection: 'column' }}>
+                                            {isVideoMedia(post) ? (
+                                                <video 
+                                                    src={post.mediaUrl} 
+                                                    controls 
+                                                    className="post-media" 
+                                                    style={{ backgroundColor: '#000' }}
+                                                />
+                                            ) : (
+                                                <img 
+                                                    src={post.mediaUrl} 
+                                                    alt="Post attachment" 
+                                                    className="post-media" 
+                                                />
+                                            )}
                                         </div>
                                     )}
                                 </div>
                             </div>
 
-                            {/* FOOTER ACTIONS */}
-                            <div className="post-footer">
-                                <button className="comment-toggle" onClick={() => togglePost(post.id)}>
-                                    {expandedPostId === post.id ? <ChevronUp size={18}/> : <ChevronDown size={18}/>}
-                                    {post.commentCount || 0} Comments
+                            {/* APP-LIKE INTERACTION BAR */}
+                            <div className="interaction-bar">
+                                <button 
+                                    className={`interaction-btn ${expandedPostId === post.id ? 'active' : ''}`} 
+                                    onClick={() => togglePost(post.id)}
+                                >
+                                    <MessageSquare size={18}/> 
+                                    {post.commentCount || 0}
                                 </button>
 
+                                <button 
+                                    className="interaction-btn" 
+                                    onClick={() => handleViewInteractions(post.likes, 'Likes')}
+                                >
+                                    <Heart size={18}/> 
+                                    {post.likeCount || post.likes?.length || 0}
+                                </button>
+
+                                <button 
+                                    className="interaction-btn" 
+                                    onClick={() => handleViewInteractions(post.reposts, 'Reposts')}
+                                >
+                                    <Repeat size={18}/> 
+                                    {post.repostCount || post.reposts?.length || 0}
+                                </button>
+                            </div>
+
+                            {/* FOOTER ACTIONS */}
+                            <div className="post-footer">
                                 <div className="action-group">
                                     <button 
                                         className="btn-action btn-ban"
@@ -429,7 +515,6 @@ export default function Comments() {
                                                     </div>
                                                     <div className="comment-text">{comment.text}</div>
                                                     
-                                                    {/* ✅ SURGICAL UPDATE: Display Gemini Flag on Comments with Copy UID */}
                                                     {comment.moderationFlag && (
                                                         <div className="ai-flag" style={{ marginTop: 6, fontSize: '0.7rem', padding: '4px 8px' }}>
                                                             <ShieldAlert size={12} /> AI Flagged: {comment.moderationFlag}
@@ -471,6 +556,55 @@ export default function Comments() {
                     </div>
                 )}
             </div>
+
+            {/* INTERACTIONS MODAL */}
+            {interactionModal.isOpen && (
+                <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+                    <div style={{ background: 'white', width: 450, maxHeight: '80vh', borderRadius: 16, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
+                        <div style={{ background: '#f8fafc', padding: '16px 20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <h2 style={{ margin: 0, fontSize: '1.2rem', color: '#0f172a', display: 'flex', alignItems: 'center', gap: 8 }}>
+                                {interactionModal.title === 'Likes' ? <Heart size={20} color="#ef4444" /> : <Repeat size={20} color="#10b981" />} 
+                                {interactionModal.title}
+                            </h2>
+                            <button onClick={() => setInteractionModal({ isOpen: false, title: '', users: [], loading: false })} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b' }}>
+                                <X size={24} />
+                            </button>
+                        </div>
+                        
+                        <div style={{ padding: 0, overflowY: 'auto', flex: 1 }}>
+                            {interactionModal.loading ? (
+                                <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
+                                    <Loader2 className="animate-spin" color="#2563eb" size={32} />
+                                </div>
+                            ) : interactionModal.users.length === 0 ? (
+                                <div style={{ textAlign: 'center', color: '#94a3b8', padding: 40 }}>
+                                    No users found.
+                                </div>
+                            ) : (
+                                <div>
+                                    {interactionModal.users.map(user => (
+                                        <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: 15, padding: '12px 20px', borderBottom: '1px solid #f1f5f9' }}>
+                                            <div style={{ width: 40, height: 40, borderRadius: '50%', background: '#e2e8f0', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                                {user.avatar ? <img src={user.avatar} style={{width: '100%', height: '100%', objectFit: 'cover'}} /> : <User size={20} color="#94a3b8"/>}
+                                            </div>
+                                            <div style={{ flex: 1 }}>
+                                                <div style={{ fontWeight: 700, color: '#1e293b', fontSize: '0.95rem' }}>{user.displayName || 'Unknown User'}</div>
+                                                <div style={{ fontSize: '0.85rem', color: '#64748b' }}>@{user.username || 'user'}</div>
+                                            </div>
+                                            <button 
+                                                onClick={() => handleViewProfile(user.id)}
+                                                style={{ padding: '6px 12px', background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: 6, fontSize: '0.8rem', fontWeight: 'bold', cursor: 'pointer' }}
+                                            >
+                                                View
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
         </>
     );

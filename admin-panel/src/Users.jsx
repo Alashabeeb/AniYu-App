@@ -2,7 +2,7 @@ import { initializeApp } from 'firebase/app';
 import { createUserWithEmailAndPassword, getAuth, signOut } from 'firebase/auth';
 import { addDoc, arrayRemove, collection, deleteDoc, doc, getDoc, getDocs, limit, query, serverTimestamp, setDoc, startAfter, updateDoc, where } from 'firebase/firestore';
 import {
-    ArrowLeft, Ban, CheckCircle, Clock, Copy, Download, ExternalLink, History as HistoryIcon, Loader2, Mail, Plus, Save, Search, Shield, ShieldAlert, Smartphone, Trash2, User, Users as UsersIcon, X
+    Activity, ArrowLeft, Ban, BookOpen, CheckCircle, Clock, Copy, Download, ExternalLink, FileText, History as HistoryIcon, Loader2, Mail, MessageSquare, Plus, Save, Search, Shield, ShieldAlert, Smartphone, Trash2, User, Users as UsersIcon, Video, X
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
@@ -41,7 +41,6 @@ const formatDate = (timestamp) => {
 const extractCountry = (locationString) => {
     if (!locationString) return null;
     const parts = locationString.split(',');
-    // Returns the last part of the string after the comma and removes extra spaces
     return parts[parts.length - 1].trim(); 
 };
 
@@ -76,9 +75,12 @@ export default function Users() {
 
   const [followersList, setFollowersList] = useState([]);
   const [followingList, setFollowingList] = useState([]);
-  
   const [historyList, setHistoryList] = useState([]);
   const [downloadsList, setDownloadsList] = useState([]);
+
+  // Master Tracker State
+  const [trackerData, setTrackerData] = useState([]);
+  const [loadingTracker, setLoadingTracker] = useState(false);
 
   const [loadingSocials, setLoadingSocials] = useState(false);
   const [socialTab, setSocialTab] = useState('device'); 
@@ -154,8 +156,9 @@ export default function Users() {
       e.preventDefault();
       if(!newUser.email || !newUser.password || !newUser.username) return alert("Please fill all fields");
       
+      // ✅ SURGICAL UPDATE: Strict Creation Guards
       if ((newUser.role === 'admin' || newUser.role === 'super_admin') && myRole !== 'super_admin') {
-          return alert("⛔ ACCESS DENIED: Only the Super Admin (Owner) can create other Staff/Admins.");
+          return alert("⛔ ACCESS DENIED: Only the Super Admin (Owner) can create Admin or Super Admin accounts.");
       }
 
       setCreating(true);
@@ -209,6 +212,7 @@ export default function Users() {
       setFollowingList([]);
       setHistoryList([]);
       setDownloadsList([]);
+      setTrackerData([]); 
       setSocialTab('device'); 
       
       try {
@@ -232,6 +236,72 @@ export default function Users() {
           setLoadingSocials(false);
       }
   };
+
+  useEffect(() => {
+    if (!selectedUser) return;
+    
+    const fetchMasterTracker = async () => {
+        setLoadingTracker(true);
+        try {
+            let combinedActivity = [];
+
+            // 1. Fetch Posts & Comments
+            const postsQ = query(collection(db, "posts"), where("userId", "==", selectedUser.id), limit(25));
+            const postsSnap = await getDocs(postsQ);
+            postsSnap.forEach(d => {
+                const data = d.data();
+                combinedActivity.push({
+                    id: d.id,
+                    type: data.parentId ? 'comment' : 'post',
+                    title: data.parentId ? 'Replied to a thread' : 'Published a new post',
+                    description: data.text || 'Attached Media',
+                    timestamp: data.createdAt?.toMillis ? data.createdAt.toMillis() : new Date(data.createdAt || 0).getTime(),
+                    rawDate: data.createdAt
+                });
+            });
+
+            // 2. Fetch History (Anime/Manga)
+            const historyQ = query(collection(db, "users", selectedUser.id, "history"), limit(25));
+            const historySnap = await getDocs(historyQ);
+            historySnap.forEach(d => {
+                const data = d.data();
+                combinedActivity.push({
+                    id: d.id,
+                    type: data.type === 'anime' ? 'anime' : 'manga',
+                    title: data.type === 'anime' ? 'Watched Anime' : 'Read Manga',
+                    description: `${data.title || data.animeTitle || data.mangaTitle || 'Unknown'} - ${data.type === 'anime' ? 'Ep' : 'Ch'} ${data.lastEpisode || data.lastChapter || data.episodeNumber || data.chapterNumber || '?'}`,
+                    timestamp: data.updatedAt?.toMillis ? data.updatedAt.toMillis() : new Date(data.updatedAt || data.createdAt || 0).getTime(),
+                    rawDate: data.updatedAt || data.createdAt
+                });
+            });
+
+            // 3. Fetch Downloads
+            const downloadsQ = query(collection(db, "users", selectedUser.id, "downloads"), limit(15));
+            const downloadsSnap = await getDocs(downloadsQ);
+            downloadsSnap.forEach(d => {
+                const data = d.data();
+                combinedActivity.push({
+                    id: d.id,
+                    type: 'download',
+                    title: 'Downloaded File',
+                    description: data.title || data.animeTitle || data.mangaTitle || 'Unknown File',
+                    timestamp: data.createdAt?.toMillis ? data.createdAt.toMillis() : new Date(data.createdAt || 0).getTime(),
+                    rawDate: data.createdAt
+                });
+            });
+
+            // Local Sort
+            combinedActivity.sort((a, b) => b.timestamp - a.timestamp);
+            setTrackerData(combinedActivity.slice(0, 50)); 
+        } catch (e) {
+            console.error("Error fetching tracker data:", e);
+        } finally {
+            setLoadingTracker(false);
+        }
+    };
+
+    fetchMasterTracker();
+  }, [selectedUser]);
 
   useEffect(() => {
       if (!selectedUser) return;
@@ -265,6 +335,16 @@ export default function Users() {
 
       if (selectedUser.role === 'super_admin' && myRole !== 'super_admin') {
           return alert("⛔ ACCESS DENIED: You cannot edit the Super Admin account.");
+      }
+
+      // ✅ SURGICAL UPDATE: Block Admins from editing another Admin
+      if (selectedUser.role === 'admin' && myRole !== 'super_admin' && selectedUser.id !== auth.currentUser?.uid) {
+          return alert("⛔ ACCESS DENIED: You cannot modify another Administrator's account.");
+      }
+
+      // ✅ SURGICAL UPDATE: Block Admins from promoting users to Admin/Super Admin
+      if ((editForm.role === 'admin' || editForm.role === 'super_admin') && myRole !== 'super_admin' && editForm.role !== selectedUser.role) {
+          return alert("⛔ ACCESS DENIED: Only the Super Admin can assign Admin roles.");
       }
 
       setSaving(true);
@@ -335,6 +415,7 @@ export default function Users() {
         return alert("⛔ ACCESS DENIED: The Super Admin cannot be deleted.");
     }
 
+    // ✅ Original Logic Maintained (Prevents deleting another admin)
     if (selectedUser.role === 'admin' && myRole !== 'super_admin') {
         return alert("⛔ ACCESS DENIED: You cannot delete another Administrator.");
     }
@@ -396,15 +477,12 @@ export default function Users() {
                           (filterStatus === 'banned' && user.isBanned) || 
                           (filterStatus === 'active' && !user.isBanned);
 
-    // ✅ Match location based on the extracted country
     const matchesLocation = filterLocation === 'all' || extractCountry(user.deviceInfo?.location) === filterLocation;
-    
     const matchesVersion = filterVersion === 'all' || user.deviceInfo?.appVersion === filterVersion;
 
     return matchesSearch && matchesRole && matchesStatus && matchesLocation && matchesVersion;
   });
 
-  // ✅ Extract unique countries for the dropdown instead of full state/country
   const uniqueLocations = [...new Set(users.map(u => extractCountry(u.deviceInfo?.location)).filter(Boolean))].sort();
   const uniqueVersions = [...new Set(users.map(u => u.deviceInfo?.appVersion).filter(Boolean))].sort();
 
@@ -499,6 +577,17 @@ export default function Users() {
         .social-username { font-size: 0.9rem; font-weight: 600; color: #374151; margin-bottom: 2px; }
         .social-rank { font-size: 0.7rem; color: #9ca3af; }
 
+        /* Tracker Styles */
+        .tracker-section { margin-top: 40px; padding-top: 30px; border-top: 1px solid #e5e7eb; }
+        .timeline-container { position: relative; padding-left: 20px; margin-top: 20px; }
+        .timeline-line { position: absolute; left: 34px; top: 10px; bottom: 0; width: 2px; background-color: #e5e7eb; }
+        .timeline-item { display: flex; gap: 20px; margin-bottom: 20px; position: relative; z-index: 1; }
+        .timeline-icon-wrap { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; border: 2px solid white; box-shadow: 0 0 0 1px #e5e7eb; }
+        .timeline-content { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 16px; flex: 1; }
+        .timeline-title { font-size: 0.85rem; font-weight: 700; color: #111827; margin-bottom: 4px; }
+        .timeline-desc { font-size: 0.85rem; color: #4b5563; }
+        .timeline-meta { font-size: 0.75rem; color: #9ca3af; display: flex; align-items: center; gap: 4px; margin-top: 6px; }
+
         @media (max-width: 768px) {
             .users-page { padding: 16px; }
             .grid-layout { grid-template-columns: 1fr; gap: 20px; }
@@ -509,6 +598,9 @@ export default function Users() {
             .search-input { width: 100%; }
             .controls-container { width: 100%; }
             .search-box { width: 100%; }
+            .timeline-item { flex-direction: column; gap: 10px; padding-left: 30px; }
+            .timeline-line { left: 15px; }
+            .timeline-icon-wrap { position: absolute; left: 0; top: 0; }
         }
     `}</style>
 
@@ -609,7 +701,7 @@ export default function Users() {
                           <span className="form-label">Username</span>
                           <input type="text" required className="form-input" value={newUser.username} onChange={e => setNewUser({...newUser, username: e.target.value})} />
                       </div>
-                      {/* ✅ UPDATED CREATE ACCOUNT ROLES */}
+                      {/* ✅ SURGICAL UPDATE: Strict Dropdown display logic */}
                       <div className="form-group">
                           <span className="form-label">Account Role</span>
                           <select className="form-input" value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})}>
@@ -618,7 +710,8 @@ export default function Users() {
                               <option value="moderator">Moderator (Affiliate)</option>
                               <option value="anime_producer">Anime Producer (Upload Only)</option>
                               <option value="manga_producer">Manga Producer (Upload Only)</option>
-                              {myRole === 'super_admin' && <option value="admin">Full Admin</option>}
+                              {myRole === 'super_admin' && <option value="admin">Admin</option>}
+                              {myRole === 'super_admin' && <option value="super_admin">Super Admin</option>}
                           </select>
                       </div>
                       <button type="submit" disabled={creating} className="btn-submit">
@@ -698,7 +791,6 @@ export default function Users() {
                           {user.deviceInfo?.ipAddress || 'N/A'}
                       </span>
                   </td>
-                  {/* ✅ ONLY DISPLAY COUNTRY IN LOCATION COLUMN */}
                   <td>
                       <span style={{ fontSize: '0.8rem', color: '#4b5563', fontWeight: 500 }}>
                           {user.deviceInfo?.location ? extractCountry(user.deviceInfo.location) : <span style={{ color: '#9ca3af', fontStyle: 'italic' }}>N/A</span>}
@@ -809,22 +901,25 @@ export default function Users() {
                                     </select>
                                 </div>
 
-                                {/* ✅ UPDATED EDIT ACCOUNT ROLES */}
+                                {/* ✅ SURGICAL UPDATE: Strict Dropdown display logic & disabling for roles */}
                                 <div className="form-group">
                                     <span className="form-label">Role</span>
                                     <select 
                                         className="form-input" 
                                         value={editForm.role} 
                                         onChange={(e) => setEditForm({...editForm, role: e.target.value})}
-                                        disabled={selectedUser.role === 'super_admin' && myRole !== 'super_admin'}
+                                        disabled={
+                                            (selectedUser.role === 'super_admin' && myRole !== 'super_admin') ||
+                                            (selectedUser.role === 'admin' && myRole !== 'super_admin' && selectedUser.id !== auth.currentUser?.uid)
+                                        }
                                     >
                                         <option value="user">User</option>
                                         <option value="creator">Creator (Affiliate)</option>
                                         <option value="moderator">Moderator (Affiliate)</option>
                                         <option value="anime_producer">Anime Producer</option>
                                         <option value="manga_producer">Manga Producer</option>
-                                        <option value="admin">Full Admin</option>
-                                        {myRole === 'super_admin' && <option value="super_admin">Super Admin</option>}
+                                        {(myRole === 'super_admin' || selectedUser.role === 'admin') && <option value="admin">Admin</option>}
+                                        {(myRole === 'super_admin' || selectedUser.role === 'super_admin') && <option value="super_admin">Super Admin</option>}
                                     </select>
                                 </div>
 
@@ -912,7 +1007,6 @@ export default function Users() {
                                                                     <span className="stat-label">IP Address</span>
                                                                     <span className="stat-value" style={{ fontFamily: 'monospace', color: '#dc2626' }}>{selectedUser.deviceInfo.ipAddress}</span>
                                                                 </div>
-                                                                {/* ✅ ONLY DISPLAY COUNTRY IN LOCATION DETAILS */}
                                                                 <div className="stat-row">
                                                                     <span className="stat-label">Location</span>
                                                                     <span className="stat-value">{selectedUser.deviceInfo.location ? extractCountry(selectedUser.deviceInfo.location) : 'N/A'}</span>
@@ -962,23 +1056,71 @@ export default function Users() {
                                                         <button type="button" onClick={() => handleViewUser(u)} style={{background:'none', border:'none', cursor:'pointer', color:'#2563eb'}}><ExternalLink size={14}/></button>
                                                     </div>
                                                 )))}
-
-                                                {/* 5. FOLLOWING RENDER */}
-                                                {socialTab === 'following' && (followingList.length === 0 ? <div style={{padding:40, textAlign:'center', color:'#9ca3af', fontStyle:'italic'}}>Not following anyone.</div> : followingList.map(u => (
-                                                    <div key={u.id} className="social-item">
-                                                        <div className="mini-avatar">{u.avatar ? <img src={u.avatar} style={{width:'100%', height:'100%', objectFit:'cover'}}/> : u.username?.[0].toUpperCase()}</div>
-                                                        <div style={{flex:1}}>
-                                                            <div className="social-username">{u.username}</div>
-                                                            <div className="social-rank">{u.rank || 'GENIN'}</div>
-                                                        </div>
-                                                        <button type="button" onClick={() => handleViewUser(u)} style={{background:'none', border:'none', cursor:'pointer', color:'#2563eb'}}><ExternalLink size={14}/></button>
-                                                    </div>
-                                                )))}
                                             </>
                                         )}
                                     </div>
                                 </div>
                             </div>
+                        </div>
+
+                        {/* Master Tracker Section */}
+                        <div className="tracker-section">
+                            <h3 className="section-title" style={{ marginBottom: '10px' }}>
+                                <Activity size={24} className="text-blue-600"/> Master Activity Tracker
+                            </h3>
+                            <p style={{ color: '#6b7280', fontSize: '0.9rem', marginBottom: '20px' }}>
+                                A unified timeline of this user's recent interactions across the platform.
+                            </p>
+
+                            {loadingTracker ? (
+                                <div style={{ padding: 40, textAlign: 'center', color: '#6b7280' }}>
+                                    <Loader2 className="animate-spin" size={32} style={{ margin: '0 auto 10px', color: '#2563eb' }} />
+                                    Loading audit log...
+                                </div>
+                            ) : trackerData.length === 0 ? (
+                                <div style={{ padding: 40, textAlign: 'center', background: '#f9fafb', borderRadius: 12, border: '1px dashed #e5e7eb', color: '#9ca3af' }}>
+                                    No activity found for this user.
+                                </div>
+                            ) : (
+                                <div className="timeline-container">
+                                    <div className="timeline-line"></div>
+                                    
+                                    {trackerData.map((event) => {
+                                        let icon, bgColor, color;
+                                        if (event.type === 'post') {
+                                            icon = <FileText size={16} color="#047857" />; bgColor = '#d1fae5'; color = '#047857';
+                                        } else if (event.type === 'comment') {
+                                            icon = <MessageSquare size={16} color="#4338ca" />; bgColor = '#e0e7ff'; color = '#4338ca';
+                                        } else if (event.type === 'anime') {
+                                            icon = <Video size={16} color="#be185d" />; bgColor = '#fce7f3'; color = '#be185d';
+                                        } else if (event.type === 'manga') {
+                                            icon = <BookOpen size={16} color="#b45309" />; bgColor = '#fef3c7'; color = '#b45309';
+                                        } else {
+                                            icon = <Download size={16} color="#0369a1" />; bgColor = '#e0f2fe'; color = '#0369a1';
+                                        }
+
+                                        return (
+                                            <div key={event.id} className="timeline-item">
+                                                <div className="timeline-icon-wrap" style={{ backgroundColor: bgColor }}>
+                                                    {icon}
+                                                </div>
+                                                <div className="timeline-content">
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                                        <div className="timeline-title">{event.title}</div>
+                                                        <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color, background: bgColor, padding: '2px 8px', borderRadius: 12, textTransform: 'capitalize' }}>
+                                                            {event.type}
+                                                        </span>
+                                                    </div>
+                                                    <div className="timeline-desc">{event.description}</div>
+                                                    <div className="timeline-meta">
+                                                        <Clock size={12} /> {formatDate(event.rawDate)}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
                         </div>
                     </form>
                 </div>

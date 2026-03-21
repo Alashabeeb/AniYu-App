@@ -26,6 +26,11 @@ export default function Affiliate() {
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
 
+  // ✅ SURGICAL ADDITION: State for the Referred Users Modal
+  const [referredUsers, setReferredUsers] = useState([]);
+  const [isReferredModalOpen, setIsReferredModalOpen] = useState(false);
+  const [loadingReferred, setLoadingReferred] = useState(false);
+
   useEffect(() => {
     fetchAffiliates();
   }, []);
@@ -125,6 +130,24 @@ export default function Affiliate() {
   const copyToClipboard = (text) => {
       navigator.clipboard.writeText(text);
       alert("Copied to clipboard!");
+  };
+
+  // ✅ SURGICAL ADDITION: Fetch users who signed up with the selected affiliate's code
+  const handleViewReferredUsers = async () => {
+      if (!selectedAffiliate || !selectedAffiliate.affiliateCode) return;
+      setIsReferredModalOpen(true);
+      setLoadingReferred(true);
+      try {
+          const q = query(collection(db, 'users'), where('referredBy', '==', selectedAffiliate.affiliateCode), orderBy('createdAt', 'desc'));
+          const snap = await getDocs(q);
+          const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          setReferredUsers(list);
+      } catch (error) {
+          console.error("Error fetching referred users:", error);
+          alert("Error fetching referred users. Ensure you have the proper Firestore index if required.");
+      } finally {
+          setLoadingReferred(false);
+      }
   };
 
   return (
@@ -257,9 +280,16 @@ export default function Affiliate() {
                                 <div style={{ fontSize: '2.5rem', fontWeight: 900, color: '#0f172a' }}>{selectedAffiliate.affiliateClicks || 0}</div>
                             </div>
 
-                            <div style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: 12, padding: 20, boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+                            {/* ✅ SURGICAL UPDATE: Added onClick handler & styling to make this box clickable */}
+                            <div 
+                                onClick={handleViewReferredUsers}
+                                style={{ background: 'white', border: '1px solid #10b981', borderRadius: 12, padding: 20, boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', cursor: 'pointer', transition: 'all 0.2s', position: 'relative' }}
+                                onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
+                                onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+                            >
                                 <div style={{ color: '#64748b', fontSize: '0.85rem', fontWeight: 700, textTransform: 'uppercase', marginBottom: 5 }}>Successful Signups</div>
                                 <div style={{ fontSize: '2.5rem', fontWeight: 900, color: '#10b981' }}>{selectedAffiliate.affiliateSignups || 0}</div>
+                                <div style={{ position: 'absolute', bottom: 10, right: 15, fontSize: '0.75rem', color: '#10b981', fontWeight: 'bold' }}>View Users &rarr;</div>
                             </div>
 
                             <div style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: 12, padding: 20, boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
@@ -323,6 +353,54 @@ export default function Affiliate() {
                                 </div>
                             ))}
                         </div>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {/* ✅ SURGICAL ADDITION: MODAL: View Referred Users */}
+        {isReferredModalOpen && (
+            <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+                <div style={{ background: 'white', width: 600, maxHeight: '80vh', borderRadius: 16, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
+                    <div style={{ background: '#f8fafc', padding: '20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                            <h2 style={{ margin: 0, fontSize: '1.2rem', color: '#0f172a' }}>Referred Users</h2>
+                            <div style={{ fontSize: '0.85rem', color: '#64748b', marginTop: 4 }}>
+                                Users who signed up using <strong style={{color: '#10b981'}}>{selectedAffiliate?.affiliateCode}</strong>
+                            </div>
+                        </div>
+                        <button onClick={() => setIsReferredModalOpen(false)} style={{ background: 'none', border: 'none', fontSize: '1.5rem', cursor: 'pointer', color: '#64748b' }}>&times;</button>
+                    </div>
+                    
+                    <div style={{ padding: 20, overflowY: 'auto', flex: 1 }}>
+                        {loadingReferred ? (
+                            <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
+                                <Loader2 className="animate-spin" color="#10b981" size={32} />
+                            </div>
+                        ) : referredUsers.length === 0 ? (
+                            <div style={{ textAlign: 'center', color: '#94a3b8', padding: 40 }}>
+                                <Users size={40} style={{ margin: '0 auto 10px', opacity: 0.3 }} />
+                                <div>No users have signed up using this affiliate code yet.</div>
+                            </div>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                {referredUsers.map(user => (
+                                    <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: 15, padding: 15, border: '1px solid #e2e8f0', borderRadius: 8 }}>
+                                        <div style={{ width: 40, height: 40, borderRadius: '50%', background: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', fontWeight: 'bold' }}>
+                                            {(user.displayName || user.email || '?').charAt(0).toUpperCase()}
+                                        </div>
+                                        <div style={{ flex: 1 }}>
+                                            <div style={{ fontWeight: 700, color: '#1e293b' }}>{user.displayName || 'Unknown User'}</div>
+                                            <div style={{ fontSize: '0.85rem', color: '#64748b' }}>{user.email}</div>
+                                        </div>
+                                        <div style={{ fontSize: '0.75rem', color: '#94a3b8', textAlign: 'right' }}>
+                                            Joined<br/>
+                                            {user.createdAt ? (user.createdAt.toDate ? user.createdAt.toDate().toLocaleDateString() : new Date(user.createdAt).toLocaleDateString()) : 'Unknown Date'}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
