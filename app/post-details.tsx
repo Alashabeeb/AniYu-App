@@ -307,6 +307,7 @@ export default function PostDetailsScreen() {
       ]);
   };
 
+  // ✅ SURGICAL FIX: Added userId: authorId to capture Offender UID in Admin Panel
   const submitReport = async (reason: string) => {
       if (!user) return;
       setReportLoading(true);
@@ -318,6 +319,7 @@ export default function PostDetailsScreen() {
           targetId: postId,
           targetContent: post?.text || 'media',
           reportedBy: user.uid,
+          userId: authorId, // The Offender's UID added here!
           reason: reason,
           createdAt: serverTimestamp(),
           status: 'pending'

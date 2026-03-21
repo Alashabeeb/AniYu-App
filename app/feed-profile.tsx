@@ -329,11 +329,21 @@ export default function FeedProfileScreen() {
       ]);
   };
 
+  // ✅ SURGICAL FIX: Added userId to properly log the Offender's UID
   const submitReportUser = async (reason: string) => {
     if (!currentUser || !targetUserId) return;
     setReportLoading(true);
     try {
-      await addDoc(collection(db, 'reports'), { type: 'user', targetId: targetUserId, targetName: userData?.username || 'Unknown', reportedBy: currentUser.uid, reason, createdAt: serverTimestamp(), status: 'pending' });
+      await addDoc(collection(db, 'reports'), { 
+          type: 'user', 
+          targetId: targetUserId, 
+          userId: targetUserId, // Fix for Admin Panel Tracking
+          targetName: userData?.username || 'Unknown', 
+          reportedBy: currentUser.uid, 
+          reason, 
+          createdAt: serverTimestamp(), 
+          status: 'pending' 
+      });
       Alert.alert("Report Submitted", "We will review this profile.");
       setReportModalVisible(false);
     } catch { Alert.alert("Error", "Could not submit."); } finally { setReportLoading(false); }

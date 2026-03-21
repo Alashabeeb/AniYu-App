@@ -340,10 +340,20 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
       ]);
   };
 
+  // ✅ SURGICAL FIX: Added userId: authorId to capture Offender UID
   const submitReport = async (reason: string) => {
     if (!currentUser) return;
     try {
-      await addDoc(collection(db, 'reports'), { type: 'post', targetId: post.id, targetContent: post.text || 'media', reportedBy: currentUser.uid, reason: reason, createdAt: serverTimestamp(), status: 'pending' });
+      await addDoc(collection(db, 'reports'), { 
+          type: 'post', 
+          targetId: post.id, 
+          targetContent: post.text || 'media', 
+          reportedBy: currentUser.uid, 
+          userId: authorId, // Fix for Admin Panel Tracking
+          reason: reason, 
+          createdAt: serverTimestamp(), 
+          status: 'pending' 
+      });
       Alert.alert("Report Submitted", "Thank you.");
       setReportModalVisible(false);
     } catch (error) { Alert.alert("Error", "Could not submit."); }
@@ -494,6 +504,29 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
         </TouchableWithoutFeedback>
       </Modal>
 
+      {/* ✅ SURGICAL FIX: Added the missing Report Modal UI */}
+      <Modal visible={reportModalVisible} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+            <View style={[styles.reportContainer, { backgroundColor: theme.background }]}>
+                <Text style={[styles.reportTitle, { color: theme.text }]}>Report Post</Text>
+                <Text style={{ color: theme.subText, marginBottom: 15, textAlign: 'center' }}>Why?</Text>
+                {REPORT_REASONS.map((reason) => (
+                    <TouchableOpacity 
+                        key={reason} 
+                        style={[styles.reasonBtn, { borderColor: theme.border }]}
+                        onPress={() => submitReport(reason)}
+                    >
+                        <Text style={{ color: theme.text }}>{reason}</Text>
+                        <Ionicons name="chevron-forward" size={16} color={theme.subText} />
+                    </TouchableOpacity>
+                ))}
+                <TouchableOpacity style={{ marginTop: 10, padding: 10 }} onPress={() => setReportModalVisible(false)}>
+                    <Text style={{ color: theme.tint, fontWeight: 'bold' }}>Cancel</Text>
+                </TouchableOpacity>
+            </View>
+        </View>
+      </Modal>
+
       <Modal visible={imageModalVisible} transparent={false} animationType="fade" onRequestClose={() => setImageModalVisible(false)}>
         <View style={styles.fullScreenMediaContainer}>
             <TouchableOpacity style={styles.closeMediaBtn} onPress={() => setImageModalVisible(false)}>
@@ -549,5 +582,10 @@ const styles = StyleSheet.create({
   menuText: { fontSize: 16, marginLeft: 12, fontWeight: '500' },
   fullScreenMediaContainer: { flex: 1, backgroundColor: '#000000', justifyContent: 'center', alignItems: 'center' },
   closeMediaBtn: { position: 'absolute', top: Platform.OS === 'ios' ? 50 : 20, left: 20, zIndex: 100, padding: 8, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 20 },
-  fullScreenMediaItem: { width: '100%', height: '100%' }
+  fullScreenMediaItem: { width: '100%', height: '100%' },
+
+  // ✅ SURGICAL FIX: Added missing Report UI styles
+  reportContainer: { width: '90%', borderRadius: 16, padding: 20, alignItems: 'center', elevation: 10 },
+  reportTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 5 },
+  reasonBtn: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', padding: 15, borderBottomWidth: 0.5 }
 });
