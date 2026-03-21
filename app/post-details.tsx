@@ -33,6 +33,9 @@ const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 // 🔐 SECURITY: Comment creation now goes through rate-limited Cloud Function
 const CREATE_COMMENT_URL = "https://us-central1-aniyu-b841b.cloudfunctions.net/createComment";
 
+// 🔐 SECURITY: Report now goes through rate-limited Cloud Function
+const CREATE_REPORT_URL = "https://us-central1-aniyu-b841b.cloudfunctions.net/createReport";
+
 // 🔐 SECURITY: Max comment length guard
 const MAX_COMMENT_CHARS = 300;
 
@@ -312,20 +315,16 @@ export default function PostDetailsScreen() {
       if (!user) return;
       setReportLoading(true);
       try {
-        const batch = writeBatch(db);
-        const reportRef = doc(collection(db, 'reports'));
-        batch.set(reportRef, {
-          type: 'post',
-          targetId: postId,
-          targetContent: post?.text || 'media',
-          reportedBy: user.uid,
-          userId: authorId, // The Offender's UID added here!
-          reason: reason,
-          createdAt: serverTimestamp(),
-          status: 'pending'
+        const idToken = await user.getIdToken();
+        const response = await fetch(CREATE_REPORT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
+            body: JSON.stringify({ type: 'post', targetId: postId, targetContent: post?.text || 'media', userId: authorId, reason })
         });
-        await batch.commit();
-
+        if (response.status === 429) {
+            showAlert('warning', 'Slow Down', 'You are reporting too fast. Please wait.');
+            return;
+        }
         setReportModalVisible(false);
         showAlert('success', 'Report Submitted', 'Thank you for keeping our community safe. We will review this shortly.');
       } catch (error) {

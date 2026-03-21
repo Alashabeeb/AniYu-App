@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { auth } from '../config/firebaseConfig';
+import { doc, serverTimestamp, setDoc } from 'firebase/firestore'; // ✅ Added Firestore imports
+import { auth, db } from '../config/firebaseConfig'; // ✅ Added db import
 
 const HISTORY_BASE_KEY = 'watch_history';
 const MANGA_HISTORY_BASE_KEY = 'manga_history';
@@ -78,9 +79,25 @@ export const saveWatchProgress = (
           totalDuration
         };
 
+        // 1. Save to Local Storage (Fast Loading)
         const newHistory = [newItem, ...filtered].slice(0, MAX_HISTORY_LENGTH);
         const key = getUserKey(HISTORY_BASE_KEY);
         await AsyncStorage.setItem(key, JSON.stringify(newHistory));
+
+        // 2. ✅ SURGICAL ADDITION: Save to Firestore (For Admin Panel Tracker)
+        // Uses "Overwrite, Don't Stack" strategy by making the document ID the anime.mal_id
+        if (auth.currentUser?.uid && String(anime.mal_id) !== 'preview') {
+            const historyRef = doc(db, 'users', auth.currentUser.uid, 'history', String(anime.mal_id));
+            await setDoc(historyRef, {
+                type: 'anime',
+                mal_id: String(anime.mal_id),
+                title: anime.title,
+                lastEpisode: episode.number || episode.title,
+                episodeId: String(episode.id || episode.mal_id),
+                updatedAt: serverTimestamp()
+            }, { merge: true }); // Merge ensures we just update the existing doc
+        }
+
       } catch (error) {
         console.error("Error saving progress:", error);
       }
@@ -121,11 +138,26 @@ export const saveReadProgress = (manga: any, chapter: any, page: number) => {
           date: Date.now(),
         };
 
+        // 1. Save to Local Storage
         const newHistory = [newItem, ...filtered].slice(0, MAX_HISTORY_LENGTH); 
         const key = getUserKey(MANGA_HISTORY_BASE_KEY);
         await AsyncStorage.setItem(key, JSON.stringify(newHistory));
 
         await markChapterAsRead(manga.mal_id, String(chapter.id || chapter.number));
+
+        // 2. ✅ SURGICAL ADDITION: Save to Firestore (For Admin Panel Tracker)
+        // Uses "Overwrite, Don't Stack" strategy by making the document ID the manga.mal_id
+        if (auth.currentUser?.uid) {
+            const historyRef = doc(db, 'users', auth.currentUser.uid, 'history', String(manga.mal_id));
+            await setDoc(historyRef, {
+                type: 'manga',
+                mal_id: String(manga.mal_id),
+                title: manga.title,
+                lastChapter: chapter.number || chapter.title,
+                chapterId: String(chapter.id || chapter.number),
+                updatedAt: serverTimestamp()
+            }, { merge: true });
+        }
 
       } catch (error) {
         console.error("Error saving manga progress:", error);

@@ -48,6 +48,10 @@ interface PostCardProps {
 }
 
 const REPORT_REASONS = ["Offensive content", "Abusive behavior", "Spam", "Other"];
+
+// 🔐 SECURITY: Report now goes through rate-limited Cloud Function
+const CREATE_REPORT_URL = "https://us-central1-aniyu-b841b.cloudfunctions.net/createReport";
+
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 const localViewedSet = new Set<string>();
@@ -344,16 +348,16 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
   const submitReport = async (reason: string) => {
     if (!currentUser) return;
     try {
-      await addDoc(collection(db, 'reports'), { 
-          type: 'post', 
-          targetId: post.id, 
-          targetContent: post.text || 'media', 
-          reportedBy: currentUser.uid, 
-          userId: authorId, // Fix for Admin Panel Tracking
-          reason: reason, 
-          createdAt: serverTimestamp(), 
-          status: 'pending' 
+      const idToken = await currentUser.getIdToken();
+      const response = await fetch(CREATE_REPORT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
+          body: JSON.stringify({ type: 'post', targetId: post.id, targetContent: post.text || 'media', userId: authorId, reason })
       });
+      if (response.status === 429) {
+          Alert.alert("Slow Down", "You are reporting too fast. Please wait.");
+          return;
+      }
       Alert.alert("Report Submitted", "Thank you.");
       setReportModalVisible(false);
     } catch (error) { Alert.alert("Error", "Could not submit."); }

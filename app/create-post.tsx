@@ -6,15 +6,15 @@ import { Stack, useRouter } from 'expo-router';
 // ✅ REMOVED FIREBASE STORAGE IMPORTS
 // import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import {
-  doc,
-  getDoc
+    doc,
+    getDoc
 } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
-  Image,
-  ScrollView,
-  StyleSheet, Text, TextInput, TouchableOpacity, View
+    ActivityIndicator,
+    Image,
+    ScrollView,
+    StyleSheet, Text, TextInput, TouchableOpacity, View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import CustomAlert from '../components/CustomAlert';
@@ -154,6 +154,9 @@ export default function CreatePostScreen() {
       const realUsername = userData.username || "anonymous";
       const realDisplayName = userData.displayName || user.displayName || "Anonymous";
       const realAvatar = userData.avatar || user.photoURL;
+      
+      // ✅ SURGICAL FIX: Fetch the user's role to attach to the post
+      const realRole = userData.role || 'user'; 
 
       let mediaUrl = null;
       let mediaType = null;
@@ -178,7 +181,8 @@ export default function CreatePostScreen() {
               tags: selectedTags,
               displayName: realDisplayName,
               username: realUsername,
-              userAvatar: realAvatar
+              userAvatar: realAvatar,
+              role: realRole // ✅ SURGICAL FIX: Saves the role in the post so the badge renders!
           })
       });
 

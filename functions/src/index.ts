@@ -402,6 +402,62 @@ export const createSupportMessage = onRequest((req, res) => {
   });
 });
 
+// 🔐 SECURITY: Create Report via Cloud Function (Rate Limited)
+export const createReport = onRequest((req, res) => {
+  cors(req, res, async () => {
+    // A. Auth check
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const idToken = authHeader.split("Bearer ")[1];
+
+    let decodedToken;
+    try {
+      decodedToken = await admin.auth().verifyIdToken(idToken);
+    } catch (e) {
+      res.status(401).json({ error: "Invalid Token" });
+      return;
+    }
+
+    // B. Rate limit — 5 reports per hour per user
+    const allowed = await checkRateLimit(decodedToken.uid, "createReport", 5);
+    if (!allowed) {
+      res.status(429).json({ error: "You are reporting too fast. Please wait before submitting another report." });
+      return;
+    }
+
+    // C. Validate inputs
+    const { type, targetId, targetContent, targetName, reason, userId } = req.body;
+    if (!type || !targetId || !reason) {
+      res.status(400).json({ error: "Missing required fields." });
+      return;
+    }
+
+    try {
+      // D. Write report
+      await admin.firestore().collection("reports").add({
+        type,
+        targetId,
+        targetContent: targetContent || null,
+        targetName: targetName || null,
+        userId: userId || targetId,
+        reportedBy: decodedToken.uid,
+        reason,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        status: "pending"
+      });
+
+      res.status(200).json({ success: true });
+
+    } catch (error) {
+      console.error("Error creating report:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  });
+});
+
 // 3. AUTO-MODERATE NEW POSTS & COMMENTS USING GOOGLE GEMINI
 export const moderateNewPost = onDocumentCreated("posts/{postId}", async (event) => {
   const snapshot = event.data;
