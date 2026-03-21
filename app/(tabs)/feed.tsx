@@ -42,6 +42,9 @@ import { useTheme } from '../../context/ThemeContext';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const FEED_CACHE_KEY = 'aniyu_feed_cache_v2';
 
+// 🔐 SECURITY: Max search length
+const MAX_SEARCH_CHARS = 15;
+
 export default function FeedScreen() {
   const router = useRouter();
   const { theme } = useTheme();
@@ -312,10 +315,15 @@ export default function FeedScreen() {
   useEffect(() => {
       const runSearch = async () => {
           if (showSearch && searchText.trim().length > 0) {
+              // 🔐 SECURITY: Validate search length
+              if (searchText.trim().length > MAX_SEARCH_CHARS) return;
+              // 🔐 SECURITY: Strip special characters before Firestore range query
+              const sanitizedText = searchText.trim().toLowerCase().replace(/[^\w]/gi, '');
+              if (!sanitizedText) return;
+
               if (isMountedRef.current) setSearchingUsers(true);
               try {
-                  const lowerText = searchText.toLowerCase();
-                  const q = query(collection(db, 'users'), where('username', '>=', lowerText), where('username', '<=', lowerText + '\uf8ff'), limit(20));
+                  const q = query(collection(db, 'users'), where('username', '>=', sanitizedText), where('username', '<=', sanitizedText + '\uf8ff'), limit(20));
                   const snapshot = await getDocs(q);
                   if (isMountedRef.current) setUserResults(snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() })));
               } catch (error) { console.error(error); } 
@@ -397,6 +405,7 @@ export default function FeedScreen() {
                         onChangeText={setSearchText}
                         autoFocus
                         autoCapitalize="none"
+                        maxLength={MAX_SEARCH_CHARS}
                     />
                 </View>
                 <TouchableOpacity onPress={() => { setShowSearch(false); setSearchText(''); }}>
@@ -543,7 +552,4 @@ const styles = StyleSheet.create({
   fab: { position: 'absolute', bottom: 20, right: 20, width: 56, height: 56, borderRadius: 28, justifyContent: 'center', alignItems: 'center', elevation: 6, shadowColor: "#000", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.3, shadowRadius: 4.65 },
   chatPlaceholderContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30, paddingBottom: 80 },
   chatIconWrapper: { width: 120, height: 120, borderRadius: 60, justifyContent: 'center', alignItems: 'center', marginBottom: 24 },
-  chatTitle: { fontSize: 24, fontWeight: 'bold', marginBottom: 12, textAlign: 'center' },
-  chatSubtitle: { fontSize: 15, textAlign: 'center', lineHeight: 22, marginBottom: 30 },
-  premiumBadge: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 20, borderWidth: 1, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 3, elevation: 3 }
-});
+  chatTitle: { fontSize: 24, fontWeight: 'bold', m

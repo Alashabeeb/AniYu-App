@@ -28,6 +28,9 @@ import { auth, db } from '../config/firebaseConfig';
 import { useTheme } from '../context/ThemeContext';
 import { uploadToR2 } from '../services/r2Storage';
 
+// 🔐 SECURITY: Validators
+const USERNAME_REGEX = /^[a-zA-Z0-9_]+$/;
+
 // ✅ Genres for the user to select their interests
 const GENRES = [
     "Action", "Adventure", "Romance", "Fantasy", "Drama", "Comedy", 
@@ -156,6 +159,24 @@ export default function EditProfileScreen() {
       if (!username.trim() || !displayName.trim()) {
           return showAlert('warning', 'Missing Info', 'Username and Display Name are required.');
       }
+      // 🔐 SECURITY: Validate display name length
+      if (displayName.trim().length > 15) {
+          return showAlert('warning', 'Display Name Too Long', 'Display name cannot exceed 15 characters.');
+      }
+      // 🔐 SECURITY: Validate username format and length
+      if (username.trim().length < 3) {
+          return showAlert('warning', 'Username Too Short', 'Username must be at least 3 characters.');
+      }
+      if (username.trim().length > 15) {
+          return showAlert('warning', 'Username Too Long', 'Username cannot exceed 15 characters.');
+      }
+      if (!USERNAME_REGEX.test(username.trim())) {
+          return showAlert('warning', 'Invalid Username', 'Username can only contain letters, numbers, and underscores. No spaces.');
+      }
+      // 🔐 SECURITY: Validate bio length
+      if (bio.trim().length > 150) {
+          return showAlert('warning', 'Bio Too Long', 'Bio cannot exceed 150 characters.');
+      }
 
       if (isLoaded) {
           Alert.alert(
@@ -271,6 +292,7 @@ export default function EditProfileScreen() {
                         onChangeText={setDisplayName}
                         placeholder="Your Name"
                         placeholderTextColor={theme.subText}
+                        maxLength={15}
                     />
 
                     <Text style={[styles.label, { color: theme.subText }]}>Username</Text>
@@ -281,6 +303,7 @@ export default function EditProfileScreen() {
                         placeholder="username"
                         placeholderTextColor={theme.subText}
                         autoCapitalize="none"
+                        maxLength={15}
                     />
 
                     <Text style={[styles.label, { color: theme.subText }]}>Bio</Text>
@@ -291,6 +314,7 @@ export default function EditProfileScreen() {
                         placeholder="Tell us about yourself..."
                         placeholderTextColor={theme.subText}
                         multiline
+                        maxLength={150}
                     />
                 </View>
 

@@ -37,6 +37,9 @@ import { getUnreadLocalCount } from '../../services/notificationService';
 
 const HOME_DATA_CACHE_KEY = 'aniyu_home_screen_cache_v1';
 
+// 🔐 SECURITY: Max search length
+const MAX_SEARCH_CHARS = 15;
+
 export default function HomeScreen() {
   const router = useRouter();
   const { theme, isDark } = useTheme();
@@ -231,11 +234,17 @@ export default function HomeScreen() {
 
   const handleSearch = async () => {
     if (queryText.trim().length === 0) return;
+    // 🔐 SECURITY: Validate search length
+    if (queryText.trim().length > MAX_SEARCH_CHARS) return;
+    // 🔐 SECURITY: Strip special characters that break Firestore range queries
+    const sanitizedQuery = queryText.trim().replace(/[^\w\s]/gi, '');
+    if (!sanitizedQuery) return;
+
     Keyboard.dismiss(); 
     setSearchLoading(true);
     setIsSearching(true);
     try {
-      const results = await searchAnime(queryText);
+      const results = await searchAnime(sanitizedQuery);
       if (isMountedRef.current) setSearchResults(results);
     } catch (error) { console.error(error); } 
     finally { if (isMountedRef.current) setSearchLoading(false); }
@@ -298,6 +307,7 @@ export default function HomeScreen() {
             onChangeText={setQueryText}
             onSubmitEditing={handleSearch} 
             returnKeyType="search"
+            maxLength={MAX_SEARCH_CHARS}
           />
           {queryText.length > 0 && (
             <TouchableOpacity onPress={clearSearch}>

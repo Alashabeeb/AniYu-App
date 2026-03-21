@@ -16,6 +16,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { db } from '../config/firebaseConfig';
 import { useTheme } from '../context/ThemeContext';
 
+// 🔐 SECURITY: Max search length
+const MAX_SEARCH_CHARS = 15;
+
 export default function SearchUsersScreen() {
   const router = useRouter();
   const { theme } = useTheme();
@@ -27,6 +30,12 @@ export default function SearchUsersScreen() {
   // 🔍 USER-ONLY SEARCH LOGIC
   const handleSearch = async () => {
       if (!searchText.trim()) return;
+      // 🔐 SECURITY: Validate search length
+      if (searchText.trim().length > MAX_SEARCH_CHARS) return;
+      // 🔐 SECURITY: Strip special characters before Firestore range query
+      const sanitizedText = searchText.trim().toLowerCase().replace(/[^\w]/gi, '');
+      if (!sanitizedText) return;
+
       setLoading(true);
       setResults([]);
 
@@ -36,8 +45,8 @@ export default function SearchUsersScreen() {
           const usersRef = collection(db, 'users');
           const q = query(
               usersRef, 
-              where('username', '>=', searchText.toLowerCase()), 
-              where('username', '<=', searchText.toLowerCase() + '\uf8ff'),
+              where('username', '>=', sanitizedText), 
+              where('username', '<=', sanitizedText + '\uf8ff'),
               limit(20)
           );
 
@@ -72,6 +81,7 @@ export default function SearchUsersScreen() {
                   onSubmitEditing={handleSearch}
                   returnKeyType="search"
                   autoCapitalize="none"
+                  maxLength={MAX_SEARCH_CHARS}
               />
               {searchText.length > 0 && (
                   <TouchableOpacity onPress={() => { setSearchText(''); setResults([]); }}>

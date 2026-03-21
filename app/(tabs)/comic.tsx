@@ -37,6 +37,9 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 
 const MANGA_SCREEN_CACHE_KEY = 'aniyu_manga_screen_cache_v1';
 
+// 🔐 SECURITY: Max search length
+const MAX_SEARCH_CHARS = 15;
+
 interface GroupedManga {
   mal_id: string | number;
   title: string;
@@ -201,10 +204,16 @@ export default function ComicScreen() {
 
   const handleSearch = async () => {
       if (!searchQuery.trim()) return;
+      // 🔐 SECURITY: Validate search length
+      if (searchQuery.trim().length > MAX_SEARCH_CHARS) return;
+      // 🔐 SECURITY: Strip special characters that break API queries
+      const sanitizedQuery = searchQuery.trim().replace(/[^\w\s]/gi, '');
+      if (!sanitizedQuery) return;
+
       Keyboard.dismiss();
       setSearchLoading(true);
       setIsSearching(true);
-      const results = await searchManga(searchQuery);
+      const results = await searchManga(sanitizedQuery);
       if (isMountedRef.current) {
           setSearchResults(results);
           setSearchLoading(false);
@@ -366,6 +375,7 @@ export default function ComicScreen() {
                   onChangeText={setSearchQuery}
                   onSubmitEditing={handleSearch}
                   returnKeyType="search"
+                  maxLength={MAX_SEARCH_CHARS}
               />
               {searchQuery.length > 0 && (
                   <TouchableOpacity onPress={() => { setSearchQuery(''); setIsSearching(false); setSearchResults([]); }}>

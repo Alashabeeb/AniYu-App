@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Application from 'expo-application';
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
@@ -14,6 +15,10 @@ interface AuthProps {
 }
 
 const AuthContext = createContext<AuthProps>({ user: null, loading: true });
+
+// 🔐 SECURITY: Session expiry constants
+const SESSION_KEY = 'aniyu_session_start';
+const MAX_SESSION_DAYS = 30;
 
 // --- HELPER: GET PUSH TOKEN ---
 async function registerForPushNotificationsAsync() {
@@ -76,13 +81,40 @@ export const AuthProvider = ({ children }: any) => {
         setUser(currentUser as any);
         
         const userRef = doc(db, 'users', currentUser.uid);
+
+        // 🔐 SECURITY: Session expiry check — runs in background, won't block UI
+        (async () => {
+            try {
+                const sessionStart = await AsyncStorage.getItem(SESSION_KEY);
+                if (!sessionStart) {
+                    // First login — store session start timestamp
+                    await AsyncStorage.setItem(SESSION_KEY, Date.now().toString());
+                } else {
+                    const elapsed = Date.now() - parseInt(sessionStart, 10);
+                    const elapsedDays = elapsed / (1000 * 60 * 60 * 24);
+                    if (elapsedDays > MAX_SESSION_DAYS) {
+                        // Session expired — force sign out
+                        await AsyncStorage.removeItem(SESSION_KEY);
+                        await updateDoc(userRef, { isOnline: false, lastActiveAt: serverTimestamp() });
+                        await signOut(auth);
+                        return;
+                    }
+                }
+            } catch (e) {
+                console.warn("Session check failed:", e);
+            }
+        })();
         
         // ✅ BUG FIX 2: Run the heavy IP/Push Token fetching in the background asynchronously
         (async () => {
             try {
                 let ipAddress = "Unknown IP";
                 try {
-                    const ipResponse = await fetch('https://api.ipify.org?format=json');
+                    // 🔐 SECURITY: 5s timeout on IP fetch
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 5000);
+                    const ipResponse = await fetch('https://api.ipify.org?format=json', { signal: controller.signal });
+                    clearTimeout(timeoutId);
                     const ipData = await ipResponse.json();
                     ipAddress = ipData.ip;
                 } catch (e) {
@@ -145,6 +177,8 @@ export const AuthProvider = ({ children }: any) => {
         });
       } else {
         // User is fully logged out
+        // 🔐 SECURITY: Clear session timestamp on logout
+        AsyncStorage.removeItem(SESSION_KEY).catch(() => {});
         setUser(null);
       }
       
