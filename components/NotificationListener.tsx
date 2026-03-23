@@ -16,6 +16,9 @@ export default function NotificationListener() {
   const isFirstLoadSocial = useRef(true);
   const isFirstLoadAnime = useRef(true);
 
+  // ✅ BUG 7 FIX: Ref to store previous role and prevent spam toasts
+  const previousRoleRef = useRef<string | null>(null);
+
   // ==========================================
   // 1. WATCH ACCOUNT STATUS (Ban/Unban)
   // ==========================================
@@ -23,14 +26,16 @@ export default function NotificationListener() {
     if (!user) return;
 
     const unsubUser = onSnapshot(doc(db, 'users', user.uid), (docSnapshot) => {
-      // Skip the very first sync
-      if (isFirstLoadUser.current) {
-        isFirstLoadUser.current = false;
-        return;
-      }
-
       if (docSnapshot.exists()) {
         const data = docSnapshot.data();
+        const currentRole = data.role || 'user';
+
+        // Skip the very first sync
+        if (isFirstLoadUser.current) {
+          isFirstLoadUser.current = false;
+          previousRoleRef.current = currentRole; // ✅ BUG 7 FIX: Initialize the role memory
+          return;
+        }
         
         // Check if "isBanned" became true
         if (data.isBanned === true) {
@@ -39,9 +44,12 @@ export default function NotificationListener() {
         } 
         
         // Optional: Check if role changed (e.g. promoted to Admin)
-        if (data.role && data.role !== 'user') {
-            showToast('Role Updated', `You are now a ${data.role}`, 'info');
+        // ✅ BUG 7 FIX: Only toast if the role actually changed from the previous state
+        if (currentRole !== previousRoleRef.current && currentRole !== 'user') {
+            showToast('Role Updated', `You are now a ${currentRole}`, 'info');
         }
+
+        previousRoleRef.current = currentRole; // ✅ BUG 7 FIX: Update the memory
       }
     });
 
@@ -101,6 +109,9 @@ export default function NotificationListener() {
   // 3. WATCH NEW CONTENT (Anime Uploads)
   // ==========================================
   useEffect(() => {
+    // ✅ BUG 5 FIX: Added auth guard so guests do not open persistent Firestore connections
+    if (!user) return;
+
     const q = query(
       collection(db, 'anime'),
       orderBy('createdAt', 'desc'),
@@ -123,7 +134,7 @@ export default function NotificationListener() {
     });
 
     return () => unsubContent();
-  }, []);
+  }, [user]); // ✅ BUG 5 FIX: Added 'user' to the dependency array
 
   return null; // Invisible Component
 }

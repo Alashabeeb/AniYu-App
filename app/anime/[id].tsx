@@ -66,6 +66,11 @@ export default function AnimeDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('Overview'); 
   
+  // ✅ BUG 21 FIX: Pagination State
+  const [lastEpDoc, setLastEpDoc] = useState<any>(null);
+  const [loadingMoreEps, setLoadingMoreEps] = useState(false);
+  const [hasMoreEps, setHasMoreEps] = useState(false);
+
   const [rank, setRank] = useState<number | string>('N/A');
 
   const [modalVisible, setModalVisible] = useState(false);
@@ -319,10 +324,14 @@ export default function AnimeDetailScreen() {
       setLoading(true);
       const [detailsData, episodesData] = await Promise.all([
         getAnimeDetails(id as string),
-        getAnimeEpisodes(id as string)
+        getAnimeEpisodes(id as string) // Initial fetch
       ]);
       setAnime(detailsData);
-      setEpisodes(episodesData);
+
+      // ✅ BUG 21 FIX: Handle paginated episode response
+      setEpisodes(episodesData.episodes);
+      setLastEpDoc(episodesData.lastDoc);
+      setHasMoreEps(episodesData.hasMore);
 
       // ✅ CONDITIONAL TRIGGER: ONLY Save to "Recently Viewed" if NO streaming rights
       const user = auth.currentUser;
@@ -351,13 +360,13 @@ export default function AnimeDetailScreen() {
       }
 
       const ids: string[] = [];
-      for (const ep of episodesData) {
+      for (const ep of episodesData.episodes) {
           const localUri = await getLocalEpisodeUri(ep.mal_id);
           if (localUri) ids.push(String(ep.mal_id));
       }
       setDownloadedEpIds(ids);
 
-      episodesData.forEach(ep => {
+      episodesData.episodes.forEach(ep => {
           const epId = String(ep.mal_id);
           if (isDownloading(epId)) {
               setDownloadProgress(prev => ({ ...prev, [epId]: 0.01 }));
@@ -374,6 +383,22 @@ export default function AnimeDetailScreen() {
 
     } catch (error) { console.error(error); } 
     finally { setLoading(false); }
+  };
+
+  // ✅ BUG 21 FIX: Fetch next batch of episodes
+  const loadMoreEpisodes = async () => {
+      if (loadingMoreEps || !hasMoreEps) return;
+      setLoadingMoreEps(true);
+      try {
+          const newEpsData = await getAnimeEpisodes(id as string, lastEpDoc);
+          setEpisodes(prev => [...prev, ...newEpsData.episodes]);
+          setLastEpDoc(newEpsData.lastDoc);
+          setHasMoreEps(newEpsData.hasMore);
+      } catch (error) {
+          console.error(error);
+      } finally {
+          setLoadingMoreEps(false);
+      }
   };
 
   const handleReaction = async (type: 'like' | 'dislike') => {
@@ -687,7 +712,7 @@ export default function AnimeDetailScreen() {
                     </View>
 
                     <View style={styles.sectionHeader}>
-                        <Text style={[styles.sectionTitle, { color: theme.text, marginLeft: 20, marginBottom: 10 }]}>Episodes ({episodes.length})</Text>
+                        <Text style={[styles.sectionTitle, { color: theme.text, marginLeft: 20, marginBottom: 10 }]}>Episodes ({anime.totalEpisodes || '?'})</Text>
                     </View>
                     <View style={styles.episodeList}>
                         {episodes.map((ep) => {
@@ -758,6 +783,21 @@ export default function AnimeDetailScreen() {
                                 </View>
                             );
                         })}
+
+                        {/* ✅ BUG 21 FIX: Added Pagination "Load More" Button */}
+                        {hasMoreEps && (
+                            <TouchableOpacity 
+                                style={[styles.loadMoreBtn, { borderColor: theme.border }]}
+                                onPress={loadMoreEpisodes}
+                                disabled={loadingMoreEps}
+                            >
+                                {loadingMoreEps ? (
+                                    <ActivityIndicator size="small" color={theme.tint} />
+                                ) : (
+                                    <Text style={{ color: theme.text, fontWeight: 'bold' }}>Load Next 50 Episodes</Text>
+                                )}
+                            </TouchableOpacity>
+                        )}
                     </View>
                 </>
             ) : (
@@ -936,6 +976,9 @@ const styles = StyleSheet.create({
   progressBarBg: { width: 40, height: 4, borderRadius: 2, overflow: 'hidden' },
   progressBarFill: { height: '100%' },
   
+  // ✅ BUG 21 FIX: Styles for the new Load More button
+  loadMoreBtn: { padding: 15, alignItems: 'center', justifyContent: 'center', borderRadius: 8, borderWidth: 1, marginTop: 10 },
+
   detailsContainer: { padding: 20 },
   sectionTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 10 },
   synopsis: { fontSize: 15, lineHeight: 24, marginBottom: 20 },

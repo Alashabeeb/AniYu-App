@@ -1,9 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router'; // ✅ Removed useFocusEffect
 import { doc, getDoc } from 'firebase/firestore';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -37,6 +37,9 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 
 const MANGA_SCREEN_CACHE_KEY = 'aniyu_manga_screen_cache_v1';
 
+// ✅ BUG 20 FIX: 6 Hour Time-To-Live for the Manga Screen Cache
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
 // 🔐 SECURITY: Max search length
 const MAX_SEARCH_CHARS = 15;
 
@@ -51,7 +54,6 @@ export default function ComicScreen() {
   const router = useRouter();
   const { theme } = useTheme();
   
-  // ✅ BUG FIX 1: Memory Leak Protection Ref
   const isMountedRef = useRef(true);
 
   const [activeTab, setActiveTab] = useState('Discover'); 
@@ -75,49 +77,73 @@ export default function ComicScreen() {
 
   useEffect(() => {
       isMountedRef.current = true;
-      const loadCache = async () => {
-          try {
-              const cachedData = await AsyncStorage.getItem(MANGA_SCREEN_CACHE_KEY);
-              if (cachedData && isMountedRef.current) {
-                  const { top, all, favs, recs } = JSON.parse(cachedData);
+      
+      // ✅ BUG 20 & 37 FIX: Coordinate the Cache TTL on Mount, NOT on focus
+      const initializeManga = async () => {
+          const isCacheValid = await loadFromCache();
+          // ONLY fire the expensive 100+ read query if the cache is stale or empty
+          if (!isCacheValid) {
+              loadData();
+          }
+      };
+      initializeManga();
+      
+      return () => { isMountedRef.current = false; };
+  }, []);
+
+  // ✅ BUG 20 FIX: Implemented Time-To-Live validation to prevent tab-switch reads
+  const loadFromCache = async (): Promise<boolean> => {
+      try {
+          const cachedData = await AsyncStorage.getItem(MANGA_SCREEN_CACHE_KEY);
+          if (cachedData) {
+              const { top, all, favs, recs, timestamp } = JSON.parse(cachedData);
+              
+              if (isMountedRef.current) {
                   if (top) setTopManga(top);
                   if (all) setAllManga(all);
                   if (favs) setLibrary(favs);
                   if (recs) setRecommendedManga(recs);
                   if (top && top.length > 0) setLoading(false);
               }
-          } catch (e) { console.log("Manga cache load failed", e); }
-      };
-      loadCache();
-      
-      return () => { isMountedRef.current = false; };
-  }, []);
 
-  useFocusEffect(
-    useCallback(() => {
-        loadData();
-    }, [])
-  );
+              // Also load downloads instantly from storage (cheap read)
+              await loadDownloads();
+
+              // Check if the cache is still fresh enough to skip Firestore reads
+              if (timestamp && (Date.now() - timestamp < CACHE_TTL_MS)) {
+                  return true; 
+              }
+          }
+          return false; 
+      } catch (e) {
+          console.log("Manga cache load failed", e);
+          return false;
+      }
+  };
+
+  const loadDownloads = async () => {
+      try {
+          const down = await getMangaDownloads(); 
+          const groups: Record<string, GroupedManga> = {};
+          down.forEach((item) => {
+              const id = item.mal_id;
+              if (!groups[id]) {
+                  groups[id] = { mal_id: id, title: item.animeTitle || item.title, image: item.image || '', chapters: [] };
+              }
+              groups[id].chapters.push(item);
+          });
+          Object.values(groups).forEach(g => { g.chapters.sort((a, b) => a.number - b.number); });
+          
+          if (isMountedRef.current) setGroupedDownloads(Object.values(groups));
+      } catch (e) { console.log("Error loading downloads", e); }
+  };
 
   const loadData = async (isRefresh = false) => {
-    try {
-        const down = await getMangaDownloads(); 
-        const groups: Record<string, GroupedManga> = {};
-        down.forEach((item) => {
-            const id = item.mal_id;
-            if (!groups[id]) {
-                groups[id] = { mal_id: id, title: item.animeTitle || item.title, image: item.image || '', chapters: [] };
-            }
-            groups[id].chapters.push(item);
-        });
-        Object.values(groups).forEach(g => { g.chapters.sort((a, b) => a.number - b.number); });
-        
-        if (isMountedRef.current) setGroupedDownloads(Object.values(groups));
-    } catch (e) { console.log("Error loading downloads", e); }
-
     if (topManga.length === 0 && !isRefresh && isMountedRef.current) setLoading(true); 
     
     try {
+        await loadDownloads();
+
         const top = await getTopManga();
         const all = await getAllManga();
         const favs = await getMangaFavorites();
@@ -144,14 +170,15 @@ export default function ComicScreen() {
         const sortedGenres = Object.entries(genreCounts).sort(([, a], [, b]) => b - a).map(([genre]) => genre).slice(0, 5);
         const recs = await getRecommendedManga(sortedGenres);
 
+        // ✅ BUG 20 FIX: Save timestamp with the cached data
         AsyncStorage.setItem(MANGA_SCREEN_CACHE_KEY, JSON.stringify({
             top: top,
             all: all,
             favs: favs,
-            recs: recs
+            recs: recs,
+            timestamp: Date.now()
         })).catch(e => console.log("Cache save failed", e));
         
-        // ✅ Safe state updates
         if (isMountedRef.current) {
             setTopManga(top);
             setAllManga(all);
@@ -176,11 +203,21 @@ export default function ComicScreen() {
       await toggleMangaFavorite(manga);
       const favs = await getMangaFavorites();
       if (isMountedRef.current) setLibrary(favs);
+      
+      // Keep timestamp intact when updating favs so we don't accidentally expire the cache early
+      const cachedStr = await AsyncStorage.getItem(MANGA_SCREEN_CACHE_KEY);
+      let currentTimestamp = Date.now();
+      if (cachedStr) {
+          const parsed = JSON.parse(cachedStr);
+          if (parsed.timestamp) currentTimestamp = parsed.timestamp;
+      }
+
       AsyncStorage.setItem(MANGA_SCREEN_CACHE_KEY, JSON.stringify({
           top: topManga,
           all: allManga,
           favs: favs,
-          recs: recommendedManga
+          recs: recommendedManga,
+          timestamp: currentTimestamp
       }));
   };
 
@@ -195,7 +232,7 @@ export default function ComicScreen() {
                   style: "destructive", 
                   onPress: async () => {
                       await removeMangaDownload(chapter.episodeId);
-                      await loadData(); 
+                      await loadDownloads(); 
                   }
               }
           ]
@@ -204,9 +241,7 @@ export default function ComicScreen() {
 
   const handleSearch = async () => {
       if (!searchQuery.trim()) return;
-      // 🔐 SECURITY: Validate search length
       if (searchQuery.trim().length > MAX_SEARCH_CHARS) return;
-      // 🔐 SECURITY: Strip special characters that break API queries
       const sanitizedQuery = searchQuery.trim().replace(/[^\w\s]/gi, '');
       if (!sanitizedQuery) return;
 
@@ -293,7 +328,6 @@ export default function ComicScreen() {
           ) : (
              <FlatList
                 data={groupedDownloads}
-                // ✅ BUG FIX 2: Added index to keys
                 keyExtractor={(item, index) => `${item.mal_id}-${index}`}
                 renderItem={({ item }) => {
                     const isExpanded = expandedId === item.mal_id;
@@ -391,7 +425,6 @@ export default function ComicScreen() {
                   ) : (
                       <FlatList
                           data={searchResults}
-                          // ✅ BUG FIX 2: Added index to keys
                           keyExtractor={(item, index) => `${item.mal_id}-${index}`}
                           numColumns={3}
                           renderItem={renderGridItem}

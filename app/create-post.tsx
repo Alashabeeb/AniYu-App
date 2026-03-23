@@ -1,15 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage'; // ✅ Added AsyncStorage
 import { ResizeMode, Video } from 'expo-av';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { Stack, useRouter } from 'expo-router';
-// ✅ REMOVED FIREBASE STORAGE IMPORTS
-// import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import {
     doc,
     getDoc
 } from 'firebase/firestore';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Image,
@@ -18,21 +17,18 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import CustomAlert from '../components/CustomAlert';
-import { auth, db } from '../config/firebaseConfig'; // Removed storage import from here too
+import { auth, db } from '../config/firebaseConfig';
 import { useTheme } from '../context/ThemeContext';
-import { getFriendlyErrorMessage } from '../utils/errorHandler';
-// ✅ IMPORT R2 SERVICE
 import { uploadToR2 } from '../services/r2Storage';
+import { getFriendlyErrorMessage } from '../utils/errorHandler';
 
-// 🔐 SECURITY: Post creation now goes through rate-limited Cloud Function
 const CREATE_POST_URL = "https://us-central1-aniyu-b841b.cloudfunctions.net/createPost";
 
 const GENRES = ["Action", "Adventure", "Romance", "Fantasy", "Drama", "Comedy", "Sci-Fi", "Slice of Life", "Sports", "Mystery"];
 
-// ✅ UPDATED: SIZE LIMITS (in Bytes)
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5 MB
 const MAX_VIDEO_SIZE = 20 * 1024 * 1024; // 20 MB
-const MAX_CHARS = 120; // Text character limit
+const MAX_CHARS = 120; 
 
 export default function CreatePostScreen() {
   const router = useRouter();
@@ -44,6 +40,13 @@ export default function CreatePostScreen() {
   const [media, setMedia] = useState<any>(null);
   const [avatar, setAvatar] = useState(user?.photoURL || 'https://api.dicebear.com/7.x/avataaars/svg?seed=Anime');
   
+  // ✅ BUG 14 FIX: State to hold cached user profile
+  const [currentUserData, setCurrentUserData] = useState<any>(null);
+
+  // ✅ BUG 39 FIX: States & Refs for Upload Cancellation
+  const [showCancel, setShowCancel] = useState(false);
+  const cancelUploadRef = useRef<(() => void) | null>(null);
+
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
 
   const [alertConfig, setAlertConfig] = useState({
@@ -57,25 +60,40 @@ export default function CreatePostScreen() {
     setAlertConfig({ visible: true, type, title, message });
   };
 
+  // ✅ BUG 14 FIX: Load user data once on mount and cache it
   useEffect(() => {
      if(user) {
-         getDoc(doc(db, "users", user.uid)).then(doc => {
-             if(doc.exists()) setAvatar(doc.data().avatar);
+         // 1. Try to load from local cache instantly
+         AsyncStorage.getItem(`user_profile_${user.uid}`).then(cached => {
+             if (cached) {
+                 const parsed = JSON.parse(cached);
+                 setCurrentUserData(parsed);
+                 if (parsed.avatar) setAvatar(parsed.avatar);
+             }
+         });
+
+         // 2. Fetch fresh from Firestore and update cache
+         getDoc(doc(db, "users", user.uid)).then(docSnap => {
+             if(docSnap.exists()) {
+                 const data = docSnap.data();
+                 setCurrentUserData(data);
+                 if (data.avatar) setAvatar(data.avatar);
+                 AsyncStorage.setItem(`user_profile_${user.uid}`, JSON.stringify(data));
+             }
          });
      }
-  }, []);
+  }, [user]);
 
   const pickMedia = async () => {
     let result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.All, 
       allowsEditing: true,
-      quality: 0.8, // Initial quality setting
+      quality: 0.8,
     });
 
     if (!result.canceled) {
       const asset = result.assets[0];
       
-      // ✅ CRITICAL: Pre-check file size before anything else
       if (asset.fileSize) {
           const isVideo = asset.type === 'video';
           const limit = isVideo ? MAX_VIDEO_SIZE : MAX_IMAGE_SIZE;
@@ -83,7 +101,7 @@ export default function CreatePostScreen() {
 
           if (asset.fileSize > limit) {
               showAlert('error', 'File Too Large', `Please select a ${isVideo ? 'video' : 'image'} under ${limitLabel}.`);
-              return; // Stop here, do not set media
+              return; 
           }
       }
       
@@ -94,7 +112,6 @@ export default function CreatePostScreen() {
   const processMedia = async (uri: string, type: 'image' | 'video') => {
     if (type === 'video') return uri; 
     
-    // Compressor runs only if size passed the initial check in pickMedia
     console.log("Compressing image...");
     const manipulated = await ImageManipulator.manipulateAsync(
       uri,
@@ -104,17 +121,11 @@ export default function CreatePostScreen() {
     return manipulated.uri;
   };
 
-  // ✅ UPDATED: Uploads to R2 instead of Firebase Storage
   const uploadMediaToStorage = async (uri: string, type: 'image' | 'video') => {
     if (!user) throw new Error("No user");
-    
-    // 1. Process/Compress (if image)
     const processedUri = await processMedia(uri, type);
-
-    // 2. Upload to Cloudflare R2
     const folder = `user_posts/${user.uid}`;
     const publicUrl = await uploadToR2(processedUri, folder);
-    
     return publicUrl;
   };
 
@@ -131,42 +142,69 @@ export default function CreatePostScreen() {
   };
 
   const handlePost = async () => {
-    // ✅ NEW: Strict validation requiring at least 1 tag
     if (selectedTags.length === 0) {
         return showAlert('warning', 'Topic Required', 'Please select at least one topic for your post.');
     }
 
     if (!text.trim() && !media) return;
 
-    // 🔐 SECURITY FIX: Hard length guard before Cloud Function call
     if (text.length > MAX_CHARS) {
         return showAlert('warning', 'Too Long', `Post text cannot exceed ${MAX_CHARS} characters.`);
     }
 
     setLoading(true);
+    setShowCancel(false);
+
     try {
       if (!user) throw new Error("Not logged in");
 
-      const userDocRef = doc(db, "users", user.uid);
-      const userSnap = await getDoc(userDocRef);
-      const userData = userSnap.exists() ? userSnap.data() : {};
-      
+      // ✅ BUG 14 FIX: Use locally cached data instead of making a Firestore query
+      const userData = currentUserData || {};
       const realUsername = userData.username || "anonymous";
       const realDisplayName = userData.displayName || user.displayName || "Anonymous";
       const realAvatar = userData.avatar || user.photoURL;
-      
-      // ✅ SURGICAL FIX: Fetch the user's role to attach to the post
       const realRole = userData.role || 'user'; 
 
       let mediaUrl = null;
       let mediaType = null;
+      
       if (media) {
           mediaType = media.type;
-          // This now calls the R2 version
-          mediaUrl = await uploadMediaToStorage(media.uri, mediaType);
+          
+          // ✅ BUG 39 FIX: 5-second timer to reveal the Cancel button
+          const cancelTimer = setTimeout(() => setShowCancel(true), 5000);
+
+          try {
+              // ✅ BUG 39 FIX: 60-second Timeout & Cancel Promise Race
+              const uploadPromise = uploadMediaToStorage(media.uri, mediaType);
+              
+              const timeoutPromise = new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error("UPLOAD_TIMEOUT")), 60000) // 60 seconds max
+              );
+              
+              const cancelPromise = new Promise<never>((_, reject) => {
+                  cancelUploadRef.current = () => reject(new Error("UPLOAD_CANCELLED"));
+              });
+
+              mediaUrl = await Promise.race([uploadPromise, timeoutPromise, cancelPromise]);
+              
+              clearTimeout(cancelTimer);
+              setShowCancel(false);
+          } catch (err: any) {
+              clearTimeout(cancelTimer);
+              setShowCancel(false);
+              setLoading(false);
+              
+              if (err.message === "UPLOAD_TIMEOUT") {
+                  return showAlert('error', 'Network Timeout', 'Upload took too long. Please check your connection and try again.');
+              }
+              if (err.message === "UPLOAD_CANCELLED") {
+                  return showAlert('info', 'Cancelled', 'Media upload was cancelled.');
+              }
+              throw err; // Rethrow to main catch block if it's a real R2 error
+          }
       }
 
-      // 🔐 SECURITY: Route post creation through rate-limited Cloud Function
       const idToken = await user.getIdToken();
       const response = await fetch(CREATE_POST_URL, {
           method: 'POST',
@@ -182,7 +220,7 @@ export default function CreatePostScreen() {
               displayName: realDisplayName,
               username: realUsername,
               userAvatar: realAvatar,
-              role: realRole // ✅ SURGICAL FIX: Saves the role in the post so the badge renders!
+              role: realRole 
           })
       });
 
@@ -200,7 +238,7 @@ export default function CreatePostScreen() {
       router.back(); 
     } catch (error: any) {
       console.error(error);
-      if (error.message.includes("permission-denied")) {
+      if (error.message?.includes("permission-denied")) {
         showAlert('error', '⛔ Blocked', 'You are posting too fast (30s cooldown) or you are banned.');
       } else {
         const friendlyMessage = getFriendlyErrorMessage(error);
@@ -208,10 +246,10 @@ export default function CreatePostScreen() {
       }
     } finally {
       setLoading(false);
+      setShowCancel(false);
     }
   };
 
-  // ✅ NEW: Post button is disabled if no tags are selected
   const isPostDisabled = (!text.trim() && !media) || selectedTags.length === 0 || loading || text.length > MAX_CHARS;
 
   return (
@@ -228,20 +266,37 @@ export default function CreatePostScreen() {
                 </TouchableOpacity>
             ),
             headerRight: () => (
-                <TouchableOpacity 
-                  onPress={handlePost} 
-                  disabled={isPostDisabled}
-                  style={{ 
-                    backgroundColor: isPostDisabled ? theme.card : theme.tint,
-                    paddingHorizontal: 15,
-                    paddingVertical: 6,
-                    borderRadius: 20
-                  }}
-                >
-                  {loading ? <ActivityIndicator color="white" size="small" /> : (
-                     <Text style={{ color: isPostDisabled ? theme.subText : 'white', fontWeight: 'bold', fontSize: 14 }}>Post</Text>
-                  )}
-                </TouchableOpacity>
+                // ✅ BUG 39 FIX: Transform Post button into a red Cancel button if upload is hanging
+                showCancel && loading ? (
+                    <TouchableOpacity
+                        onPress={() => {
+                            if (cancelUploadRef.current) cancelUploadRef.current();
+                        }}
+                        style={{
+                            backgroundColor: '#ef4444',
+                            paddingHorizontal: 15,
+                            paddingVertical: 6,
+                            borderRadius: 20
+                        }}
+                    >
+                        <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 14 }}>Cancel Upload</Text>
+                    </TouchableOpacity>
+                ) : (
+                    <TouchableOpacity 
+                      onPress={handlePost} 
+                      disabled={isPostDisabled}
+                      style={{ 
+                        backgroundColor: isPostDisabled ? theme.card : theme.tint,
+                        paddingHorizontal: 15,
+                        paddingVertical: 6,
+                        borderRadius: 20
+                      }}
+                    >
+                      {loading ? <ActivityIndicator color="white" size="small" /> : (
+                         <Text style={{ color: isPostDisabled ? theme.subText : 'white', fontWeight: 'bold', fontSize: 14 }}>Post</Text>
+                      )}
+                    </TouchableOpacity>
+                )
             )
         }}
       />
@@ -262,7 +317,6 @@ export default function CreatePostScreen() {
                     onChangeText={setText}
                 />
                 
-                {/* Character Counter */}
                 <Text style={{ textAlign: 'right', color: text.length === MAX_CHARS ? '#ef4444' : theme.subText, fontSize: 12, marginRight: 15, marginTop: -5, marginBottom: 10 }}>
                     {text.length}/{MAX_CHARS}
                 </Text>
@@ -292,7 +346,6 @@ export default function CreatePostScreen() {
                 <Ionicons name="image-outline" size={20} color={theme.tint} />
             </TouchableOpacity>
             
-            {/* Camera button could also use pickMedia logic if implemented later */}
             <TouchableOpacity style={styles.toolIcon}>
                 <Ionicons name="camera-outline" size={20} color={theme.tint} />
             </TouchableOpacity>

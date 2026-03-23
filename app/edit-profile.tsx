@@ -2,8 +2,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { Stack, useRouter } from 'expo-router';
-// ✅ ADDED: collection, getDocs, query, where
-import { collection, doc, getDoc, getDocs, query, updateDoc, where } from 'firebase/firestore';
+// ✅ BUG 24 FIX: Added runTransaction for atomic username claims
+import { doc, getDoc, runTransaction } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -19,7 +19,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-// ✅ IMPORT ADMOB
 import { useRewardedAd } from 'react-native-google-mobile-ads';
 import { AdUnitIds } from '../constants/AdIds';
 
@@ -28,10 +27,8 @@ import { auth, db } from '../config/firebaseConfig';
 import { useTheme } from '../context/ThemeContext';
 import { uploadToR2 } from '../services/r2Storage';
 
-// 🔐 SECURITY: Validators
 const USERNAME_REGEX = /^[a-zA-Z0-9_]+$/;
 
-// ✅ Genres for the user to select their interests
 const GENRES = [
     "Action", "Adventure", "Romance", "Fantasy", "Drama", "Comedy", 
     "Sci-Fi", "Slice of Life", "Sports", "Mystery", "Isekai", "Horror", 
@@ -51,7 +48,6 @@ export default function EditProfileScreen() {
   const [avatar, setAvatar] = useState('');
   const [banner, setBanner] = useState('');
 
-  // ✅ State to hold user interests
   const [interests, setInterests] = useState<string[]>([]);
 
   const [alertConfig, setAlertConfig] = useState({
@@ -65,27 +61,23 @@ export default function EditProfileScreen() {
     setAlertConfig({ visible: true, type, title, message });
   };
 
-  // ✅ ADMOB: Initialize the Rewarded Ad Hook
   const { isLoaded, isClosed, isEarnedReward, load, show } = useRewardedAd(AdUnitIds.rewarded, {
       requestNonPersonalizedAdsOnly: true,
   });
 
-  // ✅ ADMOB: Pre-load the ad securely when the screen opens
   useEffect(() => {
       load();
   }, [load]);
 
-  // ✅ ADMOB: Listen for when the ad finishes to execute the save
   useEffect(() => {
       if (isClosed) {
           if (isEarnedReward) {
-              performSave(); // The user watched the ad, now actually save it!
+              performSave(); 
           } else {
-              // User skipped the ad
               setLoading(false);
               showAlert('warning', 'Save Canceled', 'You must watch the full ad to save your profile changes.');
           }
-          load(); // Load the next ad just in case they want to try again
+          load(); 
       }
   }, [isClosed, isEarnedReward, load]);
 
@@ -154,16 +146,13 @@ export default function EditProfileScreen() {
       }
   };
 
-  // ✅ ADMOB: The Interceptor Function. This triggers when they click "Save"
   const handleSaveClick = async () => {
       if (!username.trim() || !displayName.trim()) {
           return showAlert('warning', 'Missing Info', 'Username and Display Name are required.');
       }
-      // 🔐 SECURITY: Validate display name length
       if (displayName.trim().length > 15) {
           return showAlert('warning', 'Display Name Too Long', 'Display name cannot exceed 15 characters.');
       }
-      // 🔐 SECURITY: Validate username format and length
       if (username.trim().length < 3) {
           return showAlert('warning', 'Username Too Short', 'Username must be at least 3 characters.');
       }
@@ -173,7 +162,6 @@ export default function EditProfileScreen() {
       if (!USERNAME_REGEX.test(username.trim())) {
           return showAlert('warning', 'Invalid Username', 'Username can only contain letters, numbers, and underscores. No spaces.');
       }
-      // 🔐 SECURITY: Validate bio length
       if (bio.trim().length > 150) {
           return showAlert('warning', 'Bio Too Long', 'Bio cannot exceed 150 characters.');
       }
@@ -187,57 +175,71 @@ export default function EditProfileScreen() {
                   { 
                       text: "Watch Ad", 
                       onPress: () => {
-                          setLoading(true); // Show loading spinner while ad is playing
-                          show(); // Trigger the Ad
+                          setLoading(true); 
+                          show(); 
                       }
                   }
               ]
           );
       } else {
-          // Fallback: If ad failed to load, just save it normally so they don't get frustrated
           setLoading(true);
           performSave();
       }
   };
 
-  // ✅ UPDATED: Renamed to performSave. This holds your exact original save logic.
   const performSave = async () => {
     const user = auth.currentUser;
     if (!user) return;
 
     try {
         const lowerCaseUsername = username.trim().toLowerCase();
-
-        // 1. Get current data to check if username actually changed
         const userDocRef = doc(db, "users", user.uid);
-        const userDocSnap = await getDoc(userDocRef);
-        const currentData = userDocSnap.data();
 
-        // 2. Only check uniqueness if the username is DIFFERENT from what they already have
-        if (currentData && currentData.username !== lowerCaseUsername) {
-            const usersRef = collection(db, "users");
-            const q = query(usersRef, where("username", "==", lowerCaseUsername));
-            const querySnapshot = await getDocs(q);
+        // ✅ BUG 24 FIX: Implemented Atomic Transaction to strictly prevent duplicate usernames
+        await runTransaction(db, async (transaction) => {
+            const userDocSnap = await transaction.get(userDocRef);
+            const currentData = userDocSnap.exists() ? userDocSnap.data() : null;
+            const oldUsername = currentData?.username;
 
-            if (!querySnapshot.empty) {
-                setLoading(false);
-                return showAlert('error', 'Username Taken', 'This username is already taken by another user.');
+            if (oldUsername !== lowerCaseUsername) {
+                // User is claiming a new username. Lock it in the dedicated 'usernames' collection.
+                const newUsernameRef = doc(db, "usernames", lowerCaseUsername);
+                const newUsernameSnap = await transaction.get(newUsernameRef);
+
+                // If someone else already owns this document, abort the transaction!
+                if (newUsernameSnap.exists() && newUsernameSnap.data()?.uid !== user.uid) {
+                    throw new Error("USERNAME_TAKEN");
+                }
+
+                // Claim the new username securely
+                transaction.set(newUsernameRef, { uid: user.uid, claimedAt: new Date().toISOString() });
+
+                // Free up their old username so someone else can claim it
+                if (oldUsername) {
+                    const oldUsernameRef = doc(db, "usernames", oldUsername);
+                    transaction.delete(oldUsernameRef);
+                }
             }
-        }
 
-        // 3. Update Profile 
-        await updateDoc(userDocRef, {
-            displayName: displayName.trim(),
-            username: lowerCaseUsername, 
-            bio: bio.trim(),
-            avatar,
-            banner,
-            interests 
+            // Update the actual user profile document
+            transaction.update(userDocRef, {
+                displayName: displayName.trim(),
+                username: lowerCaseUsername, 
+                bio: bio.trim(),
+                avatar,
+                banner,
+                interests 
+            });
         });
+
         showAlert('success', 'Profile Updated', 'Your changes have been saved successfully.');
-    } catch (error) {
+    } catch (error: any) {
         console.error(error);
-        showAlert('error', 'Update Failed', 'Could not update profile. Please check your connection.');
+        if (error.message === "USERNAME_TAKEN") {
+            showAlert('error', 'Username Taken', 'This username is already taken by another user. Please choose a different one.');
+        } else {
+            showAlert('error', 'Update Failed', 'Could not update profile. Please check your connection.');
+        }
     } finally {
         setLoading(false);
     }
@@ -255,7 +257,6 @@ export default function EditProfileScreen() {
                         <Ionicons name="close" size={28} color={theme.text} />
                     </TouchableOpacity>
                     <Text style={[styles.title, { color: theme.text }]}>Edit Profile</Text>
-                    {/* ✅ UPDATED: Now triggers handleSaveClick which fires the ad */}
                     <TouchableOpacity onPress={handleSaveClick} disabled={loading || uploading}>
                         {loading ? <ActivityIndicator color={theme.tint} /> : (
                             <Text style={[styles.saveBtn, { color: theme.tint }]}>Save</Text>

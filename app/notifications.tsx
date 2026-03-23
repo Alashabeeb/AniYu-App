@@ -1,9 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { Stack, useRouter } from 'expo-router';
-import { collection, doc, limit, onSnapshot, orderBy, query, updateDoc } from 'firebase/firestore';
+// ✅ BUG FIX: Imported writeBatch
+import { collection, doc, limit, onSnapshot, orderBy, query, updateDoc, writeBatch } from 'firebase/firestore';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
+  ActivityIndicator // ✅ Added for the loading spinner
+  ,
   FlatList,
   RefreshControl,
   StyleSheet,
@@ -25,6 +28,9 @@ export default function NotificationsScreen() {
   const [socialNotifs, setSocialNotifs] = useState<any[]>([]);
   const [globalNotifs, setGlobalNotifs] = useState<any[]>([]); 
   const [refreshing, setRefreshing] = useState(false);
+  
+  // ✅ BUG 36 FIX: Lock state to prevent double-tap redundant writes
+  const [isMarkingRead, setIsMarkingRead] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -82,14 +88,35 @@ export default function NotificationsScreen() {
       setRefreshing(false);
   };
 
+  // ✅ BUG 13 & 36 FIX: Atomic Batch Write with UI Lock
   const handleMarkRead = async () => {
-      socialNotifs.forEach(async (item) => {
-        if (!item.read && !item.isGlobal) {
-           await updateDoc(doc(db, 'users', currentUser!.uid, 'notifications', item.id), { read: true });
-        }
-      });
-      await markAllAsRead();
-      loadLocalData();
+      if (!currentUser || isMarkingRead) return;
+      setIsMarkingRead(true);
+
+      try {
+          // Filter to ONLY the items that actually need updating
+          const unreadSocial = socialNotifs.filter(item => !item.read && !item.isGlobal);
+          
+          if (unreadSocial.length > 0) {
+              const batch = writeBatch(db);
+              unreadSocial.forEach((item) => {
+                  const notifRef = doc(db, 'users', currentUser.uid, 'notifications', item.id);
+                  batch.update(notifRef, { read: true });
+              });
+              
+              // Commit all updates simultaneously
+              await batch.commit();
+          }
+
+          // Mark local async storage notifications
+          await markAllAsRead();
+          await loadLocalData();
+
+      } catch (error) {
+          console.error("Error marking notifications as read:", error);
+      } finally {
+          setIsMarkingRead(false);
+      }
   };
 
   // Merge all 3 arrays and sort them strictly by Date (Newest first)
@@ -163,8 +190,12 @@ export default function NotificationsScreen() {
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: theme.text }]}>Notifications</Text>
         
-        <TouchableOpacity onPress={handleMarkRead} style={{ marginLeft: 'auto', padding: 5 }}>
-            <Ionicons name="checkmark-done-outline" size={26} color={theme.tint} />
+        <TouchableOpacity onPress={handleMarkRead} style={{ marginLeft: 'auto', padding: 5 }} disabled={isMarkingRead}>
+            {isMarkingRead ? (
+                <ActivityIndicator size="small" color={theme.tint} />
+            ) : (
+                <Ionicons name="checkmark-done-outline" size={26} color={theme.tint} />
+            )}
         </TouchableOpacity>
       </View>
 

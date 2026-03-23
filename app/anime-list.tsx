@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { collection, getDocs, limit, query, where } from 'firebase/firestore'; // ✅ Added limit
+import { collection, getDocs, limit, query, where } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -45,7 +45,6 @@ export default function AnimeListScreen() {
             const user = auth.currentUser;
             if (!user) return;
             
-            // ✅ FIX: Added limit(50) to prevent loading 1,000+ completed shows at once
             const q = query(
                 collection(db, 'users', user.uid, 'anime_progress'),
                 where('isCompleted', '==', true),
@@ -53,17 +52,38 @@ export default function AnimeListScreen() {
             );
             const snapshot = await getDocs(q);
             
-            const promises = snapshot.docs.map(async (doc) => {
-                 try {
-                     const details = await getAnimeDetails(doc.id);
-                     return { ...details, mal_id: doc.id };
-                 } catch (err) {
-                     return { mal_id: doc.id, title: `Anime #${doc.id}` }; 
-                 }
-            });
+            // ✅ BUG 3 FIX: Controlled Concurrency Chunking (Solves N+1 API hammering)
+            const docIds = snapshot.docs.map(doc => doc.id);
+            const results = [];
+            const chunkSize = 5; // Fetch 5 at a time to respect rate limits
+
+            for (let i = 0; i < docIds.length; i += chunkSize) {
+                const chunk = docIds.slice(i, i + chunkSize);
+                
+                const chunkPromises = chunk.map(async (id) => {
+                    try {
+                        const details = await getAnimeDetails(id);
+                        // ✅ BUG 23 FIX: Guard against null/deleted data
+                        if (!details || Object.keys(details).length === 0) return null; 
+                        return { ...details, mal_id: id };
+                    } catch (err) {
+                        return null; // Return null on error, not a broken object
+                    }
+                });
+
+                const chunkResults = await Promise.all(chunkPromises);
+                results.push(...chunkResults);
+                
+                // Small delay between chunks to prevent API rate limit rejection
+                if (i + chunkSize < docIds.length) {
+                    await new Promise(resolve => setTimeout(resolve, 300));
+                }
+            }
             
-            const results = await Promise.all(promises);
-            setList(results);
+            // ✅ BUG 23 FIX: Filter out any null/ghost cards before setting state
+            const cleanResults = results.filter(Boolean);
+            setList(cleanResults);
+
         } else if (type === 'recommended') {
             const history = await getContinueWatching();
             const genreCounts: Record<string, number> = {};
@@ -72,15 +92,12 @@ export default function AnimeListScreen() {
             });
             const topGenres = Object.entries(genreCounts).sort(([,a], [,b]) => b - a).map(([g]) => g).slice(0, 3);
             
-            // This function is already safe (uses our optimized service)
             const recs = await getRecommendedAnime(topGenres);
             setList(recs);
         } else if (type === 'upcoming') {
-            // This function is already safe (uses our optimized service)
             const upcoming = await getUpcomingAnime();
             setList(upcoming);
         } else {
-            // This function is already safe (uses our optimized service)
             const trending = await getTopAnime();
             const rankedTrending = trending.map((item, index) => ({
                 ...item,

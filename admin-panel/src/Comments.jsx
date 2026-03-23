@@ -56,15 +56,19 @@ export default function Comments() {
         else setLoadingMore(true);
 
         try {
+            // ✅ BUG 34 FIX: Pushed the parentId filter to the server.
             let q = query(
                 collection(db, "posts"), 
+                where("parentId", "==", null), // Only fetch main posts
                 orderBy("createdAt", "desc"), 
                 limit(20) 
             );
 
             if (!isFirstLoad && lastVisible) {
+                // ✅ BUG 34 FIX: Applied to pagination query as well.
                 q = query(
                     collection(db, "posts"), 
+                    where("parentId", "==", null),
                     orderBy("createdAt", "desc"), 
                     startAfter(lastVisible),
                     limit(20)
@@ -72,9 +76,9 @@ export default function Comments() {
             }
 
             const snap = await getDocs(q);
-            const allItems = snap.docs.map(d => ({ id: d.id, ...d.data() }));
             
-            const mainPosts = allItems.filter(item => !item.parentId);
+            // We no longer need to filter client-side!
+            const mainPosts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
             if (snap.docs.length > 0) setLastVisible(snap.docs[snap.docs.length - 1]);
             if (snap.docs.length < 20) setHasMore(false);

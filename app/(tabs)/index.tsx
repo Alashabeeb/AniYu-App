@@ -29,7 +29,8 @@ import { useTheme } from '../../context/ThemeContext';
 import HeroCarousel from '../../components/HeroCarousel';
 import TrendingRail from '../../components/TrendingRail';
 
-import { auth, db } from '../../config/firebaseConfig';
+import { db } from '../../config/firebaseConfig';
+import { useAuth } from '../../context/AuthContext'; // ✅ BUG 1 & 3 FIX: Import useAuth to make currentUser reactive
 import { getRecommendedAnime, getTopAnime, getUpcomingAnime, searchAnime } from '../../services/animeService';
 import { getFavorites, toggleFavorite } from '../../services/favoritesService';
 import { getContinueWatching } from '../../services/historyService';
@@ -37,13 +38,18 @@ import { getUnreadLocalCount } from '../../services/notificationService';
 
 const HOME_DATA_CACHE_KEY = 'aniyu_home_screen_cache_v1';
 
+// ✅ BUG 2 FIX: 6 Hour Time-To-Live for the Home Screen Cache
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000; 
+
 // 🔐 SECURITY: Max search length
 const MAX_SEARCH_CHARS = 15;
 
 export default function HomeScreen() {
   const router = useRouter();
   const { theme, isDark } = useTheme();
-  const currentUser = auth.currentUser;
+  
+  // ✅ BUG 1 & 3 FIX: Use reactive state so the notification listener updates if auth changes
+  const { user: currentUser } = useAuth();
 
   const isMountedRef = useRef(true);
 
@@ -68,8 +74,16 @@ export default function HomeScreen() {
 
   useEffect(() => { 
       isMountedRef.current = true;
-      loadFromCache(); 
-      loadInitialData(); 
+      
+      // ✅ BUG 2 FIX: Coordinate the Cache TTL
+      const initializeHome = async () => {
+          const isCacheValid = await loadFromCache();
+          // ONLY fire the expensive 200+ read query if the cache is stale or empty
+          if (!isCacheValid) {
+              loadInitialData();
+          }
+      };
+      initializeHome();
       
       return () => { isMountedRef.current = false; }; 
   }, []);
@@ -82,6 +96,7 @@ export default function HomeScreen() {
     }, [])
   );
 
+  // ✅ BUG 1 & 3 FIX: This will now cleanly recreate the listener if the user changes accounts or token refreshes
   useEffect(() => {
       if (!currentUser?.uid) return;
       
@@ -129,19 +144,29 @@ export default function HomeScreen() {
       }
   };
 
-  const loadFromCache = async () => {
+  // ✅ BUG 2 FIX: Implemented Time-To-Live validation
+  const loadFromCache = async (): Promise<boolean> => {
       try {
           const cachedData = await AsyncStorage.getItem(HOME_DATA_CACHE_KEY);
-          if (cachedData && isMountedRef.current) {
-              const { trending, upcoming, recommended } = JSON.parse(cachedData);
-              if (trending) setTrending(trending);
-              if (upcoming) setUpcoming(upcoming);
-              if (recommended) setRecommended(recommended);
+          if (cachedData) {
+              const { trending, upcoming, recommended, timestamp } = JSON.parse(cachedData);
               
-              if (trending && trending.length > 0) setLoading(false); 
+              if (isMountedRef.current) {
+                  if (trending) setTrending(trending);
+                  if (upcoming) setUpcoming(upcoming);
+                  if (recommended) setRecommended(recommended);
+                  if (trending && trending.length > 0) setLoading(false); 
+              }
+
+              // Check if the cache is still fresh enough to skip Firestore reads
+              if (timestamp && (Date.now() - timestamp < CACHE_TTL_MS)) {
+                  return true; // Cache is valid, skip network fetch
+              }
           }
+          return false; // Cache is stale or missing, proceed to network fetch
       } catch (e) {
           console.log("Failed to load cache", e);
+          return false;
       }
   };
 
@@ -196,10 +221,12 @@ export default function HomeScreen() {
           setRecommended(recommendedData);
       }
 
+      // ✅ BUG 2 FIX: Save the current timestamp alongside the data
       await AsyncStorage.setItem(HOME_DATA_CACHE_KEY, JSON.stringify({
           trending: trendingData,
           upcoming: upcomingData,
-          recommended: recommendedData
+          recommended: recommendedData,
+          timestamp: Date.now()
       }));
 
       await loadFavorites(); 
@@ -213,7 +240,7 @@ export default function HomeScreen() {
   const onRefresh = useCallback(async () => {
     if (!isMountedRef.current) return;
     setRefreshing(true);
-    await loadInitialData(true);
+    await loadInitialData(true); // Force bypass cache on manual refresh
     if (isMountedRef.current) setRefreshing(false);
   }, []);
 

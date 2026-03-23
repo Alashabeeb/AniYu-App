@@ -53,7 +53,6 @@ export default function FeedScreen() {
   const [posts, setPosts] = useState<any[]>([]);
   const [userInterests, setUserInterests] = useState<string[]>([]);
   const [blockedUsers, setBlockedUsers] = useState<string[]>([]);
-  const [interestsLoaded, setInterestsLoaded] = useState(false);
 
   const [refreshing, setRefreshing] = useState(false);
   
@@ -61,6 +60,16 @@ export default function FeedScreen() {
   const [interestLastVisible, setInterestLastVisible] = useState<DocumentSnapshot | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+
+  // ✅ BUG 1 FIX: Separate exhaustion flags for the two independent streams
+  const hasMoreGlobalRef = useRef(true);
+  const hasMoreInterestsRef = useRef(true);
+
+  // ✅ BUG 4 FIX: Synchronous lock to prevent concurrent fetch race conditions
+  const isFetchingRef = useRef(false);
+
+  // ✅ BUG 2 & 5 FIX: Track previous interests to force refresh when profile updates
+  const previousInterestsRef = useRef<string>("");
 
   const [showSearch, setShowSearch] = useState(false);
   const [searchText, setSearchText] = useState('');
@@ -96,20 +105,29 @@ export default function FeedScreen() {
               if (cachedPrefs && isMountedRef.current) {
                   const data = JSON.parse(cachedPrefs);
                   setBlockedUsers(data.blockedUsers || []);
-                  setUserInterests(data.interests || []);
-                  setInterestsLoaded(true);
+                  const ints = data.interests || [];
+                  setUserInterests(ints);
+                  previousInterestsRef.current = JSON.stringify(ints);
+                  fetchFeedChunk(true); // Initial Load from Cache Prefs
               }
 
               const userSnap = await getDoc(doc(db, 'users', currentUser.uid));
               if (userSnap.exists() && isMountedRef.current) {
                   const data = userSnap.data();
                   setBlockedUsers(data?.blockedUsers || []);
-                  setUserInterests(data?.interests || data?.favoriteGenres || []);
-                  setInterestsLoaded(true);
+                  const freshInterests = data?.interests || data?.favoriteGenres || [];
+                  setUserInterests(freshInterests);
+                  
+                  // ✅ BUG 2 & 5 FIX: If Firestore interests differ from Cache, force a silent background re-fetch!
+                  const freshString = JSON.stringify(freshInterests);
+                  if (freshString !== previousInterestsRef.current) {
+                      previousInterestsRef.current = freshString;
+                      fetchFeedChunk(true); 
+                  }
                   
                   await AsyncStorage.setItem(cacheKey, JSON.stringify({
                       blockedUsers: data?.blockedUsers || [],
-                      interests: data?.interests || data?.favoriteGenres || []
+                      interests: freshInterests
                   }));
               }
           } catch (error) {
@@ -175,11 +193,16 @@ export default function FeedScreen() {
   const fetchFeedChunk = async (isRefresh = false) => {
       if (!isMountedRef.current) return;
       if (!hasMore && !isRefresh) return;
-      if (loadingMore || refreshing) return;
+      
+      // ✅ BUG 4 FIX: Use synchronous ref to prevent concurrent fetches
+      if (isFetchingRef.current || refreshing) return;
+      isFetchingRef.current = true;
 
       if (isRefresh) {
           setRefreshing(true);
           setHasMore(true);
+          hasMoreGlobalRef.current = true;
+          hasMoreInterestsRef.current = true;
           setGlobalLastVisible(null);
           setInterestLastVisible(null);
       } else {
@@ -190,13 +213,19 @@ export default function FeedScreen() {
           const safeInterests = userInterests.slice(0, 10);
           const fetchPromises = [];
 
-          let globalQ = query(collection(db, 'posts'), where('parentId', '==', null), orderBy('createdAt', 'desc'), limit(10));
-          if (!isRefresh && globalLastVisible) {
-              globalQ = query(collection(db, 'posts'), where('parentId', '==', null), orderBy('createdAt', 'desc'), startAfter(globalLastVisible), limit(10));
+          // Query 1: Global Feed (Only if not exhausted)
+          if (hasMoreGlobalRef.current) {
+              let globalQ = query(collection(db, 'posts'), where('parentId', '==', null), orderBy('createdAt', 'desc'), limit(10));
+              if (!isRefresh && globalLastVisible) {
+                  globalQ = query(collection(db, 'posts'), where('parentId', '==', null), orderBy('createdAt', 'desc'), startAfter(globalLastVisible), limit(10));
+              }
+              fetchPromises.push(getDocs(globalQ));
+          } else {
+              fetchPromises.push(Promise.resolve({ docs: [] })); // Mock empty result to keep array order
           }
-          fetchPromises.push(getDocs(globalQ));
 
-          if (safeInterests.length > 0) {
+          // Query 2: Interest Feed (Only if not exhausted and user has interests)
+          if (hasMoreInterestsRef.current && safeInterests.length > 0) {
               let intQ = query(collection(db, 'posts'), where('parentId', '==', null), where('tags', 'array-contains-any', safeInterests), orderBy('createdAt', 'desc'), limit(10));
               if (!isRefresh && interestLastVisible) {
                   intQ = query(collection(db, 'posts'), where('parentId', '==', null), where('tags', 'array-contains-any', safeInterests), orderBy('createdAt', 'desc'), startAfter(interestLastVisible), limit(10));
@@ -205,18 +234,31 @@ export default function FeedScreen() {
                   console.warn("Missing Index for personalized feed.", e);
                   return { docs: [] }; 
               }));
+          } else {
+              fetchPromises.push(Promise.resolve({ docs: [] }));
           }
 
           const results = await Promise.all(fetchPromises);
           if (!isMountedRef.current) return;
           
-          const globalSnap = results[0];
-          const interestSnap = results[1];
+          const globalSnap = results[0] as any;
+          const interestSnap = results[1] as any;
 
-          if (globalSnap.docs.length > 0) setGlobalLastVisible(globalSnap.docs[globalSnap.docs.length - 1]);
-          if (interestSnap && interestSnap.docs?.length > 0) setInterestLastVisible(interestSnap.docs[interestSnap.docs.length - 1]);
+          // ✅ BUG 1 FIX: Independent Exhaustion Tracking
+          if (globalSnap.docs.length > 0) {
+              setGlobalLastVisible(globalSnap.docs[globalSnap.docs.length - 1]);
+          } else if (hasMoreGlobalRef.current) {
+              hasMoreGlobalRef.current = false;
+          }
 
-          if (globalSnap.docs.length === 0 && (!interestSnap || interestSnap.docs?.length === 0)) {
+          if (interestSnap.docs.length > 0) {
+              setInterestLastVisible(interestSnap.docs[interestSnap.docs.length - 1]);
+          } else if (hasMoreInterestsRef.current && safeInterests.length > 0) {
+              hasMoreInterestsRef.current = false;
+          }
+
+          // Stop fetching completely ONLY if BOTH streams are dead
+          if (!hasMoreGlobalRef.current && !hasMoreInterestsRef.current) {
               setHasMore(false);
           }
 
@@ -299,6 +341,8 @@ export default function FeedScreen() {
       } catch (error) {
           console.log("Error loading feed:", error);
       } finally {
+          // ✅ BUG 4 FIX: Always release the synchronous lock at the end
+          isFetchingRef.current = false;
           if (isMountedRef.current) {
               setRefreshing(false);
               setLoadingMore(false);
@@ -307,17 +351,10 @@ export default function FeedScreen() {
   };
 
   useEffect(() => {
-      if (interestsLoaded) {
-          fetchFeedChunk(true);
-      }
-  }, [interestsLoaded]);
-
-  useEffect(() => {
-      const runSearch = async () => {
+      // ✅ BUG 3 FIX: Add 500ms Debounce to prevent Keystroke Spam
+      const delayDebounceFn = setTimeout(async () => {
           if (showSearch && searchText.trim().length > 0) {
-              // 🔐 SECURITY: Validate search length
               if (searchText.trim().length > MAX_SEARCH_CHARS) return;
-              // 🔐 SECURITY: Strip special characters before Firestore range query
               const sanitizedText = searchText.trim().toLowerCase().replace(/[^\w]/gi, '');
               if (!sanitizedText) return;
 
@@ -331,11 +368,12 @@ export default function FeedScreen() {
           } else {
               if (isMountedRef.current) setUserResults([]);
           }
-      };
-      runSearch();
+      }, 500); // 500ms wait
+
+      return () => clearTimeout(delayDebounceFn); // Cleanup previous timer if user keeps typing
   }, [searchText, showSearch]);
 
-  const onRefresh = useCallback(() => { fetchFeedChunk(true); }, [interestsLoaded]);
+  const onRefresh = useCallback(() => { fetchFeedChunk(true); }, [userInterests]);
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
 

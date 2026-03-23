@@ -54,7 +54,8 @@ const CREATE_REPORT_URL = "https://us-central1-aniyu-b841b.cloudfunctions.net/cr
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-const localViewedSet = new Set<string>();
+// ✅ BUG 4 FIX: Upgraded to a Map keyed by User ID to prevent cross-session leaks while still preventing scroll-inflation
+const userViewedCache = new Map<string, Set<string>>();
 
 const formatCount = (count: number): string => {
     if (!count) return "0";
@@ -131,8 +132,15 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
     try { if (player && videoSource) player.pause(); } catch(e){}
     const targetPostId = post.isRepost ? post.originalPostId : post.id;
     
-    if (!localViewedSet.has(targetPostId)) {
-        localViewedSet.add(targetPostId);
+    // ✅ BUG 4 FIX: Ensure views are scoped correctly per user session
+    const currentUid = currentUser?.uid || 'guest';
+    if (!userViewedCache.has(currentUid)) {
+        userViewedCache.set(currentUid, new Set<string>());
+    }
+    const myViewedSet = userViewedCache.get(currentUid)!;
+    
+    if (!myViewedSet.has(targetPostId)) {
+        myViewedSet.add(targetPostId);
         setLocalViewCount((prev: number) => prev + 1);
     }
     router.push({ pathname: '/post-details', params: { postId: targetPostId } });
@@ -201,10 +209,13 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
                 tags: post.tags || [],
                 parentId: null, 
                 createdAt: serverTimestamp(),
-                likes: post.likes || [], 
-                likeCount: post.likeCount || 0,
-                reposts: post.reposts || [], 
-                repostCount: post.repostCount || 0,
+                
+                // ✅ BUG 1 FIX: Do NOT copy the massive arrays into the new repost document. Start them empty.
+                likes: [], 
+                likeCount: 0,
+                reposts: [], 
+                repostCount: 0,
+                
                 commentCount: post.commentCount || 0,
                 views: post.views || 0,
                 role: post.role || 'user' // Ensures role is carried over in reposts
@@ -239,7 +250,8 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
   const handleShare = async () => {
       try {
           const targetPostId = post.isRepost ? post.originalPostId : post.id;
-          const postUrl = Linking.createURL('/post-details', { queryParams: { postId: targetPostId } });
+          // ✅ BUG 5 FIX: Removed the leading slash to ensure OS deep linking works correctly
+          const postUrl = Linking.createURL('post-details', { queryParams: { postId: targetPostId } });
 
           await Share.share({
               message: `Check out this post from ${post.displayName} on AniYu!\n\n${post.text ? `"${post.text}"\n\n` : ''}${postUrl}`,
@@ -292,6 +304,20 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
                     await updateDoc(userRef, { pinnedPostId: null });
                 }
 
+                // ✅ BUG 2 & 3 FIX: Cascade delete all orphaned comments and reposts
+                const commentsQ = query(collection(db, 'posts'), where('parentId', '==', post.id));
+                const repostsQ = query(collection(db, 'posts'), where('isRepost', '==', true), where('originalPostId', '==', post.id));
+                
+                const [commentsSnap, repostsSnap] = await Promise.all([
+                    getDocs(commentsQ),
+                    getDocs(repostsQ)
+                ]);
+
+                // Fire and forget deletions for cleanup to avoid batch limits
+                commentsSnap.forEach(d => deleteDoc(d.ref).catch(() => {}));
+                repostsSnap.forEach(d => deleteDoc(d.ref).catch(() => {}));
+
+                // Now delete the main post
                 await deleteDoc(doc(db, "posts", post.id));
 
                 if (onDelete) {
@@ -344,7 +370,6 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
       ]);
   };
 
-  // ✅ SURGICAL FIX: Added userId: authorId to capture Offender UID
   const submitReport = async (reason: string) => {
     if (!currentUser) return;
     try {
@@ -392,7 +417,6 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
             <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, flexWrap: 'wrap' }}>
               <Text style={[styles.name, { color: theme.text }]} numberOfLines={1}>{post.displayName}</Text>
               
-              {/* ✅ GOLDEN BADGES FOR FEED */}
               {(post.role === 'creator' || post.userRole === 'creator') && (
                   <View style={styles.postGoldenBadge}>
                       <Text style={styles.postGoldenBadgeText}>C</Text>
@@ -435,7 +459,6 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
           )}
 
           <View style={styles.actions}>
-            {/* ✅ BUG 3 FIX: Disabled state passed into buttons */}
             <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleLike(); }} disabled={isProcessingAction}>
               <Ionicons name={localIsLiked ? "heart" : "heart-outline"} size={18} color={localIsLiked ? "#FF6B6B" : theme.subText} />
               <Text style={[styles.count, { color: localIsLiked ? "#FF6B6B" : theme.subText }]}>
@@ -508,7 +531,6 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
         </TouchableWithoutFeedback>
       </Modal>
 
-      {/* ✅ SURGICAL FIX: Added the missing Report Modal UI */}
       <Modal visible={reportModalVisible} transparent animationType="slide">
         <View style={styles.modalOverlay}>
             <View style={[styles.reportContainer, { backgroundColor: theme.background }]}>
@@ -567,7 +589,6 @@ const styles = StyleSheet.create({
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 },
   name: { fontWeight: 'bold', fontSize: 15, marginRight: 6, flexShrink: 1 },
   
-  // ✅ NEW FEED BADGE STYLES
   postGoldenBadge: { backgroundColor: '#FFD700', width: 14, height: 14, borderRadius: 7, justifyContent: 'center', alignItems: 'center', marginRight: 6, marginTop: 1 },
   postGoldenBadgeText: { color: '#000', fontSize: 9, fontWeight: '900' },
 
@@ -588,7 +609,6 @@ const styles = StyleSheet.create({
   closeMediaBtn: { position: 'absolute', top: Platform.OS === 'ios' ? 50 : 20, left: 20, zIndex: 100, padding: 8, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 20 },
   fullScreenMediaItem: { width: '100%', height: '100%' },
 
-  // ✅ SURGICAL FIX: Added missing Report UI styles
   reportContainer: { width: '90%', borderRadius: 16, padding: 20, alignItems: 'center', elevation: 10 },
   reportTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 5 },
   reasonBtn: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', padding: 15, borderBottomWidth: 0.5 }

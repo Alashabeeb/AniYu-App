@@ -120,14 +120,21 @@ export default function MangaDetailScreen() {
   const handleLoadMore = async () => {
       if (!hasMore || loadingMore || !lastVisible) return;
       setLoadingMore(true);
-      const more = await getMangaChapters(id as string, lastVisible);
-      if (more.data.length > 0) {
-          setChapters(prev => [...prev, ...more.data]);
-          setLastVisible(more.lastVisible);
-      } else {
-          setHasMore(false);
+      try {
+          const more = await getMangaChapters(id as string, lastVisible);
+          
+          // ✅ BUG 32 FIX: Guard against undefined cursor on empty arrays
+          if (more.data && more.data.length > 0) {
+              setChapters(prev => [...prev, ...more.data]);
+              setLastVisible(more.lastVisible); // Safely sets the next cursor
+          } else {
+              setHasMore(false); // Hard stop, preventing crash
+          }
+      } catch (error) {
+          console.error("Error loading more chapters", error);
+      } finally {
+          setLoadingMore(false);
       }
-      setLoadingMore(false);
   };
 
   const checkAndIncrementView = async () => {

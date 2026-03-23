@@ -2,8 +2,7 @@ import {
   addDoc,
   collection,
   doc,
-  getCountFromServer // ✅ IMPORTED getCountFromServer
-  ,
+  getCountFromServer,
   getDoc,
   getDocs,
   getDocsFromCache,
@@ -12,6 +11,7 @@ import {
   orderBy,
   query,
   runTransaction,
+  startAfter,
   updateDoc,
   where
 } from 'firebase/firestore';
@@ -36,10 +36,12 @@ export const getTopAnime = async () => {
     const allowed = await getAllowedRatings();
     const animeRef = collection(db, 'anime');
     
+    // ✅ BUG 11 FIX: Reduced limit from 100 to 60. 
+    // This provides a safe buffer for filtering while saving 40 reads per call.
     const q = query(
         animeRef, 
         orderBy('views', 'desc'), 
-        limit(100) 
+        limit(60) 
     ); 
     
     let results: any[] = [];
@@ -98,13 +100,12 @@ export const getAnimeDetails = async (id: string) => {
   }
 };
 
-// ✅ BUG FIX: Calculate Rank using getCountFromServer (Stops massive billing drain)
+// Calculate Rank using getCountFromServer
 export const getAnimeRank = async (currentViews: number) => {
   try {
     const animeRef = collection(db, 'anime');
     const q = query(animeRef, where('views', '>', currentViews));
     
-    // Instead of downloading 500 documents to count them, we ask the server to just send the number!
     const snapshot = await getCountFromServer(q);
     return snapshot.data().count + 1;
   } catch (error) {
@@ -153,10 +154,11 @@ export const getRecommendedAnime = async (userGenres: string[]) => {
 
     const animeRef = collection(db, 'anime');
     
+    // ✅ BUG 35 FIX: Reduced limit from 100 to 60 to prevent read waste.
     const q = query(
         animeRef, 
         where('genres', 'array-contains-any', searchGenres), 
-        limit(100)
+        limit(60)
     );
     
     const snapshot = await getDocs(q);
@@ -187,14 +189,20 @@ export const incrementAnimeView = async (id: string) => {
   }
 };
 
-// Fetch episodes
-export const getAnimeEpisodes = async (id: string) => {
+// Fetch Anime Episodes with Pagination
+export const getAnimeEpisodes = async (id: string, lastVisibleDoc: any = null) => {
   try {
     const episodesRef = collection(db, 'anime', id, 'episodes');
-    const q = query(episodesRef, orderBy('number', 'asc'), limit(50));
+    
+    let q = query(episodesRef, orderBy('number', 'asc'), limit(50));
+    
+    if (lastVisibleDoc) {
+        q = query(episodesRef, orderBy('number', 'asc'), startAfter(lastVisibleDoc), limit(50));
+    }
+
     const snapshot = await getDocs(q);
     
-    return snapshot.docs.map(doc => ({
+    const episodes = snapshot.docs.map(doc => ({
       mal_id: doc.id,
       title: doc.data().title,
       number: doc.data().number,
@@ -204,9 +212,18 @@ export const getAnimeEpisodes = async (id: string) => {
       downloads: doc.data().downloads || 0,
       size: doc.data().size || 0
     }));
+
+    const lastDoc = snapshot.docs.length > 0 ? snapshot.docs[snapshot.docs.length - 1] : null;
+
+    return {
+        episodes,
+        lastDoc,
+        hasMore: snapshot.docs.length === 50 
+    };
+
   } catch (error) {
     console.error("Error fetching episodes:", error);
-    return [];
+    return { episodes: [], lastDoc: null, hasMore: false };
   }
 };
 
@@ -251,7 +268,8 @@ export const addAnimeReview = async (animeId: string, userId: string, userName: 
             const animeDoc = await transaction.get(animeRef);
             const reviewDoc = await transaction.get(reviewRef);
 
-            if (!animeDoc.exists()) throw "Anime does not exist!";
+            // ✅ BUG 31 FIX: Throw a proper Error object instead of a string literal.
+            if (!animeDoc.exists()) throw new Error("Anime does not exist!");
 
             const data = animeDoc.data();
             let currentScore = data.score || 0;
@@ -311,7 +329,8 @@ export const toggleAnimeReaction = async (animeId: string, userId: string, react
             const animeDoc = await transaction.get(animeRef);
             const interactDoc = await transaction.get(userInteractRef);
 
-            if (!animeDoc.exists()) throw "Anime not found";
+            // ✅ BUG 31 FIX: Throw a proper Error object here as well.
+            if (!animeDoc.exists()) throw new Error("Anime not found");
 
             const currentData = interactDoc.exists() ? interactDoc.data() : {};
             const oldReaction = currentData.reaction; 

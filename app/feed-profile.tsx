@@ -75,7 +75,10 @@ export default function FeedProfileScreen() {
   const [hasMoreReposts, setHasMoreReposts] = useState(true);
   const [hasMoreLikes, setHasMoreLikes] = useState(true);
 
-  const [loadingMore, setLoadingMore] = useState(false);
+  // ✅ BUG 6 FIX: Three separate synchronous locks so tabs don't block each other
+  const loadingPostsRef = useRef(false);
+  const loadingRepostsRef = useRef(false);
+  const loadingLikesRef = useRef(false);
 
   const [activeTab, setActiveTab] = useState('Posts'); 
   const [isFollowing, setIsFollowing] = useState(false); 
@@ -94,6 +97,7 @@ export default function FeedProfileScreen() {
       }
   }).current;
 
+  // ✅ Main User Data Fetcher
   useEffect(() => {
     if (!targetUserId) return;
 
@@ -123,21 +127,31 @@ export default function FeedProfileScreen() {
         }
     });
 
+    // ✅ BUG 27 FIX: Only load the default 'Posts' tab unconditionally on mount
     loadPosts(true);
-    loadReposts(true);
-    loadLikes(true);
 
     return () => { unsubUser(); };
   }, [targetUserId]);
 
+  // ✅ BUG 27 FIX: Lazy load other tabs ONLY when the user clicks them
+  useEffect(() => {
+      if (activeTab === 'Reposts' && repostedPosts.length === 0 && hasMoreReposts) {
+          loadReposts(true);
+      }
+      if (activeTab === 'Likes' && likedPosts.length === 0 && hasMoreLikes) {
+          loadLikes(true);
+      }
+  }, [activeTab]);
+
   const loadPosts = async (initial = false) => {
-      if (!initial && (loadingMore || !hasMorePosts)) return;
-      if (!initial) setLoadingMore(true);
+      if (!initial && (loadingPostsRef.current || !hasMorePosts)) return;
+      loadingPostsRef.current = true;
 
       try {
           let q = query(
               collection(db, 'posts'), 
               where('userId', '==', targetUserId), 
+              where('isRepost', '==', false), // Optional optimization to cleanly separate original posts
               orderBy('createdAt', 'desc'),
               limit(15)
           );
@@ -163,17 +177,19 @@ export default function FeedProfileScreen() {
           if (snapshot.docs.length < 15) setHasMorePosts(false);
 
       } catch (e) { console.error("Error loading posts", e); }
-      finally { setLoadingMore(false); }
+      finally { loadingPostsRef.current = false; }
   };
 
   const loadReposts = async (initial = false) => {
-      if (!initial && (loadingMore || !hasMoreReposts)) return;
-      if (!initial) setLoadingMore(true);
+      if (!initial && (loadingRepostsRef.current || !hasMoreReposts)) return;
+      loadingRepostsRef.current = true;
 
       try {
+          // ✅ BUG 4 & 15 FIX: Query the actual repost documents. No composite index required!
           let q = query(
               collection(db, 'posts'), 
-              where('reposts', 'array-contains', targetUserId), 
+              where('repostedByUid', '==', targetUserId), 
+              where('isRepost', '==', true),
               orderBy('createdAt', 'desc'),
               limit(15)
           );
@@ -186,6 +202,7 @@ export default function FeedProfileScreen() {
           
           let newPosts: any[] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
+          // The originalIds fetch remains to "fill in" the missing details from the master post
           const originalIds = [...new Set(newPosts.map(p => p.originalPostId))];
           if (originalIds.length > 0) {
               try {
@@ -242,12 +259,12 @@ export default function FeedProfileScreen() {
           if (snapshot.docs.length < 15) setHasMoreReposts(false);
 
       } catch (e) { console.error("Error loading reposts", e); }
-      finally { setLoadingMore(false); }
+      finally { loadingRepostsRef.current = false; }
   };
 
   const loadLikes = async (initial = false) => {
-      if (!initial && (loadingMore || !hasMoreLikes)) return;
-      if (!initial) setLoadingMore(true);
+      if (!initial && (loadingLikesRef.current || !hasMoreLikes)) return;
+      loadingLikesRef.current = true;
 
       try {
           let q = query(
@@ -278,7 +295,7 @@ export default function FeedProfileScreen() {
           if (snapshot.docs.length < 15) setHasMoreLikes(false);
 
       } catch (e) { console.error("Error loading likes", e); }
-      finally { setLoadingMore(false); }
+      finally { loadingLikesRef.current = false; }
   };
 
   const sortedMyPosts = useMemo(() => {
@@ -329,7 +346,6 @@ export default function FeedProfileScreen() {
       ]);
   };
 
-  // ✅ SURGICAL FIX: Added userId to properly log the Offender's UID
   const submitReportUser = async (reason: string) => {
     if (!currentUser || !targetUserId) return;
     setReportLoading(true);
@@ -337,7 +353,7 @@ export default function FeedProfileScreen() {
       await addDoc(collection(db, 'reports'), { 
           type: 'user', 
           targetId: targetUserId, 
-          userId: targetUserId, // Fix for Admin Panel Tracking
+          userId: targetUserId, 
           targetName: userData?.username || 'Unknown', 
           reportedBy: currentUser.uid, 
           reason, 
@@ -379,7 +395,14 @@ export default function FeedProfileScreen() {
           
           onEndReached={loadMoreFunc}
           onEndReachedThreshold={0.5}
-          ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color={theme.tint} style={{marginVertical: 10}} /> : null}
+          // ✅ BUG 6 FIX: Render the correct loading indicator based on the active tab
+          ListFooterComponent={
+              (activeTab === 'Posts' && loadingPostsRef.current) || 
+              (activeTab === 'Reposts' && loadingRepostsRef.current) || 
+              (activeTab === 'Likes' && loadingLikesRef.current) 
+              ? <ActivityIndicator size="small" color={theme.tint} style={{marginVertical: 10}} /> 
+              : null
+          }
 
           ListEmptyComponent={
               <View style={{ marginTop: 50, alignItems: 'center', width: SCREEN_WIDTH }}>
@@ -439,7 +462,6 @@ export default function FeedProfileScreen() {
           </View>
 
           <View style={styles.nameSection}>
-              {/* ✅ GOLDEN CREATOR/MODERATOR BADGE NEXT TO NAME */}
               <View style={styles.nameRow}>
                   <Text style={[styles.displayName, { color: theme.text }]}>{userData?.displayName || "Anonymous"}</Text>
                   
@@ -547,7 +569,6 @@ const styles = StyleSheet.create({
   rankText: { fontSize: 9, fontWeight: 'bold', color: 'black' },
   editBtn: { paddingHorizontal: 15, paddingVertical: 6, borderRadius: 20, borderWidth: 1, marginBottom: 5 },
   
-  // ✅ NEW GOLDEN BADGE STYLES
   nameSection: { paddingHorizontal: 15, marginTop: 5 },
   nameRow: { flexDirection: 'row', alignItems: 'center' },
   displayName: { fontSize: 20, fontWeight: 'bold' },

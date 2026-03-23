@@ -606,35 +606,66 @@ export const sendGlobalBroadcastPush = onDocumentCreated("announcements/{announc
         
         // Fetch users in chunks (Scalable approach)
         const usersRef = admin.firestore().collection("users");
-        const snapshot = await usersRef.select("expoPushToken").get(); 
-        
-        const validTokens = snapshot.docs
-            .map(doc => doc.data().expoPushToken)
-            .filter(token => token && typeof token === 'string' && token.startsWith('ExponentPushToken'));
+        let lastDoc: any = null;
+        let hasMore = true;
+        let totalSent = 0;
 
-        if (validTokens.length === 0) return;
+        while (hasMore) {
+            let q = usersRef.select("expoPushToken").limit(500);
+            
+            if (lastDoc) {
+                q = q.startAfter(lastDoc);
+            }
 
-        const messages = validTokens.map(token => ({
-            to: token,
-            sound: 'default',
-            title: announcement.title,
-            body: announcement.body,
-            badge: 1,
-            threadId: 'aniyu_announcements', // Separate iOS group for admin
-            categoryId: 'admin_broadcast',
-            channelId: 'admin-broadcasts', // Separate Android channel
-        }));
+            const querySnapshot = await q.get();
 
-        // Send in chunks of 100 (Expo API Limit)
-        for (let i = 0; i < messages.length; i += 100) {
-            const chunk = messages.slice(i, i + 100);
-            await fetch('https://exp.host/--/api/v2/push/send', {
-                method: 'POST',
-                headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-                body: JSON.stringify(chunk),
-            });
+            if (querySnapshot.empty) {
+                hasMore = false;
+                break;
+            }
+
+            const validTokens = querySnapshot.docs
+                .map(doc => doc.data().expoPushToken)
+                .filter(token => token && typeof token === 'string' && token.startsWith('ExponentPushToken'));
+
+            if (validTokens.length > 0) {
+                const messages = validTokens.map(token => ({
+                    to: token,
+                    sound: 'default',
+                    title: announcement.title,
+                    body: announcement.body,
+                    badge: 1,
+                    threadId: 'aniyu_announcements', // Separate iOS group for admin
+                    categoryId: 'admin_broadcast',
+                    channelId: 'admin-broadcasts', // Separate Android channel
+                }));
+
+                // Send in chunks of 100 (Expo API Limit)
+                const fetchPromises = [];
+                for (let i = 0; i < messages.length; i += 100) {
+                    const chunk = messages.slice(i, i + 100);
+                    fetchPromises.push(
+                        fetch('https://exp.host/--/api/v2/push/send', {
+                            method: 'POST',
+                            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+                            body: JSON.stringify(chunk),
+                        })
+                    );
+                }
+                
+                // Process the 500-user batch concurrently
+                await Promise.all(fetchPromises);
+                totalSent += validTokens.length;
+            }
+
+            if (querySnapshot.docs.length < 500) {
+                hasMore = false; // We reached the end of the database
+            } else {
+                lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1]; // Set cursor for next loop
+            }
         }
-        console.log(`✅ Broadcast successfully queued for ${validTokens.length} devices.`);
+        
+        console.log(`✅ Broadcast successfully queued for ${totalSent} devices.`);
     } catch (error) {
         console.error("Error sending broadcast:", error);
     }

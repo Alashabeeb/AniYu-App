@@ -1,4 +1,5 @@
-import { addDoc, collection, doc, getDoc, getDocs, onSnapshot, orderBy, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
+// ✅ BUG 2 FIX: Added limit and startAfter to the imports
+import { addDoc, collection, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, startAfter, updateDoc, where } from 'firebase/firestore';
 import {
     ArrowLeft, CheckCircle, Image as ImageIcon, Loader2, Lock, MessageSquare,
     RefreshCw, Search, Send, User, UserCheck, X
@@ -22,6 +23,11 @@ export default function Support() {
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState('pending'); 
     const [searchTerm, setSearchTerm] = useState('');
+
+    // ✅ BUG 2 FIX: Pagination states
+    const [lastVisible, setLastVisible] = useState(null);
+    const [hasMore, setHasMore] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
 
     const [selectedTicket, setSelectedTicket] = useState(null);
     const [messages, setMessages] = useState([]);
@@ -52,10 +58,26 @@ export default function Support() {
 
     // --- 1. REAL-TIME TICKETS ---
     useEffect(() => {
-        const q = query(collection(db, 'supportTickets'), orderBy('updatedAt', 'desc'));
+        setLoading(true);
+        // ✅ BUG 2 FIX: Server-side filtering + Capped limits to prevent memory crashes
+        const q = query(
+            collection(db, 'supportTickets'), 
+            where('status', '==', filter),
+            orderBy('updatedAt', 'desc'),
+            limit(50)
+        );
+        
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const fetchedTickets = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             setTickets(fetchedTickets);
+            
+            if (snapshot.docs.length > 0) {
+                setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
+                setHasMore(snapshot.docs.length === 50);
+            } else {
+                setLastVisible(null);
+                setHasMore(false);
+            }
             setLoading(false);
 
             setSelectedTicket(prev => {
@@ -67,7 +89,36 @@ export default function Support() {
             setLoading(false); 
         });
         return () => unsubscribe();
-    }, []);
+    }, [filter]); // ✅ Refreshes snapshot safely when tab changes
+
+    // ✅ BUG 2 FIX: Load More Logic
+    const handleLoadMore = async () => {
+        if (!hasMore || loadingMore || !lastVisible) return;
+        setLoadingMore(true);
+        try {
+            const q = query(
+                collection(db, 'supportTickets'),
+                where('status', '==', filter),
+                orderBy('updatedAt', 'desc'),
+                startAfter(lastVisible),
+                limit(50)
+            );
+            const snapshot = await getDocs(q);
+            const moreTickets = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            
+            if (moreTickets.length > 0) {
+                setTickets(prev => [...prev, ...moreTickets]);
+                setLastVisible(snapshot.docs[snapshot.docs.length - 1]);
+                setHasMore(snapshot.docs.length === 50);
+            } else {
+                setHasMore(false);
+            }
+        } catch (error) {
+            console.error("Error loading more tickets:", error);
+        } finally {
+            setLoadingMore(false);
+        }
+    };
 
     // --- 2. REAL-TIME MESSAGES ---
     useEffect(() => {
@@ -175,8 +226,8 @@ export default function Support() {
         } catch (e) { alert('Error: ' + e.message); }
     };
 
+    // ✅ BUG 2 FIX: Filtered client side ONLY by search, server handles status now
     const filteredTickets = tickets.filter(t => 
-        t.status === filter && 
         (t.userName?.toLowerCase().includes(searchTerm.toLowerCase()) || t.userId?.includes(searchTerm))
     );
 
@@ -268,36 +319,49 @@ export default function Support() {
                     ) : filteredTickets.length === 0 ? (
                         <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af', fontStyle: 'italic', fontSize: '0.9rem' }}>No {filter} tickets.</div>
                     ) : (
-                        filteredTickets.map(ticket => (
-                            <div 
-                                key={ticket.id} 
-                                className="ticket-card"
-                                onClick={() => setSelectedTicket(ticket)}
-                                style={{ 
-                                    background: selectedTicket?.id === ticket.id ? '#eff6ff' : 'white',
-                                    borderLeft: selectedTicket?.id === ticket.id ? '4px solid #2563eb' : '4px solid transparent',
-                                }}
-                            >
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                                    <div style={{ fontWeight: 800, color: '#1f2937', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: 6 }}>
-                                        {ticket.userName || 'Unknown User'}
-                                        {ticket.unreadAdmin && (ticket.status === 'pending' || ticket.assignedAdminId === currentAdmin?.id) && (
-                                            <span style={{ width: 8, height: 8, background: '#ef4444', borderRadius: '50%' }}></span>
-                                        )}
+                        <>
+                            {filteredTickets.map(ticket => (
+                                <div 
+                                    key={ticket.id} 
+                                    className="ticket-card"
+                                    onClick={() => setSelectedTicket(ticket)}
+                                    style={{ 
+                                        background: selectedTicket?.id === ticket.id ? '#eff6ff' : 'white',
+                                        borderLeft: selectedTicket?.id === ticket.id ? '4px solid #2563eb' : '4px solid transparent',
+                                    }}
+                                >
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                        <div style={{ fontWeight: 800, color: '#1f2937', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                            {ticket.userName || 'Unknown User'}
+                                            {ticket.unreadAdmin && (ticket.status === 'pending' || ticket.assignedAdminId === currentAdmin?.id) && (
+                                                <span style={{ width: 8, height: 8, background: '#ef4444', borderRadius: '50%' }}></span>
+                                            )}
+                                        </div>
+                                        <span style={{ fontSize: '0.75rem', color: '#9ca3af', fontWeight: 600 }}>{formatTime(ticket.updatedAt)}</span>
                                     </div>
-                                    <span style={{ fontSize: '0.75rem', color: '#9ca3af', fontWeight: 600 }}>{formatTime(ticket.updatedAt)}</span>
-                                </div>
-                                <div style={{ fontSize: '0.85rem', color: '#6b7280', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                    {ticket.lastMessage || "Started a chat..."}
-                                </div>
+                                    <div style={{ fontSize: '0.85rem', color: '#6b7280', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                        {ticket.lastMessage || "Started a chat..."}
+                                    </div>
 
-                                {ticket.transferredBy && ticket.status === 'pending' && (
-                                    <div style={{ marginTop: 8, fontSize: '0.7rem', color: '#9333ea', background: '#faf5ff', padding: '2px 6px', borderRadius: 4, display: 'inline-block', fontWeight: 700 }}>
-                                        Transferred by {ticket.transferredBy}
-                                    </div>
-                                )}
-                            </div>
-                        ))
+                                    {ticket.transferredBy && ticket.status === 'pending' && (
+                                        <div style={{ marginTop: 8, fontSize: '0.7rem', color: '#9333ea', background: '#faf5ff', padding: '2px 6px', borderRadius: 4, display: 'inline-block', fontWeight: 700 }}>
+                                            Transferred by {ticket.transferredBy}
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+
+                            {/* ✅ BUG 2 FIX: Render the Load More button if there are more tickets */}
+                            {hasMore && (
+                                <button 
+                                    onClick={handleLoadMore}
+                                    disabled={loadingMore}
+                                    style={{ width: '100%', padding: '15px', background: '#f8fafc', border: 'none', borderTop: '1px solid #e5e7eb', color: '#2563eb', fontWeight: 'bold', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center' }}
+                                >
+                                    {loadingMore ? <Loader2 className="animate-spin" size={18} /> : 'Load More'}
+                                </button>
+                            )}
+                        </>
                     )}
                 </div>
             </div>

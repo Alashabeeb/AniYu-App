@@ -65,7 +65,8 @@ function Dashboard({ role, userId }) {
   const isProducer = role === 'anime_producer' || role === 'manga_producer';
 
   // --- FETCH ADVANCED ANALYTICS ---
-  const fetchAnalytics = async (forceRefresh = false) => {
+  // ✅ BUG 40 FIX: Accept the already-downloaded usersList to prevent redundant queries
+  const fetchAnalytics = async (usersList, forceRefresh = false) => {
     if (!isAdmin) return;
     setAnalyticsLoading(true);
     try {
@@ -104,12 +105,11 @@ function Dashboard({ role, userId }) {
         const finalGenreData = Object.keys(genreCounts).map(key => ({ name: key, value: genreCounts[key] })).sort((a, b) => b.value - a.value).slice(0, 6);
         setGenreData(finalGenreData);
 
-        const usersSnap = await getDocs(query(collection(db, "users"), orderBy("createdAt", "desc"), limit(100)));
+        // ✅ BUG 40 FIX: Re-use the existing usersList instead of making another 100-document read!
         const dateMap = {};
-        usersSnap.docs.forEach(d => {
-            const u = d.data();
-            if(u.createdAt && u.createdAt.toDate) {
-                const date = u.createdAt.toDate().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        usersList.slice(0, 100).forEach(u => {
+            if(u.createdAt) {
+                const date = u.createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
                 dateMap[date] = (dateMap[date] || 0) + 1;
             }
         });
@@ -128,6 +128,23 @@ function Dashboard({ role, userId }) {
     const fetchData = async () => {
       try {
         if (isAdmin) {
+            // ✅ BUG 40 FIX: Aggressive Session Caching to prevent re-fetching on tab switch
+            const CACHE_KEY = 'admin_dashboard_main_cache';
+            const cachedStr = sessionStorage.getItem(CACHE_KEY);
+            
+            if (cachedStr) {
+                const parsed = JSON.parse(cachedStr);
+                const revivedUsers = parsed.recentUsers.map(u => ({
+                    ...u,
+                    createdAt: new Date(u.createdAt),
+                    lastActiveAt: new Date(u.lastActiveAt)
+                }));
+                setStats(parsed.stats);
+                setRecentUsers(revivedUsers);
+                fetchAnalytics(revivedUsers, false);
+                return;
+            }
+
             const usersCountSnap = await getCountFromServer(collection(db, "users"));
             const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
             const activeCountSnap = await getCountFromServer(query(collection(db, "users"), where("lastActiveAt", ">=", yesterday)));
@@ -135,18 +152,34 @@ function Dashboard({ role, userId }) {
             const aSnap = await getCountFromServer(collection(db, "anime"));
             const mSnap = await getCountFromServer(collection(db, "manga"));
             
-            setStats({ users: usersCountSnap.data().count, activeUsers: activeCountSnap.data().count, anime: aSnap.data().count, manga: mSnap.data().count, reports: rSnap.data().count });
+            const newStats = { users: usersCountSnap.data().count, activeUsers: activeCountSnap.data().count, anime: aSnap.data().count, manga: mSnap.data().count, reports: rSnap.data().count };
+            setStats(newStats);
 
             const usersQ = query(collection(db, "users"), orderBy("createdAt", "desc"), limit(500));
             const usersSnapshot = await getDocs(usersQ);
             
-            const usersData = usersSnapshot.docs.map(doc => ({
-              id: doc.id, ...doc.data(),
-              createdAt: doc.data().createdAt?.toDate ? doc.data().createdAt.toDate() : new Date(0),
-              lastActiveAt: doc.data().lastActiveAt?.toDate ? doc.data().lastActiveAt.toDate() : new Date(0), 
+            // ✅ BUG 40 FIX: Client-Side Memory Masking to prevent browser crashes
+            const usersData = usersSnapshot.docs.map(doc => {
+                const data = doc.data();
+                return {
+                    id: doc.id,
+                    username: data.username,
+                    displayName: data.displayName,
+                    email: data.email,
+                    avatar: data.avatar,
+                    // Strip out giant arrays (followers, interests) so they are garbage collected immediately
+                    createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(0),
+                    lastActiveAt: data.lastActiveAt?.toDate ? data.lastActiveAt.toDate() : new Date(0),
+                };
+            });
+            
+            sessionStorage.setItem(CACHE_KEY, JSON.stringify({
+                stats: newStats,
+                recentUsers: usersData
             }));
+
             setRecentUsers(usersData); 
-            fetchAnalytics(); // Fetch advanced charts
+            fetchAnalytics(usersData, false); 
         } 
         else if (isProducer) {
             const collectionName = role === 'anime_producer' ? 'anime' : 'manga';
@@ -320,7 +353,8 @@ function Dashboard({ role, userId }) {
               <h2 className="section-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <TrendingUp size={24} className="text-blue-600" /> Advanced Analytics
               </h2>
-              <button onClick={() => fetchAnalytics(true)} className="btn-refresh">
+              {/* ✅ BUG 40 FIX: Pass recentUsers when manually refreshing */}
+              <button onClick={() => fetchAnalytics(recentUsers, true)} className="btn-refresh">
                   <RefreshCw size={16} /> Refresh Data
               </button>
           </div>

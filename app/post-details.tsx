@@ -8,6 +8,7 @@ import {
     collection, deleteDoc, doc,
     getDoc, getDocs,
     increment,
+    limit,
     onSnapshot, orderBy,
     query, serverTimestamp, updateDoc,
     where, writeBatch
@@ -17,7 +18,9 @@ import {
     ActivityIndicator,
     Alert,
     Dimensions,
-    FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, Share, StyleSheet,
+    FlatList, KeyboardAvoidingView, Modal, Platform, Pressable,
+    RefreshControl,
+    Share, StyleSheet,
     Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View, ViewToken
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -70,9 +73,13 @@ export default function PostDetailsScreen() {
   const [comments, setComments] = useState<any[]>([]);
   const [newComment, setNewComment] = useState('');
   const [sending, setSending] = useState(false);
+  const [refreshing, setRefreshing] = useState(false); // ✅ Added for manual comment refresh
 
   const [loading, setLoading] = useState(true);
   const [postFound, setPostFound] = useState(true);
+
+  // ✅ BUG 3 FIX: Cache user data on mount to prevent getDoc spam
+  const [currentUserData, setCurrentUserData] = useState<any>(null);
 
   const [menuVisible, setMenuVisible] = useState(false);
   const [reportModalVisible, setReportModalVisible] = useState(false);
@@ -88,6 +95,8 @@ export default function PostDetailsScreen() {
     message: ''
   });
 
+  const isMountedRef = useRef(true);
+
   const showAlert = (type: 'success' | 'error' | 'warning' | 'info', title: string, message: string) => {
     setAlertConfig({ visible: true, type, title, message });
   };
@@ -102,7 +111,9 @@ export default function PostDetailsScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      isMountedRef.current = true;
       return () => {
+        isMountedRef.current = false;
         try { if (player && videoSource) player.pause(); } catch(e) {}
       };
     }, [player, videoSource])
@@ -112,6 +123,43 @@ export default function PostDetailsScreen() {
   const authorId = post?.isRepost && post?.originalUserId ? post.originalUserId : post?.userId;
   const isOriginalAuthor = authorId === user?.uid;
   const showMenu = isOwner || !isOriginalAuthor;
+
+  // ✅ BUG 3 FIX: Pre-fetch user data once on mount
+  useEffect(() => {
+      if (user) {
+          getDoc(doc(db, "users", user.uid)).then(docSnap => {
+              if (docSnap.exists() && isMountedRef.current) {
+                  setCurrentUserData(docSnap.data());
+              }
+          });
+      }
+  }, [user]);
+
+  // ✅ BUG 1 FIX: Separate function to fetch comments without live listener
+  const fetchComments = async () => {
+      if (!postId) return;
+      try {
+          const q = query(
+              collection(db, 'posts'), 
+              where('parentId', '==', postId), 
+              orderBy('createdAt', 'desc'),
+              limit(50) // Safely bounded to 50
+          );
+          const snapshot = await getDocs(q);
+          if (isMountedRef.current) {
+              setComments(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+          }
+      } catch (error) {
+          console.error("Error fetching comments:", error);
+      }
+  };
+
+  const onRefresh = useCallback(async () => {
+      if (!isMountedRef.current) return;
+      setRefreshing(true);
+      await fetchComments();
+      if (isMountedRef.current) setRefreshing(false);
+  }, [postId]);
 
   useEffect(() => {
     if (!postId) {
@@ -124,6 +172,19 @@ export default function PostDetailsScreen() {
       if (docSnapshot.exists()) {
           setPost({ id: docSnapshot.id, ...docSnapshot.data() });
           setPostFound(true);
+          
+          // ✅ BUG 2 FIX: Increment view ONLY if post exists
+          const incrementView = async () => {
+              const pId = postId as string;
+              if (!viewedSessionIds.has(pId)) {
+                  viewedSessionIds.add(pId);
+                  try {
+                      await updateDoc(doc(db, 'posts', pId), { views: increment(1) });
+                  } catch (e) { console.log("Error incrementing view", e); }
+              }
+          };
+          incrementView();
+
       } else {
           setPostFound(false);
       }
@@ -134,30 +195,10 @@ export default function PostDetailsScreen() {
         setLoading(false);
     });
 
-    const q = query(
-        collection(db, 'posts'), 
-        where('parentId', '==', postId), 
-        orderBy('createdAt', 'desc')
-    );
-    
-    const commentsUnsub = onSnapshot(q, (snapshot) => {
-      setComments(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (error) => {
-        console.error("Error fetching comments:", error);
-    });
+    // Fetch initial comments once
+    fetchComments();
 
-    const incrementView = async () => {
-        const pId = postId as string;
-        if (!viewedSessionIds.has(pId)) {
-            viewedSessionIds.add(pId);
-            try {
-                await updateDoc(doc(db, 'posts', pId), { views: increment(1) });
-            } catch (e) { console.log("Error incrementing view", e); }
-        }
-    };
-    incrementView();
-
-    return () => { postUnsub(); commentsUnsub(); };
+    return () => { postUnsub(); };
   }, [postId]);
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
@@ -242,7 +283,7 @@ export default function PostDetailsScreen() {
 
   const handleShare = async (item: any) => {
       try {
-          const itemUrl = Linking.createURL('/post-details', { queryParams: { postId: item.id } });
+          const itemUrl = Linking.createURL('post-details', { queryParams: { postId: item.id } });
           await Share.share({
               message: `Check out what ${item.displayName || item.username} said on AniYu!\n\n${item.text ? `"${item.text}"\n\n` : ''}${itemUrl}`,
               url: itemUrl 
@@ -310,7 +351,6 @@ export default function PostDetailsScreen() {
       ]);
   };
 
-  // ✅ SURGICAL FIX: Added userId: authorId to capture Offender UID in Admin Panel
   const submitReport = async (reason: string) => {
       if (!user) return;
       setReportLoading(true);
@@ -337,21 +377,19 @@ export default function PostDetailsScreen() {
   const handleSendComment = async () => {
     if (!newComment.trim() || !user) return;
 
-    // 🔐 SECURITY FIX: Hard length guard before Cloud Function call
     if (newComment.length > MAX_COMMENT_CHARS) {
         return showAlert('warning', 'Too Long', `Comments cannot exceed ${MAX_COMMENT_CHARS} characters.`);
     }
 
     setSending(true);
     try {
-      const userDoc = await getDoc(doc(db, "users", user.uid));
-      const userData = userDoc.exists() ? userDoc.data() : {};
+      // ✅ BUG 3 FIX: Use pre-fetched state instead of querying Firestore
+      const userData = currentUserData || {};
       const realUsername = userData.username || user.email?.split('@')[0] || "user"; 
       const realDisplayName = userData.displayName || user.displayName || "Anonymous";
       const realAvatar = userData.avatar || user.photoURL;
-      const realRole = userData.role || 'user'; // ✅ FETCHES ROLE FOR THE BADGE
+      const realRole = userData.role || 'user'; 
 
-      // 🔐 SECURITY: Route comment creation through rate-limited Cloud Function
       const idToken = await user.getIdToken();
       const response = await fetch(CREATE_COMMENT_URL, {
           method: 'POST',
@@ -365,7 +403,7 @@ export default function PostDetailsScreen() {
               displayName: realDisplayName,
               username: realUsername,
               userAvatar: realAvatar,
-              role: realRole // ✅ SAVES THE ROLE IN THE COMMENT
+              role: realRole 
           })
       });
 
@@ -391,6 +429,10 @@ export default function PostDetailsScreen() {
       }
 
       setNewComment('');
+      
+      // ✅ Automatically fetch the new comment so it appears in the list instantly
+      fetchComments();
+
     } catch (e: any) { 
         console.error(e); 
         if (e.message?.includes("permission-denied")) {
@@ -452,7 +494,6 @@ export default function PostDetailsScreen() {
                 <Image source={{ uri: item.userAvatar }} style={styles.commentAvatar} />
             </TouchableOpacity>
             <View style={{ flex: 1 }}>
-                {/* ✅ GOLDEN BADGE LOGIC FOR COMMENTS */}
                 <View style={[styles.row, { flexWrap: 'wrap' }]}>
                     <Text style={[styles.commentName, { color: theme.text }]} numberOfLines={1}>{item.displayName || item.username}</Text>
                     
@@ -528,6 +569,7 @@ export default function PostDetailsScreen() {
             contentContainerStyle={{ paddingBottom: 20 }}
             onViewableItemsChanged={onViewableItemsChanged}
             viewabilityConfig={viewabilityConfig}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.tint} />} // ✅ BUG 1 FIX: Pull to refresh comments
             ListHeaderComponent={() => (
                <View style={[styles.mainPost, { borderBottomColor: theme.border }]}>
                   <View style={styles.row}>
@@ -535,7 +577,6 @@ export default function PostDetailsScreen() {
                          <Image source={{ uri: post.userAvatar }} style={styles.avatar} />
                      </TouchableOpacity>
                      <View style={{ marginLeft: 10 }}>
-                        {/* ✅ GOLDEN BADGE LOGIC FOR MAIN POST */}
                         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                             <Text style={[styles.name, { color: theme.text }]}>{post.displayName || post.username}</Text>
                             
@@ -716,7 +757,6 @@ const styles = StyleSheet.create({
   avatar: { width: 50, height: 50, borderRadius: 25 },
   name: { fontWeight: 'bold', fontSize: 16 },
   
-  // ✅ MAIN POST BADGE STYLES
   postGoldenBadge: { backgroundColor: '#FFD700', width: 16, height: 16, borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginLeft: 6 },
   postGoldenBadgeText: { color: '#000', fontSize: 10, fontWeight: '900' },
 
@@ -732,7 +772,6 @@ const styles = StyleSheet.create({
   commentAvatar: { width: 35, height: 35, borderRadius: 17.5, marginRight: 10 },
   commentName: { fontWeight: 'bold', fontSize: 14, marginRight: 5 },
   
-  // ✅ COMMENT BADGE STYLES
   commentGoldenBadge: { backgroundColor: '#FFD700', width: 12, height: 12, borderRadius: 6, justifyContent: 'center', alignItems: 'center', marginRight: 4, marginTop: 1 },
   commentGoldenBadgeText: { color: '#000', fontSize: 8, fontWeight: '900' },
 
