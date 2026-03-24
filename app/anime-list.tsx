@@ -1,7 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { collection, getDocs, limit, query, where } from 'firebase/firestore';
+import {
+    collection,
+    documentId,
+    getDocs,
+    limit,
+    query,
+    where
+} from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -15,7 +22,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { auth, db } from '../config/firebaseConfig';
 import { useTheme } from '../context/ThemeContext';
-import { getAnimeDetails, getRecommendedAnime, getTopAnime, getUpcomingAnime } from '../services/animeService';
+import { getRecommendedAnime, getTopAnime, getUpcomingAnime } from '../services/animeService';
 import { getFavorites, toggleFavorite } from '../services/favoritesService';
 import { getContinueWatching } from '../services/historyService';
 
@@ -52,37 +59,37 @@ export default function AnimeListScreen() {
             );
             const snapshot = await getDocs(q);
             
-            // ✅ BUG 3 FIX: Controlled Concurrency Chunking (Solves N+1 API hammering)
-            const docIds = snapshot.docs.map(doc => doc.id);
-            const results = [];
-            const chunkSize = 5; // Fetch 5 at a time to respect rate limits
+            // ✅ BUG 3 FIX: Batch fetch using documentId() 'in' query
+            // Instead of 50 individual getDoc calls (50 reads),
+            // we batch in chunks of 10 using Firestore's 'in' operator = only 5 reads total
+            const docIds = snapshot.docs.map(d => d.id);
+            const results: any[] = [];
+            const CHUNK_SIZE = 10; // Firestore 'in' query hard limit
 
-            for (let i = 0; i < docIds.length; i += chunkSize) {
-                const chunk = docIds.slice(i, i + chunkSize);
-                
-                const chunkPromises = chunk.map(async (id) => {
-                    try {
-                        const details = await getAnimeDetails(id);
-                        // ✅ BUG 23 FIX: Guard against null/deleted data
-                        if (!details || Object.keys(details).length === 0) return null; 
-                        return { ...details, mal_id: id };
-                    } catch (err) {
-                        return null; // Return null on error, not a broken object
-                    }
-                });
-
-                const chunkResults = await Promise.all(chunkPromises);
-                results.push(...chunkResults);
-                
-                // Small delay between chunks to prevent API rate limit rejection
-                if (i + chunkSize < docIds.length) {
-                    await new Promise(resolve => setTimeout(resolve, 300));
+            for (let i = 0; i < docIds.length; i += CHUNK_SIZE) {
+                const chunk = docIds.slice(i, i + CHUNK_SIZE);
+                try {
+                    const batchSnap = await getDocs(
+                        query(
+                            collection(db, 'anime'),
+                            where(documentId(), 'in', chunk)
+                        )
+                    );
+                    batchSnap.docs.forEach(d => {
+                        // ✅ BUG 23 FIX: Guard against empty/deleted documents
+                        // d.exists() ensures we never push a ghost card into the list
+                        if (d.exists()) {
+                            results.push({ mal_id: d.id, ...d.data() });
+                        }
+                    });
+                } catch (chunkErr) {
+                    console.warn(`Batch fetch failed for chunk ${i}:`, chunkErr);
+                    // Skip failed chunk and continue — partial results are better than nothing
                 }
             }
             
-            // ✅ BUG 23 FIX: Filter out any null/ghost cards before setting state
-            const cleanResults = results.filter(Boolean);
-            setList(cleanResults);
+            // ✅ BUG 23 FIX: Final filter removes any nulls that slipped through
+            setList(results.filter(Boolean));
 
         } else if (type === 'recommended') {
             const history = await getContinueWatching();

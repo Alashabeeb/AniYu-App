@@ -106,13 +106,18 @@ export default function ComicScreen() {
                   if (top && top.length > 0) setLoading(false);
               }
 
-              // Also load downloads instantly from storage (cheap read)
+              // ✅ FIX: Always load downloads from AsyncStorage (cheap, not Firestore)
+              // Only load here — loadData will NOT call loadDownloads again if cache is invalid
+              // to prevent the double-load that previously happened on first launch with no cache
               await loadDownloads();
 
               // Check if the cache is still fresh enough to skip Firestore reads
               if (timestamp && (Date.now() - timestamp < CACHE_TTL_MS)) {
                   return true; 
               }
+          } else {
+              // ✅ FIX: No cache at all — still load downloads (they are separate from Firestore cache)
+              await loadDownloads();
           }
           return false; 
       } catch (e) {
@@ -142,7 +147,11 @@ export default function ComicScreen() {
     if (topManga.length === 0 && !isRefresh && isMountedRef.current) setLoading(true); 
     
     try {
-        await loadDownloads();
+        // ✅ FIX: Only reload downloads here on manual refresh — loadFromCache already loaded
+        // them on initial mount, so we only need to refresh them when user pulls to refresh
+        if (isRefresh) {
+            await loadDownloads();
+        }
 
         const top = await getTopManga();
         const all = await getAllManga();

@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage'; // ✅ Added AsyncStorage
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ResizeMode, Video } from 'expo-av';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
@@ -8,7 +8,7 @@ import {
     doc,
     getDoc
 } from 'firebase/firestore';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
     Image,
@@ -40,13 +40,8 @@ export default function CreatePostScreen() {
   const [media, setMedia] = useState<any>(null);
   const [avatar, setAvatar] = useState(user?.photoURL || 'https://api.dicebear.com/7.x/avataaars/svg?seed=Anime');
   
-  // ✅ BUG 14 FIX: State to hold cached user profile
+  // State to hold cached user profile
   const [currentUserData, setCurrentUserData] = useState<any>(null);
-
-  // ✅ BUG 39 FIX: States & Refs for Upload Cancellation
-  const [showCancel, setShowCancel] = useState(false);
-  const cancelUploadRef = useRef<(() => void) | null>(null);
-
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
 
   const [alertConfig, setAlertConfig] = useState({
@@ -60,10 +55,9 @@ export default function CreatePostScreen() {
     setAlertConfig({ visible: true, type, title, message });
   };
 
-  // ✅ BUG 14 FIX: Load user data once on mount and cache it
+  // Load user data once on mount and cache it
   useEffect(() => {
      if(user) {
-         // 1. Try to load from local cache instantly
          AsyncStorage.getItem(`user_profile_${user.uid}`).then(cached => {
              if (cached) {
                  const parsed = JSON.parse(cached);
@@ -72,7 +66,6 @@ export default function CreatePostScreen() {
              }
          });
 
-         // 2. Fetch fresh from Firestore and update cache
          getDoc(doc(db, "users", user.uid)).then(docSnap => {
              if(docSnap.exists()) {
                  const data = docSnap.data();
@@ -153,77 +146,55 @@ export default function CreatePostScreen() {
     }
 
     setLoading(true);
-    setShowCancel(false);
 
     try {
       if (!user) throw new Error("Not logged in");
 
-      // ✅ BUG 14 FIX: Use locally cached data instead of making a Firestore query
       const userData = currentUserData || {};
       const realUsername = userData.username || "anonymous";
       const realDisplayName = userData.displayName || user.displayName || "Anonymous";
       const realAvatar = userData.avatar || user.photoURL;
       const realRole = userData.role || 'user'; 
 
-      let mediaUrl = null;
-      let mediaType = null;
-      
-      if (media) {
-          mediaType = media.type;
+      // ✅ FIX: Bundle the entire network process into one async function
+      const performNetworkOperations = async () => {
+          let mediaUrl = null;
+          let mediaType = null;
           
-          // ✅ BUG 39 FIX: 5-second timer to reveal the Cancel button
-          const cancelTimer = setTimeout(() => setShowCancel(true), 5000);
-
-          try {
-              // ✅ BUG 39 FIX: 60-second Timeout & Cancel Promise Race
-              const uploadPromise = uploadMediaToStorage(media.uri, mediaType);
-              
-              const timeoutPromise = new Promise<never>((_, reject) =>
-                  setTimeout(() => reject(new Error("UPLOAD_TIMEOUT")), 60000) // 60 seconds max
-              );
-              
-              const cancelPromise = new Promise<never>((_, reject) => {
-                  cancelUploadRef.current = () => reject(new Error("UPLOAD_CANCELLED"));
-              });
-
-              mediaUrl = await Promise.race([uploadPromise, timeoutPromise, cancelPromise]);
-              
-              clearTimeout(cancelTimer);
-              setShowCancel(false);
-          } catch (err: any) {
-              clearTimeout(cancelTimer);
-              setShowCancel(false);
-              setLoading(false);
-              
-              if (err.message === "UPLOAD_TIMEOUT") {
-                  return showAlert('error', 'Network Timeout', 'Upload took too long. Please check your connection and try again.');
-              }
-              if (err.message === "UPLOAD_CANCELLED") {
-                  return showAlert('info', 'Cancelled', 'Media upload was cancelled.');
-              }
-              throw err; // Rethrow to main catch block if it's a real R2 error
+          if (media) {
+              mediaType = media.type;
+              mediaUrl = await uploadMediaToStorage(media.uri, mediaType);
           }
-      }
 
-      const idToken = await user.getIdToken();
-      const response = await fetch(CREATE_POST_URL, {
-          method: 'POST',
-          headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${idToken}`
-          },
-          body: JSON.stringify({
-              text: text,
-              mediaUrl: mediaUrl,
-              mediaType: mediaType,
-              tags: selectedTags,
-              displayName: realDisplayName,
-              username: realUsername,
-              userAvatar: realAvatar,
-              role: realRole 
-          })
-      });
+          const idToken = await user.getIdToken();
+          const response = await fetch(CREATE_POST_URL, {
+              method: 'POST',
+              headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${idToken}`
+              },
+              body: JSON.stringify({
+                  text: text,
+                  mediaUrl: mediaUrl,
+                  mediaType: mediaType,
+                  tags: selectedTags,
+                  displayName: realDisplayName,
+                  username: realUsername,
+                  userAvatar: realAvatar,
+                  role: realRole 
+              })
+          });
 
+          return response;
+      };
+
+      // ✅ FIX: 20-Second Master Timeout Promise
+      const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("NETWORK_TIMEOUT")), 20000)
+      );
+
+      // ✅ FIX: Race the network payload against the 20s timeout
+      const response = await Promise.race([performNetworkOperations(), timeoutPromise]);
       const result = await response.json();
 
       if (!response.ok) {
@@ -238,15 +209,18 @@ export default function CreatePostScreen() {
       router.back(); 
     } catch (error: any) {
       console.error(error);
-      if (error.message?.includes("permission-denied")) {
-        showAlert('error', '⛔ Blocked', 'You are posting too fast (30s cooldown) or you are banned.');
+      
+      // ✅ FIX: Catch the specific timeout error and show the requested friendly alert!
+      if (error.message === "NETWORK_TIMEOUT") {
+          showAlert('error', 'Connection Timeout', 'Please check your internet connection and try again.');
+      } else if (error.message?.includes("permission-denied")) {
+          showAlert('error', '⛔ Blocked', 'You are posting too fast (30s cooldown) or you are banned.');
       } else {
-        const friendlyMessage = getFriendlyErrorMessage(error);
-        showAlert('error', 'Post Failed', friendlyMessage);
+          const friendlyMessage = getFriendlyErrorMessage(error);
+          showAlert('error', 'Post Failed', friendlyMessage);
       }
     } finally {
       setLoading(false);
-      setShowCancel(false);
     }
   };
 
@@ -266,37 +240,21 @@ export default function CreatePostScreen() {
                 </TouchableOpacity>
             ),
             headerRight: () => (
-                // ✅ BUG 39 FIX: Transform Post button into a red Cancel button if upload is hanging
-                showCancel && loading ? (
-                    <TouchableOpacity
-                        onPress={() => {
-                            if (cancelUploadRef.current) cancelUploadRef.current();
-                        }}
-                        style={{
-                            backgroundColor: '#ef4444',
-                            paddingHorizontal: 15,
-                            paddingVertical: 6,
-                            borderRadius: 20
-                        }}
-                    >
-                        <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 14 }}>Cancel Upload</Text>
-                    </TouchableOpacity>
-                ) : (
-                    <TouchableOpacity 
-                      onPress={handlePost} 
-                      disabled={isPostDisabled}
-                      style={{ 
-                        backgroundColor: isPostDisabled ? theme.card : theme.tint,
-                        paddingHorizontal: 15,
-                        paddingVertical: 6,
-                        borderRadius: 20
-                      }}
-                    >
-                      {loading ? <ActivityIndicator color="white" size="small" /> : (
-                         <Text style={{ color: isPostDisabled ? theme.subText : 'white', fontWeight: 'bold', fontSize: 14 }}>Post</Text>
-                      )}
-                    </TouchableOpacity>
-                )
+                // ✅ FIX: Cleaned up Header. No more red Cancel button!
+                <TouchableOpacity 
+                  onPress={handlePost} 
+                  disabled={isPostDisabled}
+                  style={{ 
+                    backgroundColor: isPostDisabled ? theme.card : theme.tint,
+                    paddingHorizontal: 15,
+                    paddingVertical: 6,
+                    borderRadius: 20
+                  }}
+                >
+                  {loading ? <ActivityIndicator color="white" size="small" /> : (
+                     <Text style={{ color: isPostDisabled ? theme.subText : 'white', fontWeight: 'bold', fontSize: 14 }}>Post</Text>
+                  )}
+                </TouchableOpacity>
             )
         }}
       />

@@ -75,13 +75,10 @@ export default function FeedProfileScreen() {
   const [hasMoreReposts, setHasMoreReposts] = useState(true);
   const [hasMoreLikes, setHasMoreLikes] = useState(true);
 
-  // ✅ BUG 6 FIX: Three separate synchronous locks so tabs don't block each other
   const loadingPostsRef = useRef(false);
   const loadingRepostsRef = useRef(false);
   const loadingLikesRef = useRef(false);
 
-  // ✅ ISSUE 2 FIX: Separate loading states per tab so ListFooterComponent re-renders correctly
-  // useRef alone doesn't trigger re-renders — state is needed for the UI indicator
   const [loadingMorePosts, setLoadingMorePosts] = useState(false);
   const [loadingMoreReposts, setLoadingMoreReposts] = useState(false);
   const [loadingMoreLikes, setLoadingMoreLikes] = useState(false);
@@ -103,7 +100,7 @@ export default function FeedProfileScreen() {
       }
   }).current;
 
-  // ✅ Main User Data Fetcher
+  // Main User Data Fetcher
   useEffect(() => {
     if (!targetUserId) return;
 
@@ -133,13 +130,13 @@ export default function FeedProfileScreen() {
         }
     });
 
-    // ✅ BUG 27 FIX: Only load the default 'Posts' tab unconditionally on mount
+    // Only load the default 'Posts' tab unconditionally on mount
     loadPosts(true);
 
     return () => { unsubUser(); };
   }, [targetUserId]);
 
-  // ✅ BUG 27 FIX: Lazy load other tabs ONLY when the user clicks them
+  // Lazy load other tabs ONLY when the user clicks them
   useEffect(() => {
       if (activeTab === 'Reposts' && repostedPosts.length === 0 && hasMoreReposts) {
           loadReposts(true);
@@ -152,13 +149,14 @@ export default function FeedProfileScreen() {
   const loadPosts = async (initial = false) => {
       if (!initial && (loadingPostsRef.current || !hasMorePosts)) return;
       loadingPostsRef.current = true;
-      if (!initial) setLoadingMorePosts(true); // ✅ ISSUE 2 FIX: Drive the UI indicator with state
+      if (!initial) setLoadingMorePosts(true); 
 
       try {
+          // ✅ PERFECT MATCH FOR YOUR NEW INDEX
           let q = query(
               collection(db, 'posts'), 
               where('userId', '==', targetUserId), 
-              where('isRepost', '==', false), // Optional optimization to cleanly separate original posts
+              where('isRepost', '==', false), 
               orderBy('createdAt', 'desc'),
               limit(15)
           );
@@ -169,9 +167,6 @@ export default function FeedProfileScreen() {
 
           const snapshot = await getDocs(q);
 
-          // ✅ ISSUE 3 FIX: Client-side safety filter for old posts that predate the isRepost field
-          // Old documents without isRepost field won't match where('isRepost','==',false)
-          // so we filter client-side as a fallback to avoid missing any original posts
           const newPosts = snapshot.docs
               .map(doc => ({ id: doc.id, ...doc.data() }))
               .filter((p: any) => !p.isRepost);
@@ -186,28 +181,26 @@ export default function FeedProfileScreen() {
               });
           }
 
-          // ✅ ISSUE 1 FIX: Guard against undefined when snapshot is empty
-          // snapshot.docs[snapshot.docs.length - 1] returns undefined on empty snapshots
-          // startAfter(undefined) throws a Firestore error on the next pagination call
           if (snapshot.docs.length > 0) {
               setLastPost(snapshot.docs[snapshot.docs.length - 1]);
           }
           if (snapshot.docs.length < 15) setHasMorePosts(false);
 
-      } catch (e) { console.error("Error loading posts", e); }
-      finally { 
+      } catch (e) { 
+          console.error("Error loading posts", e); 
+          setHasMorePosts(false);
+      } finally { 
           loadingPostsRef.current = false;
-          setLoadingMorePosts(false); // ✅ ISSUE 2 FIX
+          setLoadingMorePosts(false); 
       }
   };
 
   const loadReposts = async (initial = false) => {
       if (!initial && (loadingRepostsRef.current || !hasMoreReposts)) return;
       loadingRepostsRef.current = true;
-      if (!initial) setLoadingMoreReposts(true); // ✅ ISSUE 2 FIX
+      if (!initial) setLoadingMoreReposts(true); 
 
       try {
-          // ✅ BUG 4 & 15 FIX: Query the actual repost documents. No composite index required!
           let q = query(
               collection(db, 'posts'), 
               where('repostedByUid', '==', targetUserId), 
@@ -224,7 +217,6 @@ export default function FeedProfileScreen() {
           
           let newPosts: any[] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-          // The originalIds fetch remains to "fill in" the missing details from the master post
           const originalIds = [...new Set(newPosts.map(p => p.originalPostId))];
           if (originalIds.length > 0) {
               try {
@@ -277,23 +269,24 @@ export default function FeedProfileScreen() {
               });
           }
 
-          // ✅ ISSUE 1 FIX: Guard against undefined on empty snapshot
           if (snapshot.docs.length > 0) {
               setLastRepost(snapshot.docs[snapshot.docs.length - 1]);
           }
           if (snapshot.docs.length < 15) setHasMoreReposts(false);
 
-      } catch (e) { console.error("Error loading reposts", e); }
-      finally { 
+      } catch (e) { 
+          console.error("Error loading reposts", e); 
+          setHasMoreReposts(false);
+      } finally { 
           loadingRepostsRef.current = false;
-          setLoadingMoreReposts(false); // ✅ ISSUE 2 FIX
+          setLoadingMoreReposts(false); 
       }
   };
 
   const loadLikes = async (initial = false) => {
       if (!initial && (loadingLikesRef.current || !hasMoreLikes)) return;
       loadingLikesRef.current = true;
-      if (!initial) setLoadingMoreLikes(true); // ✅ ISSUE 2 FIX
+      if (!initial) setLoadingMoreLikes(true); 
 
       try {
           let q = query(
@@ -320,16 +313,17 @@ export default function FeedProfileScreen() {
               });
           }
 
-          // ✅ ISSUE 1 FIX: Guard against undefined on empty snapshot
           if (snapshot.docs.length > 0) {
               setLastLike(snapshot.docs[snapshot.docs.length - 1]);
           }
           if (snapshot.docs.length < 15) setHasMoreLikes(false);
 
-      } catch (e) { console.error("Error loading likes", e); }
-      finally { 
+      } catch (e) { 
+          console.error("Error loading likes", e); 
+          setHasMoreLikes(false);
+      } finally { 
           loadingLikesRef.current = false;
-          setLoadingMoreLikes(false); // ✅ ISSUE 2 FIX
+          setLoadingMoreLikes(false); 
       }
   };
 
@@ -430,7 +424,6 @@ export default function FeedProfileScreen() {
           
           onEndReached={loadMoreFunc}
           onEndReachedThreshold={0.5}
-          // ✅ ISSUE 2 FIX: Use state (not refs) to drive re-renders on the footer indicator
           ListFooterComponent={
               (tabName === 'Posts' && loadingMorePosts) || 
               (tabName === 'Reposts' && loadingMoreReposts) || 

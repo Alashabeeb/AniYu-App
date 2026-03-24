@@ -1,4 +1,4 @@
-import { DeleteObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3"; // ✅ ADDED DeleteObjectCommand
+import { DeleteObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import * as admin from "firebase-admin";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
@@ -137,8 +137,6 @@ export const deleteR2File = onRequest((req, res) => {
 
     try {
       // C. Extract Key from URL
-      // The publicUrl looks like https://pub-xxxx.r2.dev/folder/filename.jpg
-      // We parse the URL and remove the leading slash to get the exact R2 Key
       const urlObj = new URL(fileUrl);
       const key = decodeURIComponent(urlObj.pathname.substring(1)); 
 
@@ -186,7 +184,6 @@ export const createPost = onRequest((req, res) => {
     }
 
     // C. Validate inputs
-    // ✅ FIX: Added `role` to the extraction list so the backend acknowledges it
     const { text, mediaUrl, mediaType, tags, displayName, username, userAvatar, role } = req.body;
     if (!text && !mediaUrl) {
       res.status(400).json({ error: "Post must have text or media." });
@@ -214,7 +211,8 @@ export const createPost = onRequest((req, res) => {
         displayName: displayName || "Anonymous",
         username: username || "anonymous",
         userAvatar: userAvatar || null,
-        role: role || "user", // ✅ FIX: Safely writes the role to the Firestore document for the badge!
+        role: role || "user", 
+        isRepost: false, // ✅ FIXED: Safely adds the isRepost field to prevent query errors
         tags: tags,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         likes: [],
@@ -293,6 +291,7 @@ export const createComment = onRequest((req, res) => {
         displayName: displayName || "Anonymous",
         userAvatar: userAvatar || null,
         role: role || "user",
+        isRepost: false, // ✅ FIXED: Keeps the entire database schema perfectly uniform
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         parentId: parentId,
         likes: [],
@@ -347,7 +346,6 @@ export const createSupportMessage = onRequest((req, res) => {
     }
 
     // C. Validate inputs
-    // ✅ FIX: Defensive Extraction to prevent 400 errors from strict naming
     const ticketId = req.body.ticketId || req.body.id || req.body.ticketID;
     const text = req.body.text || "";
     const imageUrl = req.body.imageUrl || null;
@@ -371,7 +369,6 @@ export const createSupportMessage = onRequest((req, res) => {
       const ticketSnap = await ticketRef.get();
       
       const ticketData = ticketSnap.data() || {};
-      // ✅ FIX: Safely checks multiple potential ownership fields to prevent 403 Forbidden errors
       const ticketOwner = ticketData.userId || ticketData.uid || ticketData.senderId;
       
       if (!ticketSnap.exists || ticketOwner !== decodedToken.uid) {

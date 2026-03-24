@@ -329,9 +329,24 @@ export default function AnimeDetailScreen() {
       setAnime(detailsData);
 
       // ✅ BUG 21 FIX: Handle paginated episode response
-      setEpisodes(episodesData.episodes);
-      setLastEpDoc(episodesData.lastDoc);
-      setHasMoreEps(episodesData.hasMore);
+      // ✅ ISSUE 1 FIX: Guard against service returning a flat array vs paginated object
+      // If animeService.ts getAnimeEpisodes is not yet updated to return { episodes, lastDoc, hasMore },
+      // this guard prevents a silent crash where episodesData.episodes would be undefined
+      if (episodesData && Array.isArray(episodesData.episodes)) {
+          // New paginated format: { episodes, lastDoc, hasMore }
+          setEpisodes(episodesData.episodes);
+          setLastEpDoc(episodesData.lastDoc ?? null);
+          setHasMoreEps(episodesData.hasMore ?? false);
+      } else if (Array.isArray(episodesData)) {
+          // Old flat array format — service not yet updated, graceful fallback
+          setEpisodes(episodesData);
+          setLastEpDoc(null);
+          setHasMoreEps(false);
+      } else {
+          setEpisodes([]);
+          setLastEpDoc(null);
+          setHasMoreEps(false);
+      }
 
       // ✅ CONDITIONAL TRIGGER: ONLY Save to "Recently Viewed" if NO streaming rights
       const user = auth.currentUser;
@@ -359,14 +374,21 @@ export default function AnimeDetailScreen() {
           setRank(calculatedRank);
       }
 
+      // ✅ Guard: use the resolved episodes array safely
+      const resolvedEpisodes = Array.isArray(episodesData?.episodes) 
+          ? episodesData.episodes 
+          : Array.isArray(episodesData) 
+          ? episodesData 
+          : [];
+
       const ids: string[] = [];
-      for (const ep of episodesData.episodes) {
+      for (const ep of resolvedEpisodes) {
           const localUri = await getLocalEpisodeUri(ep.mal_id);
           if (localUri) ids.push(String(ep.mal_id));
       }
       setDownloadedEpIds(ids);
 
-      episodesData.episodes.forEach(ep => {
+      resolvedEpisodes.forEach(ep => {
           const epId = String(ep.mal_id);
           if (isDownloading(epId)) {
               setDownloadProgress(prev => ({ ...prev, [epId]: 0.01 }));
@@ -391,9 +413,15 @@ export default function AnimeDetailScreen() {
       setLoadingMoreEps(true);
       try {
           const newEpsData = await getAnimeEpisodes(id as string, lastEpDoc);
-          setEpisodes(prev => [...prev, ...newEpsData.episodes]);
-          setLastEpDoc(newEpsData.lastDoc);
-          setHasMoreEps(newEpsData.hasMore);
+          // ✅ ISSUE 1 FIX: Same guard for paginated vs flat array on load more
+          if (newEpsData && Array.isArray(newEpsData.episodes)) {
+              setEpisodes(prev => [...prev, ...newEpsData.episodes]);
+              setLastEpDoc(newEpsData.lastDoc ?? null);
+              setHasMoreEps(newEpsData.hasMore ?? false);
+          } else if (Array.isArray(newEpsData)) {
+              setEpisodes(prev => [...prev, ...newEpsData]);
+              setHasMoreEps(false);
+          }
       } catch (error) {
           console.error(error);
       } finally {
@@ -554,7 +582,21 @@ export default function AnimeDetailScreen() {
       setCommentText('');
       setUserRating(0);
       Alert.alert("Sent", "Feedback submitted successfully.");
-      loadAllData(); 
+
+      // ✅ ISSUE 2 FIX: Only refresh the rank/score — not the entire screen
+      // Previously called loadAllData() which re-fetched all episodes and details
+      // just to update the score display — very expensive at scale
+      try {
+          const freshDetails = await getAnimeDetails(id as string);
+          if (freshDetails) {
+              const fd = freshDetails as any;
+              setAnime((prev: any) => ({ ...prev, score: fd.score }));
+              if (fd.views !== undefined) {
+                  const freshRank = await getAnimeRank(fd.views);
+                  setRank(freshRank);
+              }
+          }
+      } catch (e) { console.log("Score refresh error", e); }
   };
 
   const openSocial = (url: string) => {
