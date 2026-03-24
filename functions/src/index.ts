@@ -186,7 +186,8 @@ export const createPost = onRequest((req, res) => {
     }
 
     // C. Validate inputs
-    const { text, mediaUrl, mediaType, tags, displayName, username, userAvatar } = req.body;
+    // ✅ FIX: Added `role` to the extraction list so the backend acknowledges it
+    const { text, mediaUrl, mediaType, tags, displayName, username, userAvatar, role } = req.body;
     if (!text && !mediaUrl) {
       res.status(400).json({ error: "Post must have text or media." });
       return;
@@ -213,6 +214,7 @@ export const createPost = onRequest((req, res) => {
         displayName: displayName || "Anonymous",
         username: username || "anonymous",
         userAvatar: userAvatar || null,
+        role: role || "user", // ✅ FIX: Safely writes the role to the Firestore document for the badge!
         tags: tags,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         likes: [],
@@ -345,12 +347,16 @@ export const createSupportMessage = onRequest((req, res) => {
     }
 
     // C. Validate inputs
-    const { ticketId, text, imageUrl } = req.body;
+    // ✅ FIX: Defensive Extraction to prevent 400 errors from strict naming
+    const ticketId = req.body.ticketId || req.body.id || req.body.ticketID;
+    const text = req.body.text || "";
+    const imageUrl = req.body.imageUrl || null;
+    
     if (!ticketId) {
       res.status(400).json({ error: "Missing ticket ID." });
       return;
     }
-    if (!text && !imageUrl) {
+    if (!text.trim() && !imageUrl) {
       res.status(400).json({ error: "Message must have text or an image." });
       return;
     }
@@ -363,8 +369,13 @@ export const createSupportMessage = onRequest((req, res) => {
       // D. Verify ticket belongs to this user
       const ticketRef = admin.firestore().collection("supportTickets").doc(ticketId);
       const ticketSnap = await ticketRef.get();
-      if (!ticketSnap.exists || ticketSnap.data()?.userId !== decodedToken.uid) {
-        res.status(403).json({ error: "Forbidden." });
+      
+      const ticketData = ticketSnap.data() || {};
+      // ✅ FIX: Safely checks multiple potential ownership fields to prevent 403 Forbidden errors
+      const ticketOwner = ticketData.userId || ticketData.uid || ticketData.senderId;
+      
+      if (!ticketSnap.exists || ticketOwner !== decodedToken.uid) {
+        res.status(403).json({ error: "Forbidden. You do not own this ticket." });
         return;
       }
 

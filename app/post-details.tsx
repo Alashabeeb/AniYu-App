@@ -232,7 +232,15 @@ export default function PostDetailsScreen() {
                       await addDoc(collection(db, 'posts'), {
                           isRepost: true,
                           originalPostId: id,
-                          userId: targetPost.userId, 
+                          // ✅ FIX: userId must be the reposter's UID, not the original author's
+                          // Previously was targetPost.userId which caused reposts to appear
+                          // on the wrong user's profile and broke feed-profile queries
+                          userId: user.uid,
+                          repostedByUid: user.uid,
+                          repostedByName: user.displayName || 'Someone',
+                          // ✅ FIX: originalUserId was missing entirely — this field is required
+                          // by feed.tsx sync logic and sendSocialNotification to identify the author
+                          originalUserId: targetPost.userId,
                           displayName: targetPost.displayName,
                           username: targetPost.username,
                           userAvatar: targetPost.userAvatar,
@@ -242,12 +250,12 @@ export default function PostDetailsScreen() {
                           tags: targetPost.tags || [],
                           parentId: null, 
                           createdAt: serverTimestamp(),
-                          repostedByUid: user.uid,
-                          repostedByName: user.displayName || 'Someone',
                           likes: [], likeCount: 0,
                           reposts: [], repostCount: 0,
                           commentCount: 0,
-                          views: 0
+                          views: 0,
+                          // ✅ FIX: role was missing — needed for badge display on reposts
+                          role: targetPost.role || 'user'
                       });
                       sendSocialNotification(targetPost.userId, 'repost', { uid: user.uid, name: user.displayName || 'User', avatar: user.photoURL || '' }, '', id).catch(()=>console.log("Silent notif error"));
                   } else if (field === 'likes' && targetPost.userId !== user.uid) {

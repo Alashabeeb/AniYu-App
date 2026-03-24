@@ -313,9 +313,17 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
                     getDocs(repostsQ)
                 ]);
 
-                // Fire and forget deletions for cleanup to avoid batch limits
-                commentsSnap.forEach(d => deleteDoc(d.ref).catch(() => {}));
-                repostsSnap.forEach(d => deleteDoc(d.ref).catch(() => {}));
+                // ✅ ISSUE A FIX: Use writeBatch in chunks of 500 instead of fire-and-forget
+                // Firestore batch limit is 500 operations per batch
+                const allOrphans = [...commentsSnap.docs, ...repostsSnap.docs];
+                if (allOrphans.length > 0) {
+                    const CHUNK_SIZE = 500;
+                    for (let i = 0; i < allOrphans.length; i += CHUNK_SIZE) {
+                        const batch = writeBatch(db);
+                        allOrphans.slice(i, i + CHUNK_SIZE).forEach(d => batch.delete(d.ref));
+                        await batch.commit();
+                    }
+                }
 
                 // Now delete the main post
                 await deleteDoc(doc(db, "posts", post.id));

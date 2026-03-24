@@ -3,24 +3,24 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import {
-  collection,
-  doc,
-  getDoc,
-  limit,
-  onSnapshot,
-  query,
-  where
+    collection,
+    doc,
+    getDoc,
+    limit,
+    onSnapshot,
+    query,
+    where
 } from 'firebase/firestore';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  FlatList,
-  Keyboard,
-  RefreshControl,
-  ScrollView, StatusBar, StyleSheet,
-  Text,
-  TextInput, TouchableOpacity,
-  View
+    ActivityIndicator,
+    FlatList,
+    Keyboard,
+    RefreshControl,
+    ScrollView, StatusBar, StyleSheet,
+    Text,
+    TextInput, TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -92,6 +92,8 @@ export default function HomeScreen() {
     useCallback(() => { 
         loadFavorites(); 
         checkUnreadStatus(); 
+        // ✅ FIX: useFocusEffect only reloads history for the rails display
+        // loadInitialData handles history internally to avoid duplicate getContinueWatching calls
         loadHistory(); 
     }, [])
   );
@@ -132,12 +134,21 @@ export default function HomeScreen() {
       setFavorites(animeFavs);
   };
 
-  const loadHistory = async () => {
-      const history = await getContinueWatching();
+  // ✅ FIX: Accepts an optional pre-fetched history array to avoid duplicate getContinueWatching calls
+  // When called from loadInitialData, history is passed in directly (0 extra AsyncStorage reads)
+  // When called from useFocusEffect, it fetches its own copy as normal
+  const loadHistory = async (prefetchedHistory?: any[]) => {
+      const history = prefetchedHistory ?? await getContinueWatching();
       if (isMountedRef.current) {
           // ✅ SPLIT THE HISTORY INTO TWO ARRAYS (Max 5 each)
-          const activeWatches = history.filter(item => item.progress > 0 && item.episodeId !== 'preview').slice(0, 5);
-          const recentViews = history.filter(item => item.progress === 0 || item.episodeId === 'preview').slice(0, 5);
+          // ✅ FIX: Use nullish coalescing to guard against undefined progress on old history entries
+          const activeWatches = history.filter(
+              item => (item.progress ?? 0) > 0 && item.episodeId !== 'preview'
+          ).slice(0, 5);
+
+          const recentViews = history.filter(
+              item => (item.progress ?? 0) === 0 || item.episodeId === 'preview'
+          ).slice(0, 5);
           
           setContinueWatching(activeWatches);
           setRecentlyViewed(recentViews);
@@ -170,7 +181,7 @@ export default function HomeScreen() {
       }
   };
 
-  const getTopGenres = async () => {
+  const getTopGenres = async (prefetchedHistory?: any[]) => {
       const genreCounts: Record<string, number> = {};
       
       if (currentUser) {
@@ -185,7 +196,8 @@ export default function HomeScreen() {
           } catch(e) {}
       }
 
-      const history = await getContinueWatching();
+      // ✅ FIX: Use pre-fetched history if available — avoids a 3rd getContinueWatching call
+      const history = prefetchedHistory ?? await getContinueWatching();
       history.forEach(item => {
           if (item.genres) {
               item.genres.forEach((g: string) => {
@@ -204,13 +216,16 @@ export default function HomeScreen() {
   const loadInitialData = async (isRefresh = false) => {
     try {
       if (trending.length === 0 && !isRefresh && isMountedRef.current) setLoading(true); 
-      
-      await loadHistory();
+
+      // ✅ FIX: Fetch history ONCE here and pass it to both loadHistory and getTopGenres
+      // This eliminates the duplicate getContinueWatching calls that previously fired 2-3x on mount
+      const history = await getContinueWatching();
+      await loadHistory(history);
 
       const [trendingData, upcomingData, userGenres] = await Promise.all([
           getTopAnime(),
           getUpcomingAnime(),
-          getTopGenres()
+          getTopGenres(history) // ✅ FIX: Pass the same history — no 3rd AsyncStorage read
       ]);
 
       const recommendedData = await getRecommendedAnime(userGenres);
@@ -353,6 +368,7 @@ export default function HomeScreen() {
             ) : (
                 <FlatList
                     data={searchResults}
+                    // ✅ BUG FIX 2: Added index to guarantee unique keys
                     keyExtractor={(item, index) => `${item.mal_id}-${index}`}
                     renderItem={renderSearchItem}
                     contentContainerStyle={{ padding: 20 }}

@@ -124,6 +124,12 @@ export default function FeedScreen() {
                       previousInterestsRef.current = freshString;
                       fetchFeedChunk(true); 
                   }
+
+                  // ✅ NEW USER FIX: If there was no cache at all, neither trigger above fired.
+                  // This guarantees brand new users always get their feed loaded on first session.
+                  if (!cachedPrefs && isMountedRef.current) {
+                      fetchFeedChunk(true);
+                  }
                   
                   await AsyncStorage.setItem(cacheKey, JSON.stringify({
                       blockedUsers: data?.blockedUsers || [],
