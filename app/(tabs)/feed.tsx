@@ -34,6 +34,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import PostCard from '../../components/PostCard';
 // ✅ IMPORT AD BANNER
 import AdBanner from '../../components/AdBanner';
+// ✅ IMPORT ONBOARDING FLOW
+import OnboardingFlow from '../../components/OnboardingFlow';
 
 import { db } from '../../config/firebaseConfig';
 import { useAuth } from '../../context/AuthContext';
@@ -49,6 +51,9 @@ export default function FeedScreen() {
   const router = useRouter();
   const { theme } = useTheme();
   const { user: currentUser } = useAuth();
+
+  // ✅ GATEKEEPER STATE
+  const [onboardingStatus, setOnboardingStatus] = useState<'loading' | 'needs_onboarding' | 'complete'>('loading');
 
   const [posts, setPosts] = useState<any[]>([]);
   const [userInterests, setUserInterests] = useState<string[]>([]);
@@ -85,6 +90,29 @@ export default function FeedScreen() {
   useEffect(() => {
     return () => { isMountedRef.current = false; };
   }, []);
+
+  // ✅ GATEKEEPER CHECK: See if user needs to onboard
+  useEffect(() => {
+      const checkOnboarding = async () => {
+          if (currentUser?.uid) {
+              try {
+                  const userSnap = await getDoc(doc(db, "users", currentUser.uid));
+                  if (userSnap.exists() && userSnap.data().hasCompletedOnboarding === true) {
+                      setOnboardingStatus('complete');
+                  } else {
+                      setOnboardingStatus('needs_onboarding');
+                  }
+              } catch (error) {
+                  console.error("Error checking onboarding status:", error);
+                  setOnboardingStatus('complete'); // Fail-safe: let them in if network drops
+              }
+          } else {
+              // If no user is logged in (guest mode), skip onboarding
+              setOnboardingStatus('complete');
+          }
+      };
+      checkOnboarding();
+  }, [currentUser?.uid]);
 
   useEffect(() => {
       const loadCache = async () => {
@@ -357,7 +385,6 @@ export default function FeedScreen() {
   };
 
   useEffect(() => {
-      // ✅ BUG 3 FIX: Add 500ms Debounce to prevent Keystroke Spam
       const delayDebounceFn = setTimeout(async () => {
           if (showSearch && searchText.trim().length > 0) {
               if (searchText.trim().length > MAX_SEARCH_CHARS) return;
@@ -374,9 +401,9 @@ export default function FeedScreen() {
           } else {
               if (isMountedRef.current) setUserResults([]);
           }
-      }, 500); // 500ms wait
+      }, 500); 
 
-      return () => clearTimeout(delayDebounceFn); // Cleanup previous timer if user keeps typing
+      return () => clearTimeout(delayDebounceFn); 
   }, [searchText, showSearch]);
 
   const onRefresh = useCallback(() => { fetchFeedChunk(true); }, [userInterests]);
@@ -421,6 +448,25 @@ export default function FeedScreen() {
       </View>
   );
 
+  // ✅ IF LOADING STATUS, SHOW SPINNER
+  if (onboardingStatus === 'loading') {
+      return (
+          <View style={[styles.container, { backgroundColor: theme.background, justifyContent: 'center', alignItems: 'center' }]}>
+              <ActivityIndicator size="large" color={theme.tint} />
+          </View>
+      );
+  }
+
+  // ✅ THE GATEKEEPER: IF NEEDS ONBOARDING, SHOW ONLY THE ONBOARDING FLOW
+  if (onboardingStatus === 'needs_onboarding') {
+      return (
+          <SafeAreaView style={{ flex: 1, backgroundColor: theme.background }} edges={['top']}>
+              <OnboardingFlow onComplete={() => setOnboardingStatus('complete')} />
+          </SafeAreaView>
+      );
+  }
+
+  // ✅ NORMAL FEED (If they don't need onboarding)
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
       <View style={[styles.header, { borderBottomColor: theme.border }]}>
