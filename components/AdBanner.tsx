@@ -4,23 +4,21 @@ import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
 import { AdUnitIds } from '../constants/AdIds';
 
 export default function AdBanner() {
-  const [isAdLoaded, setIsAdLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
 
-  // If the ad fails to load (e.g. no internet), hide the space completely so the UI looks clean
+  // If the ad completely fails (e.g., no internet), hide the space
   if (hasError) return null; 
 
   return (
-    <View style={[styles.container, !isAdLoaded && styles.hidden]}>
+    <View style={styles.container}>
       <BannerAd
         unitId={AdUnitIds.banner}
         size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
         requestOptions={{
           requestNonPersonalizedAdsOnly: true, // Safer for privacy compliance
         }}
-        onAdLoaded={() => setIsAdLoaded(true)}
         onAdFailedToLoad={(error) => {
-          console.error('Ad failed to load: ', error);
+          console.error('Banner Ad failed to load: ', error.message);
           setHasError(true);
         }}
       />
@@ -33,9 +31,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     width: '100%',
+    // ✅ SURGICAL FIX: Give it a minimum height so Google can calculate the adaptive size!
+    minHeight: 50, 
     paddingVertical: 10,
-  },
-  hidden: {
-    display: 'none',
   }
 });
