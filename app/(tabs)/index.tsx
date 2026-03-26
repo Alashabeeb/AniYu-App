@@ -26,6 +26,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useTheme } from '../../context/ThemeContext';
 
+import AdBanner from '../../components/AdBanner';
 import HeroCarousel from '../../components/HeroCarousel';
 import TrendingRail from '../../components/TrendingRail';
 
@@ -393,7 +394,7 @@ export default function HomeScreen() {
                   onItemPress={handleContinueWatchingClick}
               />
           )}
-
+            <AdBanner />
           {/* ✅ RAIL 2: RECENTLY VIEWED */}
           {recentlyViewed.length > 0 && (
               <TrendingRail 
@@ -402,6 +403,8 @@ export default function HomeScreen() {
                   onItemPress={handleRecentlyViewedClick}
               />
           )}
+            
+            <AdBanner />
 
           <TrendingRail 
               title="🔥 Trending Now" 
@@ -410,6 +413,8 @@ export default function HomeScreen() {
               onToggleFavorite={handleToggleFav}
               onMore={() => router.push('/anime-list?type=trending')} 
           />
+
+            <AdBanner />
           
           <TrendingRail 
               title="Upcoming Anime" 
@@ -419,6 +424,8 @@ export default function HomeScreen() {
               onMore={() => router.push('/anime-list?type=upcoming')}
               />
 
+            <AdBanner />
+
           <TrendingRail 
               title="Recommended for You" 
               data={recommended.slice(0, 5)} 
@@ -427,6 +434,8 @@ export default function HomeScreen() {
               onMore={() => router.push('/anime-list?type=recommended')} 
           />
           
+            <AdBanner />
+
           {favorites.length > 0 && (
               <TrendingRail 
                   title="My Favorites ❤️" 

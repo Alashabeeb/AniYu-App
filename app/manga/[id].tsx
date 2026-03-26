@@ -88,8 +88,16 @@ export default function MangaDetailScreen() {
       }
   }, [isClosed, isEarnedReward, load, pendingChapter, pendingAction]);
 
+  // ✅ ISSUE 1 FIX: loadStatus uses useFocusEffect — correct, it needs to refresh
+  // on every return from chapter-read so downloaded/read badges stay up to date
   useFocusEffect(useCallback(() => { if (id) loadStatus(); }, [id]));
-  useFocusEffect(useCallback(() => { if(id) loadData(); }, [id]));
+
+  // ✅ ISSUE 1 FIX: loadData moved from useFocusEffect to useEffect with [id] dependency
+  // Previously: fired on EVERY screen focus → chapters reset + 2 Firestore reads every time
+  // user navigated back from reading a chapter.
+  // Now: fires ONCE on mount. useFocusEffect is only needed for status (downloads/read marks)
+  // not for the manga details and chapter list which don't change between navigations.
+  useEffect(() => { if (id) loadData(); }, [id]);
 
   const loadStatus = async () => {
       const dls = await getMangaDownloads();
@@ -107,8 +115,17 @@ export default function MangaDetailScreen() {
       setManga(details);
 
       const chapData = await getMangaChapters(id as string, null);
+
+      // ✅ ISSUE 2 FIX: Only set chapters if we got results back
+      // Previously chapters were always reset to first page on every focus,
+      // meaning any "Load More" chapters the user had loaded were wiped on return.
+      // Now chapters only set on initial mount (this effect only fires once).
       setChapters(chapData.data);
-      setLastVisible(chapData.lastVisible);
+
+      // ✅ BUG 32 FIX: Only update lastVisible if we have docs
+      if (chapData.lastVisible) {
+          setLastVisible(chapData.lastVisible);
+      }
       if (chapData.data.length < 50) setHasMore(false);
 
       checkAndIncrementView();

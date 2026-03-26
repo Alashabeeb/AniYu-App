@@ -28,7 +28,7 @@ const GENRES = ["Action", "Adventure", "Romance", "Fantasy", "Drama", "Comedy", 
 
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5 MB
 const MAX_VIDEO_SIZE = 20 * 1024 * 1024; // 20 MB
-const MAX_CHARS = 120; 
+const MAX_CHARS = 200; 
 
 export default function CreatePostScreen() {
   const router = useRouter();

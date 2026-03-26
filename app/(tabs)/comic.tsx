@@ -24,6 +24,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import MangaGrid from '../../components/MangaGrid';
 import TrendingRail from '../../components/TrendingRail';
+// ✅ IMPORT AD BANNER
+import AdBanner from '../../components/AdBanner';
 import { auth, db } from '../../config/firebaseConfig';
 import { useTheme } from '../../context/ThemeContext';
 // Services
@@ -453,6 +455,9 @@ export default function ComicScreen() {
                       onItemPress={openMangaDetails}
                   />
 
+                  {/* ✅ STRATEGIC AD PLACEMENT 1: Between Top Manga and Recommended */}
+                  <AdBanner />
+
                   <TrendingRail 
                       title="Recommended for You" 
                       data={recommendedManga.slice(0, 5)} 
@@ -461,6 +466,9 @@ export default function ComicScreen() {
                       onMore={() => router.push('/manga-list?type=recommended')}
                       onItemPress={openMangaDetails}
                   />
+
+                  {/* ✅ STRATEGIC AD PLACEMENT 2: Between Recommended and All Manga */}
+                  <AdBanner />
 
                   <View style={styles.sectionContainer}>
                       <Text style={[styles.sectionTitle, { color: theme.text }]}>All Manga</Text>

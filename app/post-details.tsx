@@ -25,6 +25,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import CustomAlert from '../components/CustomAlert';
+// ✅ IMPORT AD BANNER
+import AdBanner from '../components/AdBanner';
 import { auth, db } from '../config/firebaseConfig';
 import { useTheme } from '../context/ThemeContext';
 import { sendSocialNotification } from '../services/notificationService';
@@ -488,11 +490,12 @@ export default function PostDetailsScreen() {
     return new Date(timestamp.seconds * 1000).toLocaleDateString();
   };
 
-  const renderComment = ({ item }: { item: any }) => {
+  const renderComment = ({ item, index }: { item: any, index: number }) => {
       const isLiked = item.likes?.includes(user?.uid);
       const isReposted = item.reposts?.includes(user?.uid);
       const timeAgo = formatTimeAgo(item.createdAt);
       return (
+        <>
         <TouchableOpacity 
             style={[styles.commentItem, { borderBottomColor: theme.border }]}
             onPress={() => goToDetails(item.id)} 
@@ -545,6 +548,8 @@ export default function PostDetailsScreen() {
                 </View>
             </View>
         </TouchableOpacity>
+        {(index + 1) % 3 === 0 && <AdBanner />}
+        </>
       );
   };
 
@@ -640,6 +645,7 @@ export default function PostDetailsScreen() {
                        <TouchableOpacity onPress={() => toggleAction(postId as string, 'reposts', post.reposts || [])}><Ionicons name="repeat-outline" size={22} color={theme.text} /></TouchableOpacity>
                        <TouchableOpacity onPress={() => handleShare(post)}><Ionicons name="share-social-outline" size={22} color={theme.text} /></TouchableOpacity>
                   </View>
+                  <AdBanner />
                </View>
             )}
             renderItem={renderComment}

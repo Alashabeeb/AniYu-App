@@ -143,63 +143,133 @@ export default function TabLayout() {
             </View>
 
             <ScrollView style={styles.scrollContent} contentContainerStyle={{ paddingBottom: 40 }}>
-                <Text style={[styles.termsText, { color: theme.text, fontWeight: 'bold', fontSize: 18, marginBottom: 5 }]}>TERMS AND CONDITIONS & COPYRIGHT POLICY</Text>
-                <Text style={[styles.termsText, { color: theme.subText, marginBottom: 20, fontSize: 12 }]}>Last Updated: March 1, 2026</Text>
+                <Text style={[styles.termsText, { color: theme.text, fontWeight: 'bold', fontSize: 18, marginBottom: 5 }]}>TERMS OF SERVICE</Text>
+                <Text style={[styles.termsText, { color: theme.subText, marginBottom: 20, fontSize: 12 }]}>Global Edition -- Effective March 2026</Text>
 
                 <Text style={[styles.termsText, { color: theme.text, marginBottom: 15 }]}>
-                    Welcome to AniYu ("we," "our," or "us"). By downloading, accessing, or using the AniYu application (the "App"), you agree to be bound by these Terms and Conditions (the "Terms"). If you do not agree to these Terms, do not use the App.
+                    Welcome to AniYu ("we," "our," or "us"). AniYu is an anime streaming, manga reading, and social community platform developed and operated by Aniyu Ventures, a business registered under the Companies and Allied Matters Act 2020 in the Federal Republic of Nigeria (Business Name Registration No. 9158767).
+                    {"\n\n"}
+                    These Terms of Service ("Terms") govern your access to and use of the AniYu mobile application, website, and all associated services (collectively, the "Platform"). By accessing or using the Platform, you confirm that you have read, understood, and agree to be bound by these Terms and our Privacy Policy.
+                    {"\n\n"}
+                    AniYu operates globally. These Terms are written to comply with applicable laws across multiple jurisdictions including but not limited to Nigeria, the European Union, the United States, Brazil, the United Arab Emirates, the Kingdom of Saudi Arabia, and Southeast Asian territories.
+                    {"\n\n"}
+                    If you do not agree to these Terms, you must immediately stop using the Platform.
                 </Text>
 
-                <Text style={[styles.sectionTitle, { color: theme.text }]}>1. Acceptance of Terms</Text>
-                <Text style={[styles.termsText, { color: theme.subText }]}>By registering an account or using the App, you acknowledge that you have read, understood, and agree to be bound by these Terms, as well as our Privacy Policy. You must be at least 13 years old to use this App.</Text>
-
-                <Text style={[styles.sectionTitle, { color: theme.text }]}>2. User-Generated Content and Social Features</Text>
+                <Text style={[styles.sectionTitle, { color: theme.text }]}>1. ELIGIBILITY AND ACCOUNT REGISTRATION</Text>
                 <Text style={[styles.termsText, { color: theme.subText }]}>
-                    AniYu allows users to create profiles, post comments, and interact with content ("User Content").{"\n"}
-                    • You are solely responsible for the User Content you post.{"\n"}
-                    • You agree not to post anything that is illegal, abusive, harassing, or infringes on the intellectual property rights of others.{"\n"}
-                    • We reserve the right, but not the obligation, to monitor, edit, or remove User Content at our sole discretion.
+                    <Text style={{fontWeight: 'bold', color: theme.text}}>1.1 Minimum Age Requirement:</Text> You must be at least thirteen (13) years of age to use AniYu. Users under the age of eighteen (18) represent that they have obtained the consent of a parent or legal guardian to use the Platform. AniYu reserves the right to request proof of age at any time.{"\n\n"}
+                    <Text style={{fontWeight: 'bold', color: theme.text}}>1.2 COPPA Compliance (US Users):</Text> AniYu does not knowingly collect personal information from children under the age of thirteen (13) in the United States in violation of the Children's Online Privacy Protection Act (COPPA). If we become aware that a user under 13 has provided personal information without verifiable parental consent, we will delete such information immediately.{"\n\n"}
+                    <Text style={{fontWeight: 'bold', color: theme.text}}>1.3 Account Registration:</Text> To access certain features of the Platform, you must create an account. You agree to provide accurate, current, and complete registration information; maintain the security and confidentiality of your account credentials; notify AniYu immediately of any unauthorised use of your account; and accept responsibility for all activities conducted under your account. AniYu reserves the right to suspend or terminate any account that provides false information or violates these Terms.
                 </Text>
 
-                <Text style={[styles.sectionTitle, { color: theme.text }]}>3. Offline Syncing and Caching</Text>
+                <Text style={[styles.sectionTitle, { color: theme.text }]}>2. PLATFORM FEATURES AND PERMITTED USE</Text>
                 <Text style={[styles.termsText, { color: theme.subText }]}>
-                    AniYu may provide a feature allowing you to sync or cache certain content for offline viewing ("Offline Sync").{"\n"}
-                    • You acknowledge that Offline Sync is provided strictly as a temporary, personal convenience for use exclusively within the AniYu App environment.{"\n"}
-                    • Using the Offline Sync feature does not grant you any ownership rights, reproduction rights, or distribution rights to the underlying media files.{"\n"}
-                    • Any attempt to extract, decrypt, convert, or distribute cached files outside of the AniYu App is strictly prohibited and constitutes a material breach of these Terms.
+                    <Text style={{fontWeight: 'bold', color: theme.text}}>2.1 Available Features:</Text> AniYu provides users with access to anime streaming and discovery, manga and manhua reader, offline content downloads, community feed (social posts, follows, likes, and comments), and independent creator content.{"\n\n"}
+                    <Text style={{fontWeight: 'bold', color: theme.text}}>2.2 Regional Content Availability:</Text> Certain content features are subject to regional licensing restrictions and may not be available in all territories. AniYu reserves the right to restrict, modify, or withdraw content availability in any region at any time. The community features of the Platform are available globally.{"\n\n"}
+                    <Text style={{fontWeight: 'bold', color: theme.text}}>2.3 Permitted Use:</Text> You agree to use the Platform only for lawful purposes. Permitted use includes personal, non-commercial access to available content; engaging with the community feed; sharing original content you have the right to distribute; and following and interacting with other users.
                 </Text>
 
-                <Text style={[styles.sectionTitle, { color: theme.text }]}>4. Copyright & Intellectual Property Policy</Text>
+                <Text style={[styles.sectionTitle, { color: theme.text }]}>3. PROHIBITED CONDUCT</Text>
                 <Text style={[styles.termsText, { color: theme.subText }]}>
-                    AniYu respects the intellectual property rights of others and expects its users to do the same. We operate as a service provider and platform. If you are a copyright owner or an authorized agent thereof and believe that any content hosted on AniYu infringes upon your copyrights, you may submit a notification pursuant to international copyright standards (including the DMCA and the Nigerian Copyright Act) by providing our Designated Copyright Agent with the following information in writing:{"\n\n"}
-                    • A physical or electronic signature of a person authorized to act on behalf of the owner of an exclusive right that is allegedly infringed;{"\n"}
-                    • Identification of the copyrighted work claimed to have been infringed;{"\n"}
-                    • Identification of the material that is claimed to be infringing or to be the subject of infringing activity and that is to be removed or access to which is to be disabled, and information reasonably sufficient to permit us to locate the material (e.g., the specific URL or location within the App);{"\n"}
-                    • Information reasonably sufficient to permit us to contact you, such as an address, telephone number, and email address;{"\n"}
-                    • A statement that you have a good faith belief that use of the material in the manner complained of is not authorized by the copyright owner, its agent, or the law; and{"\n"}
-                    • A statement that the information in the notification is accurate, and under penalty of perjury, that you are authorized to act on behalf of the owner of an exclusive right that is allegedly infringed.{"\n\n"}
-                    <Text style={{fontWeight: 'bold', color: theme.text}}>Contact for Copyright Notices:</Text> Email: aniyuhq@gmail.com{"\n\n"}
-                    <Text style={{fontWeight: 'bold', color: theme.text}}>Repeat Infringer Policy:</Text> In accordance with applicable law, AniYu has adopted a policy of terminating, in appropriate circumstances and at our sole discretion, users who are deemed to be repeat infringers.
+                    By using AniYu, you agree that you will NOT:{"\n"}
+                    • Post, transmit, or share content that is illegal, defamatory, obscene, harassing, threatening, or abusive.{"\n"}
+                    • Infringe upon any third-party intellectual property rights.{"\n"}
+                    • Impersonate any person or entity.{"\n"}
+                    • Upload or distribute viruses or malicious code.{"\n"}
+                    • Attempt to gain unauthorised access to the Platform.{"\n"}
+                    • Scrape, crawl, or use automated tools to extract data.{"\n"}
+                    • Post content that promotes violence, discrimination, or hatred.{"\n"}
+                    • Share sexually explicit or pornographic content.{"\n"}
+                    • Attempt to extract, decrypt, convert, or distribute cached or downloaded files outside the AniYu Platform environment.{"\n"}
+                    • Circumvent security features or engage in conduct that restricts other users' enjoyment.{"\n\n"}
+                    AniYu reserves the right to investigate and take appropriate action against violators.
                 </Text>
 
-                <Text style={[styles.sectionTitle, { color: theme.text }]}>5. Disclaimers and Limitation of Liability</Text>
+                <Text style={[styles.sectionTitle, { color: theme.text }]}>4. USER-GENERATED CONTENT</Text>
                 <Text style={[styles.termsText, { color: theme.subText }]}>
-                    THE APP IS PROVIDED "AS IS" AND "AS AVAILABLE" WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED. TO THE FULLEST EXTENT PERMISSIBLE PURSUANT TO APPLICABLE LAW, ANIYU DISCLAIMS ALL WARRANTIES, INCLUDING, BUT NOT LIMITED TO, IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.{"\n\n"}
-                    UNDER NO CIRCUMSTANCES SHALL ANIYU, ITS DEVELOPERS, OR AFFILIATES BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES THAT RESULT FROM THE USE OF, OR THE INABILITY TO USE, THE APP OR MATERIALS ON THE APP, EVEN IF ANIYU HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+                    <Text style={{fontWeight: 'bold', color: theme.text}}>4.1 Ownership:</Text> You retain all ownership rights to the original content you post ("User Content"). By posting, you grant AniYu a worldwide, non-exclusive, royalty-free, transferable, and sublicensable licence to use, reproduce, distribute, display, and perform your User Content solely for the purposes of operating and promoting the Platform.{"\n\n"}
+                    <Text style={{fontWeight: 'bold', color: theme.text}}>4.2 Your Responsibility:</Text> You are solely responsible for all User Content you submit. You represent that you own or have the necessary rights to post it, and that it does not infringe third-party rights or violate applicable laws.{"\n\n"}
+                    <Text style={{fontWeight: 'bold', color: theme.text}}>4.3 Content Moderation:</Text> AniYu reserves the right to review, edit, or remove any User Content at our sole discretion, without notice, for any reason.{"\n\n"}
+                    <Text style={{fontWeight: 'bold', color: theme.text}}>4.4 Indemnification:</Text> You agree to indemnify and hold harmless AniYu from claims arising from your User Content or violation of these Terms.
                 </Text>
 
-                <Text style={[styles.sectionTitle, { color: theme.text }]}>6. Governing Law</Text>
-                <Text style={[styles.termsText, { color: theme.subText }]}>These Terms shall be governed by and construed in accordance with the laws of the Federal Republic of Nigeria, without giving effect to any principles of conflicts of law.</Text>
-
-                <Text style={[styles.sectionTitle, { color: theme.text }]}>7. Changes to Terms</Text>
-                <Text style={[styles.termsText, { color: theme.subText }]}>We reserve the right to modify these Terms at any time. We will notify users of significant changes through the App. Continued use of the App following any changes constitutes your acceptance of the new Terms.</Text>
-
-                <Text style={[styles.sectionTitle, { color: theme.text }]}>8. Subscriptions and In-App Purchases</Text>
+                <Text style={[styles.sectionTitle, { color: theme.text }]}>5. INDEPENDENT CREATOR CONTENT</Text>
                 <Text style={[styles.termsText, { color: theme.subText }]}>
-                    AniYu offers premium features via auto-renewing subscriptions ("Subscriptions") managed through your Apple App Store or Google Play Store account.{"\n"}
-                    • <Text style={{fontWeight: 'bold', color: theme.text}}>Payment:</Text> Payment will be charged to your Apple/Google account at confirmation of purchase.{"\n"}
-                    • <Text style={{fontWeight: 'bold', color: theme.text}}>Auto-Renewal:</Text> Subscriptions automatically renew unless auto-renew is turned off at least 24 hours before the end of the current period. Your account will be charged for renewal within 24 hours prior to the end of the current period.{"\n"}
-                    • <Text style={{fontWeight: 'bold', color: theme.text}}>Cancellation:</Text> You may manage your subscription and turn off auto-renewal by going to your device's Account Settings after purchase. Cancellations take effect at the end of the active billing cycle. We do not provide refunds or credits for any partial subscription periods.
+                    AniYu may host original works submitted by independent creators under separate agreements. All such content is governed by those specific terms. Users may not reproduce, redistribute, or commercially exploit any creator content hosted on the Platform without express written consent.
+                </Text>
+
+                <Text style={[styles.sectionTitle, { color: theme.text }]}>6. OFFLINE DOWNLOADS AND CACHING</Text>
+                <Text style={[styles.termsText, { color: theme.subText }]}>
+                    AniYu may provide an offline download feature allowing users to cache certain content for personal, offline use exclusively within the AniYu application ("Offline Content").{"\n"}
+                    • Offline Content is provided strictly as a temporary, personal convenience.{"\n"}
+                    • It does not grant ownership, reproduction, or distribution rights.{"\n"}
+                    • Any attempt to extract, decrypt, convert, or distribute Offline Content outside the AniYu Platform is strictly prohibited.{"\n"}
+                    • AniYu reserves the right to revoke offline access at any time.
+                </Text>
+
+                <Text style={[styles.sectionTitle, { color: theme.text }]}>7. INTELLECTUAL PROPERTY RIGHTS</Text>
+                <Text style={[styles.termsText, { color: theme.subText }]}>
+                    <Text style={{fontWeight: 'bold', color: theme.text}}>7.1 AniYu's IP:</Text> All rights, title, and interest in and to the AniYu Platform are the exclusive property of Aniyu Ventures.{"\n\n"}
+                    <Text style={{fontWeight: 'bold', color: theme.text}}>7.2 Third-Party Content:</Text> Licensed anime and manga titles are owned by third-party rights holders. You may not reproduce or distribute this content without authorisation.{"\n\n"}
+                    <Text style={{fontWeight: 'bold', color: theme.text}}>7.3 Feedback:</Text> If you provide feedback or ideas, you grant AniYu an unrestricted licence to use them without compensation.
+                </Text>
+
+                <Text style={[styles.sectionTitle, { color: theme.text }]}>8. COPYRIGHT POLICY AND DMCA NOTICE</Text>
+                <Text style={[styles.termsText, { color: theme.subText }]}>
+                    AniYu respects intellectual property rights and complies with the DMCA, the Nigerian Copyright Act, and applicable international frameworks. If you believe your work has been infringed, please provide our Designated Copyright Agent with a written notice including your signature, identification of the work, location of the material, contact info, and a good-faith statement of unauthorized use.{"\n\n"}
+                    <Text style={{fontWeight: 'bold', color: theme.text}}>Designated Copyright Agent:</Text> aniyuhq@gmail.com | Address: 7 Adeyemo Street, Ibadan, Oyo State, Nigeria{"\n\n"}
+                    AniYu operates a repeat infringer policy and may terminate accounts of repeat violators.
+                </Text>
+
+                <Text style={[styles.sectionTitle, { color: theme.text }]}>9. MONETISATION, SUBSCRIPTIONS, AND ADVERTISING</Text>
+                <Text style={[styles.termsText, { color: theme.subText }]}>
+                    <Text style={{fontWeight: 'bold', color: theme.text}}>9.1 Free Tier:</Text> AniYu offers a free tier supported by third-party advertising. By using it, you consent to the display of advertisements.{"\n\n"}
+                    <Text style={{fontWeight: 'bold', color: theme.text}}>9.2 Premium Subscriptions:</Text> Subscriptions are charged to your Apple/Google account upon confirmation. They automatically renew unless disabled at least 24 hours before the end of the period. You may manage auto-renewal in your device settings. No refunds are provided for partial periods.{"\n\n"}
+                    <Text style={{fontWeight: 'bold', color: theme.text}}>9.3 Price Changes:</Text> AniYu reserves the right to modify pricing with advance notice.
+                </Text>
+
+                <Text style={[styles.sectionTitle, { color: theme.text }]}>10. PRIVACY AND DATA PROTECTION</Text>
+                <Text style={[styles.termsText, { color: theme.subText }]}>
+                    Your privacy is important to us. Our collection and use of your data are governed by our Privacy Policy. AniYu processes data in compliance with NDPR, GDPR, CCPA, LGPD, PDPL, and other global regulations. Contact us at aniyuhq@gmail.com to exercise your data rights.
+                </Text>
+
+                <Text style={[styles.sectionTitle, { color: theme.text }]}>11. THIRD-PARTY SERVICES</Text>
+                <Text style={[styles.termsText, { color: theme.subText }]}>
+                    The Platform integrates with third-party services (Google AdMob, App Stores, etc.). Your use is subject to their respective terms. AniYu is not responsible for their practices.
+                </Text>
+
+                <Text style={[styles.sectionTitle, { color: theme.text }]}>12. DISCLAIMERS AND LIMITATION OF LIABILITY</Text>
+                <Text style={[styles.termsText, { color: theme.subText }]}>
+                    The Platform is provided "as is" and "as available". To the fullest extent permitted by law, AniYu shall not be liable for any indirect, incidental, special, or consequential damages arising from your use of the Platform. We disclaim all liability arising from User Content.
+                </Text>
+
+                <Text style={[styles.sectionTitle, { color: theme.text }]}>13. ACCOUNT SUSPENSION AND TERMINATION</Text>
+                <Text style={[styles.termsText, { color: theme.subText }]}>
+                    AniYu reserves the right to suspend or terminate your account without notice for violating these Terms, engaging in harmful conduct, or extended inactivity. You may terminate your account at any time by contacting us.
+                </Text>
+
+                <Text style={[styles.sectionTitle, { color: theme.text }]}>14. GOVERNING LAW AND DISPUTE RESOLUTION</Text>
+                <Text style={[styles.termsText, { color: theme.subText }]}>
+                    These Terms shall be governed by the laws of the Federal Republic of Nigeria. Disputes will first be attempted to be resolved via good-faith negotiation, then referred to binding arbitration. Class action lawsuits are waived where permitted.
+                </Text>
+
+                <Text style={[styles.sectionTitle, { color: theme.text }]}>15. CHANGES TO THESE TERMS</Text>
+                <Text style={[styles.termsText, { color: theme.subText }]}>
+                    AniYu reserves the right to modify these Terms. Continued use of the Platform following changes constitutes acceptance.
+                </Text>
+
+                <Text style={[styles.sectionTitle, { color: theme.text }]}>16. GENERAL PROVISIONS</Text>
+                <Text style={[styles.termsText, { color: theme.subText }]}>
+                    These Terms constitute the entire agreement. If any provision is invalid, the remainder remains in effect. You may not assign these Terms. English is the governing language.
+                </Text>
+
+                <Text style={[styles.sectionTitle, { color: theme.text }]}>17. CONTACT INFORMATION</Text>
+                <Text style={[styles.termsText, { color: theme.subText }]}>
+                    AniYu (Aniyu Ventures){"\n"}
+                    Email: aniyuhq@gmail.com{"\n"}
+                    Website: www.aniyu.site{"\n"}
+                    Address: 7 Adeyemo Street, Ibadan, Oyo State, Nigeria
                 </Text>
             </ScrollView>
 

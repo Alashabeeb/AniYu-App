@@ -26,59 +26,79 @@ export default function PrivacyPolicyScreen() {
         <Text style={[styles.lastUpdated, { color: theme.subText }]}>Last Updated: March 2026</Text>
 
         <Text style={[styles.introText, { color: theme.subText }]}>
-          Welcome to AniYu ("we," "our," or "us"). We are committed to protecting your personal information and your right to privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you visit or use the AniYu mobile application (the "App").
+          Welcome to AniYu ("we," "our," or "us"). We are committed to protecting your personal information and your right to privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use the AniYu mobile application and associated services (collectively, the "Platform").
           {'\n\n'}
-          Please read this privacy notice carefully. If you do not agree with the terms of this privacy policy, please do not access the application.
+          AniYu is developed and operated by Aniyu Ventures, a business registered under the Companies and Allied Matters Act 2020 in the Federal Republic of Nigeria (Business Name Registration No. 9158767). AniYu operates globally and this Privacy Policy is designed to comply with applicable data protection laws across all jurisdictions in which we operate, including but not limited to Nigeria, the European Union, the United States, Brazil, the United Arab Emirates, Saudi Arabia, and Southeast Asian territories.
+          {'\n\n'}
+          Please read this Privacy Policy carefully. If you do not agree with its terms, please discontinue use of the Platform immediately.
         </Text>
 
-        <Section title="1. Information We Collect" theme={theme}>
-          We collect information that you voluntarily provide to us when you register on the App, express an interest in obtaining information about us or our products, or otherwise interact with the App.{'\n\n'}
-          <Text style={{fontWeight: 'bold', color: theme.text}}>Personal Information Provided by You:</Text> We may collect personal information such as your email address, username, and password when you create an account.{'\n\n'}
-          <Text style={{fontWeight: 'bold', color: theme.text}}>Profile and Social Data:</Text> If you choose to use our social features, we collect the information you upload, such as your profile picture (avatar), bio, comments, posts to the community feed, and your "favorites" or watch/read history.{'\n\n'}
-          <Text style={{fontWeight: 'bold', color: theme.text}}>Automatically Collected Information:</Text> When you access the App, we may automatically collect certain information about your device and usage. This includes your device's Internet Protocol (IP) address, operating system version, device manufacturer and model, language preferences, and diagnostic data (such as crash reports).
+        <Section title="1. INFORMATION WE COLLECT" theme={theme}>
+          <Text style={{fontWeight: 'bold', color: theme.text}}>1.1 Information You Provide Directly:</Text> We collect information that you voluntarily provide when you register on the Platform, interact with its features, or contact us. This includes Account Information (email, username, password), Profile Information (avatar, bio), Community Content (posts, comments, reactions), Reading and Viewing History, and Communications.{'\n\n'}
+          <Text style={{fontWeight: 'bold', color: theme.text}}>1.2 Information Collected Automatically:</Text> When you access or use the Platform, we automatically collect certain technical and usage information, including Device Information (IP address, device type, OS), Usage Data (pages accessed, time spent), Language and Location Preferences, and Diagnostic Data (crash reports).{'\n\n'}
+          <Text style={{fontWeight: 'bold', color: theme.text}}>1.3 Information from Third-Party Services:</Text> We integrate with third-party services that may collect or process your information: Google Firebase (authentication, database, analytics), Cloudflare R2 (storage), Google AdMob (advertising), and Apple/Google App Stores.{'\n\n'}
+          <Text style={{fontWeight: 'bold', color: theme.text}}>1.4 Tracking Technologies:</Text> We and our third-party partners use cookies, SDKs, and advertising identifiers to collect usage information, deliver advertising, and improve the Platform. You may manage your advertising preferences through your device settings.
         </Section>
 
-        <Section title="2. How We Use Your Information" theme={theme}>
-          We use personal information collected via our App for a variety of business purposes described below:{'\n\n'}
-          • <Text style={{fontWeight: 'bold', color: theme.text}}>To Facilitate Account Creation and Logon Process:</Text> We use your email and password to create your account and keep it secure.{'\n'}
-          • <Text style={{fontWeight: 'bold', color: theme.text}}>To Provide and Manage the Services:</Text> To deliver the requested content (anime and manga), sync your offline viewing cache, and manage your watch/read history.{'\n'}
-          • <Text style={{fontWeight: 'bold', color: theme.text}}>To Enable User-to-User Communications:</Text> To display your profile, posts, and comments to other users within the App's community feed.{'\n'}
-          • <Text style={{fontWeight: 'bold', color: theme.text}}>To Improve Our App:</Text> To perform data analysis, identify usage trends, and evaluate and improve our App, products, services, and user experience.
+        <Section title="2. HOW WE USE YOUR INFORMATION" theme={theme}>
+          <Text style={{fontWeight: 'bold', color: theme.text}}>2.1 Purposes of Processing:</Text> Account Creation, Service Delivery (anime/manga access, downloads), Community Features, Personalisation, Advertising (via AdMob on free tier), Analytics, Communications, Legal Compliance, and Safety/Security.{'\n\n'}
+          <Text style={{fontWeight: 'bold', color: theme.text}}>2.2 Legal Basis for Processing (GDPR):</Text> For users in applicable jurisdictions, we process data based on Contractual Necessity, Legitimate Interests, Consent, and Legal Obligation. You may withdraw consent at any time.
         </Section>
 
-        <Section title="3. How We Share Your Information" theme={theme}>
-          We do not sell, rent, or trade your personal information to third parties for their marketing purposes. We may share your information in the following situations:{'\n\n'}
-          <Text style={{fontWeight: 'bold', color: theme.text}}>Third-Party Service Providers:</Text> We may share your data with third-party vendors, service providers, contractors, or agents who perform services for us or on our behalf. Specifically, we utilize:{'\n'}
-          {'   '}- <Text style={{fontWeight: 'bold', color: theme.text}}>Google Firebase:</Text> For user authentication, database hosting, and app analytics.{'\n'}
-          {'   '}- <Text style={{fontWeight: 'bold', color: theme.text}}>Cloudflare (R2):</Text> For secure cloud storage and content delivery.{'\n\n'}
-          <Text style={{fontWeight: 'bold', color: theme.text}}>Legal Obligations:</Text> We may disclose your information where we are legally required to do so in order to comply with applicable law, governmental requests, a judicial proceeding, court order, or legal process.{'\n\n'}
-          <Text style={{fontWeight: 'bold', color: theme.text}}>Vital Interests and Legal Rights:</Text> We may disclose your information where we believe it is necessary to investigate, prevent, or take action regarding potential violations of our policies, suspected fraud, situations involving potential threats to the safety of any person, and illegal activities.
+        <Section title="3. HOW WE SHARE YOUR INFORMATION" theme={theme}>
+          We do not sell, rent, or trade your personal information. We may share it in these circumstances:{'\n\n'}
+          • <Text style={{fontWeight: 'bold', color: theme.text}}>Third-Party Service Providers:</Text> Trusted vendors like Google Firebase, Cloudflare, Google AdMob, Apple, and Google.{'\n'}
+          • <Text style={{fontWeight: 'bold', color: theme.text}}>Independent Content Creators:</Text> Aggregated, non-personally identifiable engagement metrics.{'\n'}
+          • <Text style={{fontWeight: 'bold', color: theme.text}}>Legal Requirements:</Text> To comply with applicable laws, court orders, or protect rights and safety.{'\n'}
+          • <Text style={{fontWeight: 'bold', color: theme.text}}>Business Transfers:</Text> In the event of a merger, acquisition, or sale of assets.{'\n'}
+          • <Text style={{fontWeight: 'bold', color: theme.text}}>With Your Consent:</Text> When you give explicit consent.
         </Section>
 
-        <Section title="4. Data Retention and Security" theme={theme}>
-          We will only keep your personal information for as long as it is necessary for the purposes set out in this privacy policy, unless a longer retention period is required or permitted by law.{'\n\n'}
-          We have implemented appropriate technical and organizational security measures designed to protect the security of any personal information we process. However, despite our safeguards and efforts to secure your information, no electronic transmission over the Internet or information storage technology can be guaranteed to be 100% secure. You transmit personal information to and from our App at your own risk.
+        <Section title="4. INTERNATIONAL DATA TRANSFERS" theme={theme}>
+          AniYu operates globally. Your data may be transferred to and processed in countries other than your residence (e.g., the US via Google Firebase/Cloudflare). We implement appropriate safeguards like Standard Contractual Clauses (SCCs) and data processing agreements to ensure data remains protected.
         </Section>
 
-        <Section title="5. Your Privacy Rights" theme={theme}>
-          Depending on your location, you may have the right to:{'\n'}
-          • Request access and obtain a copy of your personal information.{'\n'}
-          • Request rectification of any inaccurate data.{'\n'}
-          • Request the deletion of your personal information (often referred to as the "right to be forgotten").{'\n\n'}
-          <Text style={{fontWeight: 'bold', color: theme.text}}>Account Deletion:</Text> You may review, change, or terminate your account at any time by logging into your account settings within the App or contacting us directly. Upon your request to terminate your account, we will deactivate or delete your account and information from our active databases.
+        <Section title="5. DATA RETENTION" theme={theme}>
+          We retain your personal information only as long as necessary. Account info and community content are kept for the duration of your account and deleted within 30-90 days of termination. Analytics data is kept up to 24 months, and legal/compliance records up to 7 years.
         </Section>
 
-        <Section title="6. Policy Regarding Children" theme={theme}>
-          We do not knowingly solicit data from or market to children under 13 years of age. By using the App, you represent that you are at least 13 or that you are the parent or guardian of such a minor and consent to such minor dependent’s use of the App. If we learn that personal information from users less than 13 years of age has been collected, we will deactivate the account and take reasonable measures to promptly delete such data from our records.
+        <Section title="6. DATA SECURITY" theme={theme}>
+          We use industry-standard encryption, secure cloud infrastructure, and access controls to protect your data. However, no electronic storage is 100% secure. You transmit information at your own risk.
         </Section>
 
-        <Section title="7. Changes to This Privacy Policy" theme={theme}>
-          We may update this privacy policy from time to time. The updated version will be indicated by an updated "Last Updated" date and the updated version will be effective as soon as it is accessible. We encourage you to review this privacy policy frequently to be informed of how we are protecting your information.
+        <Section title="7. YOUR PRIVACY RIGHTS" theme={theme}>
+          Depending on your location (e.g., EU GDPR, Nigerian NDPR, California CCPA, Brazil LGPD, Middle East, Southeast Asia), you may have rights to:{'\n'}
+          • Access, correct, or delete your personal data.{'\n'}
+          • Restrict processing or request data portability.{'\n'}
+          • Withdraw consent or object to certain processing.{'\n\n'}
+          <Text style={{fontWeight: 'bold', color: theme.text}}>Account Deletion:</Text> You may review, update, or delete your account through the app settings or by contacting us. We will process deletion within 90 days.
         </Section>
 
-        <Section title="8. Contact Us" theme={theme}>
-          If you have questions or comments about this policy, or if you wish to exercise your data rights, you may email us at:{'\n\n'}
-          <Text style={{fontWeight: 'bold', color: theme.text}}>Email:</Text> aniyuhq@gmail.com
+        <Section title="8. CHILDREN'S PRIVACY" theme={theme}>
+          AniYu is not directed to children under 13, and we do not knowingly collect their data without parental consent (complying with COPPA). If we learn of unauthorized data collection from a child under 13, we will immediately deactivate the account and delete the data.
+        </Section>
+
+        <Section title="9. ADVERTISING AND YOUR CHOICES" theme={theme}>
+          Our free tier is supported by Google AdMob, which may use identifiers to serve personalized ads. You can opt out of personalized tracking via your Android or iOS device settings (e.g., "Opt out of Ads Personalization" or "Allow Apps to Request to Track"). Non-personalized ads will still be displayed.
+        </Section>
+
+        <Section title="10. THIRD-PARTY LINKS AND SERVICES" theme={theme}>
+          The Platform may contain links to third-party websites or services. This Privacy Policy does not apply to them, and AniYu is not responsible for their privacy practices.
+        </Section>
+
+        <Section title="11. DATA PROTECTION AND CONTACT" theme={theme}>
+          For privacy-related enquiries or data rights requests, contact our privacy team:{'\n\n'}
+          <Text style={{fontWeight: 'bold', color: theme.text}}>Email:</Text> aniyuhq@gmail.com (Subject: Privacy Enquiry / Data Rights Request){'\n'}
+          <Text style={{fontWeight: 'bold', color: theme.text}}>Address:</Text> 7 Adeyemo Street, Ibadan, Oyo State, Nigeria{'\n'}
+          We aim to respond within 30 days.
+        </Section>
+
+        <Section title="12. CHANGES TO THIS PRIVACY POLICY" theme={theme}>
+          We may update this policy periodically. Material changes will be communicated via in-app notifications, email, or updating the "Last Updated" date. Continued use constitutes acceptance.
+        </Section>
+
+        <Section title="13. GOVERNING LAW" theme={theme}>
+          This Privacy Policy is governed by the laws of the Federal Republic of Nigeria, including the NDPR, without limiting mandatory data protection laws in your jurisdiction (e.g., GDPR, CCPA).
         </Section>
 
         <View style={{ height: 40 }} />

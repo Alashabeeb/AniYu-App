@@ -22,6 +22,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRewardedAd } from 'react-native-google-mobile-ads';
 import { AdUnitIds } from '../constants/AdIds';
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import CustomAlert from '../components/CustomAlert';
 import { auth, db } from '../config/firebaseConfig';
 import { useTheme } from '../context/ThemeContext';
@@ -231,6 +232,27 @@ export default function EditProfileScreen() {
                 interests 
             });
         });
+
+        // ✅ NEW ISSUE FIX: Update the AsyncStorage profile cache after a successful save.
+        // create-post.tsx reads from this cache key to get username/avatar/displayName.
+        // Without this update, after editing their profile, the user would see their OLD
+        // username and avatar on posts until they fully closed and reopened the app.
+        const updatedProfile = {
+            displayName: displayName.trim(),
+            username: lowerCaseUsername,
+            bio: bio.trim(),
+            avatar,
+            banner,
+            interests
+        };
+        await AsyncStorage.setItem(`user_profile_${user.uid}`, JSON.stringify(updatedProfile));
+
+        // Also update the feed preferences cache so the new interests take effect immediately
+        // without waiting for the next app launch to re-fetch from Firestore
+        await AsyncStorage.setItem(`prefs_${user.uid}`, JSON.stringify({
+            interests,
+            blockedUsers: [] // preserve structure — blockedUsers will re-sync on next feed load
+        }));
 
         showAlert('success', 'Profile Updated', 'Your changes have been saved successfully.');
     } catch (error: any) {
