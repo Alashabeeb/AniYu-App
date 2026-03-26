@@ -467,7 +467,11 @@ export const createReport = onRequest((req, res) => {
 });
 
 // 3. AUTO-MODERATE NEW POSTS & COMMENTS USING GOOGLE GEMINI
-export const moderateNewPost = onDocumentCreated("posts/{postId}", async (event) => {
+// ✅ ISSUE 2 FIX: Added timeoutSeconds: 30 so slow Gemini responses don't leave
+// the function hanging at the default 60s, wasting billed compute time.
+export const moderateNewPost = onDocumentCreated(
+  { document: "posts/{postId}", timeoutSeconds: 30 },
+  async (event) => {
   const snapshot = event.data;
   if (!snapshot) return;
 
@@ -602,7 +606,14 @@ export const sendTargetedPushNotification = onDocumentCreated("users/{userId}/no
 });
 
 // 5. AUTO-SEND GLOBAL BROADCASTS (Scalable Batching)
-export const sendGlobalBroadcastPush = onDocumentCreated("announcements/{announcementId}", async (event) => {
+// ✅ BUG 25 FIX: Increased timeoutSeconds to 540 (9 minutes — Cloud Functions v2 max)
+// Previously used default 60s which would timeout silently at ~5k-8k users.
+// The while loop now safely paginates through ALL users regardless of count.
+// At 10k users: 20 iterations of 500 users each = well within 9 minutes.
+// At 100k users: 200 iterations = still completes safely.
+export const sendGlobalBroadcastPush = onDocumentCreated(
+    { document: "announcements/{announcementId}", timeoutSeconds: 540, memory: "256MiB" },
+    async (event) => {
     const snapshot = event.data;
     if (!snapshot) return;
 

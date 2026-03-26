@@ -122,15 +122,15 @@ export default function OnboardingFlow({ onComplete }: OnboardingProps) {
             {/* STEP 1: WELCOME */}
             {step === 1 && (
                 <View style={styles.stepContainer}>
-                    <View style={styles.iconWrapper}>
-                        <Ionicons name="sparkles" size={60} color="#2563eb" />
+                    <View style={[styles.iconWrapper, { backgroundColor: theme.card, borderColor: theme.tint, borderWidth: 2 }]}>
+                        <Ionicons name="sparkles" size={60} color={theme.tint} />
                     </View>
                     <Text style={[styles.title, { color: theme.text }]}>WELCOME TO THE ANIYU COMMUNITY!</Text>
                     <Text style={[styles.subtitle, { color: theme.subText }]}>
                         The ultimate sanctuary where anime and manga aren't just hobbies—they are a way of life. 
                         Dive into discussions, discover hidden gems, and connect with fans who share your passion. 
                     </Text>
-                    <TouchableOpacity style={styles.button} onPress={() => setStep(2)}>
+                    <TouchableOpacity style={[styles.button, { backgroundColor: theme.tint, shadowColor: theme.tint }]} onPress={() => setStep(2)}>
                         <Text style={styles.buttonText}>Get Started</Text>
                         <Ionicons name="arrow-forward" size={20} color="white" />
                     </TouchableOpacity>
@@ -152,7 +152,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingProps) {
                     </View>
 
                     {loading ? (
-                        <ActivityIndicator size="large" color="#2563eb" style={{ marginTop: 50 }} />
+                        <ActivityIndicator size="large" color={theme.tint} style={{ marginTop: 50 }} />
                     ) : (
                         <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
                             {suggestedUsers.map((u) => {
@@ -162,7 +162,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingProps) {
                                 return (
                                     <TouchableOpacity 
                                         key={u.id} 
-                                        style={[styles.userCard, { backgroundColor: theme.card, borderColor: isSelected ? '#2563eb' : theme.border }]}
+                                        style={[styles.userCard, { backgroundColor: theme.card, borderColor: isSelected ? theme.tint : theme.border }]}
                                         onPress={() => toggleUser(u.id)}
                                         activeOpacity={0.8}
                                     >
@@ -176,7 +176,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingProps) {
                                                 </Text>
                                             )}
                                         </View>
-                                        <View style={[styles.checkCircle, { backgroundColor: isSelected ? '#2563eb' : 'transparent', borderColor: isSelected ? '#2563eb' : theme.border }]}>
+                                        <View style={[styles.checkCircle, { backgroundColor: isSelected ? theme.tint : 'transparent', borderColor: isSelected ? theme.tint : theme.border }]}>
                                             {isSelected && <Ionicons name="checkmark" size={16} color="white" />}
                                         </View>
                                     </TouchableOpacity>
@@ -187,7 +187,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingProps) {
 
                     <View style={styles.footer}>
                         <TouchableOpacity 
-                            style={[styles.button, { opacity: selectedUsers.length >= 5 ? 1 : 0.5 }]} 
+                            style={[styles.button, { backgroundColor: theme.tint, shadowColor: theme.tint, opacity: selectedUsers.length >= 5 ? 1 : 0.5 }]} 
                             disabled={selectedUsers.length < 5}
                             onPress={() => setStep(3)}
                         >
@@ -221,7 +221,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingProps) {
 
                     <View style={styles.footer}>
                         <TouchableOpacity 
-                            style={[styles.button, { opacity: postText.trim().length > 0 && !loading ? 1 : 0.5 }]} 
+                            style={[styles.button, { backgroundColor: theme.tint, shadowColor: theme.tint, opacity: postText.trim().length > 0 && !loading ? 1 : 0.5 }]} 
                             disabled={postText.trim().length === 0 || loading}
                             onPress={handleFinalSubmit}
                         >
@@ -243,11 +243,11 @@ const styles = StyleSheet.create({
     container: { flex: 1, zIndex: 100 }, 
     stepContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 30 },
     stepContainerTop: { flex: 1, alignItems: 'center', padding: 20 },
-    iconWrapper: { width: 100, height: 100, borderRadius: 50, backgroundColor: '#eff6ff', justifyContent: 'center', alignItems: 'center', marginBottom: 30 },
+    iconWrapper: { width: 100, height: 100, borderRadius: 50, justifyContent: 'center', alignItems: 'center', marginBottom: 30 },
     title: { fontSize: 26, fontWeight: '900', textAlign: 'center', marginBottom: 15, letterSpacing: -0.5 },
     subtitle: { fontSize: 15, textAlign: 'center', lineHeight: 24, marginBottom: 30 },
     
-    button: { flexDirection: 'row', backgroundColor: '#2563eb', paddingVertical: 16, paddingHorizontal: 30, borderRadius: 30, alignItems: 'center', justifyContent: 'center', width: '100%', elevation: 2, shadowColor: '#2563eb', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 4 },
+    button: { flexDirection: 'row', paddingVertical: 16, paddingHorizontal: 30, borderRadius: 30, alignItems: 'center', justifyContent: 'center', width: '100%', elevation: 2, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 4 },
     buttonText: { color: 'white', fontSize: 18, fontWeight: 'bold', marginRight: 8 },
     
     counterBadge: { backgroundColor: '#f3f4f6', paddingHorizontal: 15, paddingVertical: 8, borderRadius: 20, marginBottom: 20 },
