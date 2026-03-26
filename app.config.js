@@ -2,7 +2,7 @@ export default {
   expo: {
     name: "AniYu",
     slug: "AniYu",
-    version: "1.0.7",
+    version: "1.0.8",
     orientation: "portrait",
     icon: "./assets/images/icon.png",
     scheme: "aniyu",
@@ -61,7 +61,8 @@ export default {
       [
         "expo-notifications",
         {
-          "color": "#2563eb"
+          "color": "#2563eb",
+          "icon": "./assets/images/icon.png"
         }
       ],
       "expo-video",

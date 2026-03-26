@@ -379,6 +379,7 @@ export default function AnimeUpload() {
     return result; 
   };
 
+  // ✅ UPDATED handlePublish with rate-limit protection and error isolation
   const handlePublish = async (e) => {
     e.preventDefault();
     if (!animeTitle) { alert("Anime Title is required."); return; }
@@ -440,57 +441,84 @@ export default function AnimeUpload() {
           for (const delEp of deletedEpisodes) {
               try {
                   await deleteDoc(doc(db, 'anime', animeId, 'episodes', delEp.id));
-              } catch (e) { }
+              } catch (e) { console.warn(e); }
           }
       }
 
       const totalOps = episodes.length;
       let completedOps = 0;
+      let failedEpisodes = []; // ✅ Keep track of any episodes that get rejected by the server
 
       for (let i = 0; i < episodes.length; i++) {
         const ep = episodes[i];
         setStatus(`Uploading Episode ${ep.number} media & subtitles...`);
         
-        if (!ep.videoFile && !ep.existingVideoUrl && hasStreamingRights) continue;
-
-        const vidResult = await uploadFile(ep.videoFile, `anime/${animeId}/episodes`);
-        const thumbResult = await uploadFile(ep.thumbFile, 'episode_thumbnails');
-
-        const finalSubtitles = [];
-        for (const sub of ep.subtitles) {
-            const subResult = await uploadFile(sub.file, 'subtitles');
-            finalSubtitles.push({ language: sub.language, url: subResult?.url || sub.url });
+        if (!ep.videoFile && !ep.existingVideoUrl && hasStreamingRights) {
+            completedOps++;
+            continue;
         }
 
-        const epData = {
-          title: ep.title || `Episode ${ep.number}`, 
-          number: Number(ep.number),
-          videoUrl: vidResult?.url || ep.existingVideoUrl || '', 
-          thumbnailUrl: thumbResult?.url || ep.existingThumbUrl || finalCoverUrl,
-          size: vidResult?.size || ep.existingSize || 0,
-          subtitles: finalSubtitles,
-          updatedAt: serverTimestamp()
-        };
+        // ✅ SURGICAL FIX: Wrap each episode in try/catch and pace the network requests
+        try {
+            // ✅ THE PACER: Wait 300ms between each upload to avoid HTTP 429 Rate Limits
+            if (i > 0) {
+                await new Promise(resolve => setTimeout(resolve, 300));
+            }
 
-        if (ep.isNew) {
-           await addDoc(collection(db, 'anime', animeId, 'episodes'), { ...epData, downloads: 0, createdAt: serverTimestamp() });
-        } else {
-           await updateDoc(doc(db, 'anime', animeId, 'episodes', ep.id), epData);
+            const vidResult = await uploadFile(ep.videoFile, `anime/${animeId}/episodes`);
+            const thumbResult = await uploadFile(ep.thumbFile, 'episode_thumbnails');
+
+            const finalSubtitles = [];
+            for (const sub of ep.subtitles) {
+                const subResult = await uploadFile(sub.file, 'subtitles');
+                finalSubtitles.push({ language: sub.language, url: subResult?.url || sub.url });
+            }
+
+            const epData = {
+              title: ep.title || `Episode ${ep.number}`, 
+              number: Number(ep.number),
+              videoUrl: vidResult?.url || ep.existingVideoUrl || '', 
+              thumbnailUrl: thumbResult?.url || ep.existingThumbUrl || finalCoverUrl,
+              size: vidResult?.size || ep.existingSize || 0,
+              subtitles: finalSubtitles,
+              updatedAt: serverTimestamp()
+            };
+
+            if (ep.isNew) {
+               await addDoc(collection(db, 'anime', animeId, 'episodes'), { ...epData, downloads: 0, createdAt: serverTimestamp() });
+            } else {
+               await updateDoc(doc(db, 'anime', animeId, 'episodes', ep.id), epData);
+            }
+        } catch (epError) {
+            console.error(`Network Error on Episode ${ep.number}:`, epError);
+            failedEpisodes.push(ep.number); // Log it, but KEEP GOING to the next episode
         }
+
         completedOps++;
         setProgress(Math.round((completedOps / totalOps) * 100));
       }
 
       setStatus('Success!');
       
-      alert(finalStatus === 'Pending' ? "Submitted for Review! Waiting for Admin approval." : "Published Successfully!");
+      // ✅ Inform you exactly which ones failed without crashing the app
+      if (failedEpisodes.length > 0) {
+          alert(`Saved, but the following episodes hit a network error and were skipped: ${failedEpisodes.join(', ')}. Please try saving them again.`);
+      } else {
+          alert(finalStatus === 'Pending' ? "Submitted for Review! Waiting for Admin approval." : "Published Successfully!");
+      }
+      
       setView('list'); 
       setLibraryTab(finalStatus); 
       
       sessionStorage.removeItem(`admin_anime_cache_${currentUser.uid}`);
       fetchAnimeList(false, true);
 
-    } catch (error) { console.error(error); alert('Error: ' + error.message); } finally { setLoading(false); }
+    } catch (error) { 
+        console.error(error); 
+        alert('Critical Error saving Anime Base Data: ' + error.message); 
+    } finally { 
+        setLoading(false); 
+    }
   };
 
   // --- RENDER: DETAILS VIEW ---

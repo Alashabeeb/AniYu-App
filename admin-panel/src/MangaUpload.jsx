@@ -314,6 +314,7 @@ export default function MangaUpload() {
     });
   };
 
+  // ✅ UPDATED handlePublish with rate-limit protection and error isolation
   const handlePublish = async (e) => {
     e.preventDefault();
     if (!mangaTitle) return alert("Title is required.");
@@ -361,32 +362,51 @@ export default function MangaUpload() {
 
       if (deletedChapters.length > 0) {
           setStatus('Removing deleted chapters...');
-          for (const delCh of deletedChapters) { await deleteDoc(doc(db, 'manga', mangaId, 'chapters', delCh.id)); }
+          for (const delCh of deletedChapters) { 
+              try {
+                  await deleteDoc(doc(db, 'manga', mangaId, 'chapters', delCh.id)); 
+              } catch(err) { console.warn(err); }
+          }
       }
 
       const totalOps = chapters.length;
       let completedOps = 0;
+      let failedChapters = []; // ✅ Keep track of any chapters that hit a network error
 
       for (let i = 0; i < chapters.length; i++) {
         const ch = chapters[i];
         setStatus(`Uploading Chapter ${ch.number} file...`);
         let finalFileUrl = ch.existingFileUrl;
 
-        if (ch.chapterFile && hasReadingRights) {
-            const result = await uploadFile(ch.chapterFile, `manga_pages/${mangaId}/ch_${ch.number}`);
-            finalFileUrl = result?.url || result; 
+        // ✅ SURGICAL FIX: Wrap each chapter in try/catch and pace the requests
+        try {
+            // ✅ THE PACER: Wait 300ms between each save to avoid HTTP 429 Rate Limits
+            if (i > 0) {
+                await new Promise(resolve => setTimeout(resolve, 300));
+            }
+
+            if (ch.chapterFile && hasReadingRights) {
+                const result = await uploadFile(ch.chapterFile, `manga_pages/${mangaId}/ch_${ch.number}`);
+                finalFileUrl = result?.url || result; 
+            }
+
+            const finalPages = finalFileUrl ? [finalFileUrl] : [];
+            const chData = {
+              title: ch.title || `Chapter ${ch.number}`, 
+              number: Number(ch.number),
+              pages: finalPages, 
+              updatedAt: serverTimestamp()
+            };
+
+            if (ch.isNew) {
+                await addDoc(collection(db, 'manga', mangaId, 'chapters'), { ...chData, createdAt: serverTimestamp() });
+            } else {
+                await updateDoc(doc(db, 'manga', mangaId, 'chapters', ch.id), chData);
+            }
+        } catch (chError) {
+            console.error(`Network Error on Chapter ${ch.number}:`, chError);
+            failedChapters.push(ch.number); // Log it, but KEEP GOING
         }
-
-        const finalPages = finalFileUrl ? [finalFileUrl] : [];
-        const chData = {
-          title: ch.title || `Chapter ${ch.number}`, 
-          number: Number(ch.number),
-          pages: finalPages, 
-          updatedAt: serverTimestamp()
-        };
-
-        if (ch.isNew) await addDoc(collection(db, 'manga', mangaId, 'chapters'), { ...chData, createdAt: serverTimestamp() });
-        else await updateDoc(doc(db, 'manga', mangaId, 'chapters', ch.id), chData);
         
         completedOps++;
         setProgress(Math.round((completedOps / totalOps) * 100));
@@ -394,13 +414,24 @@ export default function MangaUpload() {
 
       setStatus('Success!');
 
-      alert(finalStatus === 'Pending' ? "Submitted for Review! Waiting for Admin approval." : "Published!");
+      // ✅ Inform you exactly which ones failed without crashing the app
+      if (failedChapters.length > 0) {
+          alert(`Saved, but the following chapters hit a network error and were skipped: ${failedChapters.join(', ')}. Please try saving them again.`);
+      } else {
+          alert(finalStatus === 'Pending' ? "Submitted for Review! Waiting for Admin approval." : "Published!");
+      }
+
       setView('list'); setLibraryTab(finalStatus);
 
       sessionStorage.removeItem(`admin_manga_cache_${currentUser.uid}`);
       fetchMangaList(false, true);
 
-    } catch (error) { console.error(error); alert('Error: ' + error.message); } finally { setLoading(false); }
+    } catch (error) { 
+        console.error(error); 
+        alert('Critical Error saving Manga Base Data: ' + error.message); 
+    } finally { 
+        setLoading(false); 
+    }
   };
 
   if (view === 'details' && selectedManga) return (
