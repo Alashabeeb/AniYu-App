@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { arrayUnion, collection, doc, getDocs, limit, query, updateDoc, where, writeBatch } from 'firebase/firestore';
+import { arrayUnion, collection, doc, getDoc, getDocs, limit, query, updateDoc, where, writeBatch } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { auth, db } from '../config/firebaseConfig';
@@ -30,11 +30,11 @@ export default function OnboardingFlow({ onComplete }: OnboardingProps) {
     const fetchSuggestedUsers = async () => {
         setLoading(true);
         try {
-            // 1. Pull Creators & Moderators first (up to 10 just in case)
+            // 1. Pull Creators & Moderators (✅ EXCLUDING super_admin and admin, ✅ INCLUDING creator)
             const vipQ = query(
                 collection(db, 'users'),
-                where('role', 'in', ['super_admin', 'admin', 'anime_producer', 'manga_producer']),
-                limit(10)
+                where('role', 'in', ['anime_producer', 'manga_producer', 'moderator', 'creator']),
+                limit(20) // Fetch a slightly larger pool to shuffle
             );
             const vipSnap = await getDocs(vipQ);
             const vipUsers = vipSnap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -43,14 +43,18 @@ export default function OnboardingFlow({ onComplete }: OnboardingProps) {
             const regQ = query(
                 collection(db, 'users'), 
                 where('role', '==', 'user'), 
-                limit(15) 
+                limit(30) 
             );
             const regSnap = await getDocs(regQ);
             const regularUsers = regSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-            // 3. Combine them (VIPs on top), filter out the current user, and grab exactly 10
-            const combinedUsers = [...vipUsers, ...regularUsers].filter(u => u.id !== user?.uid);
+            // 3. Combine them and filter out the current user
+            let combinedUsers = [...vipUsers, ...regularUsers].filter(u => u.id !== user?.uid);
 
+            // 4. Shuffle the array randomly so everyone gets a different list
+            combinedUsers = combinedUsers.sort(() => 0.5 - Math.random());
+
+            // 5. Take exactly 10 users from the shuffled list
             setSuggestedUsers(combinedUsers.slice(0, 10));
         } catch (error) {
             console.error("Error fetching onboarding users:", error);
@@ -72,6 +76,13 @@ export default function OnboardingFlow({ onComplete }: OnboardingProps) {
         setLoading(true);
 
         try {
+            const userDoc = await getDoc(doc(db, 'users', user.uid));
+            const userData = userDoc.exists() ? userDoc.data() : {};
+            const realUsername = userData.username || "anonymous";
+            const realDisplayName = userData.displayName || user.displayName || "Anonymous";
+            const realAvatar = userData.avatar || user.photoURL || 'https://api.dicebear.com/7.x/avataaars/svg?seed=Anime';
+            const realRole = userData.role || 'user';
+
             // 1. Execute Follows via Batch Write
             if (selectedUsers.length > 0) {
                 const batch = writeBatch(db);
@@ -90,7 +101,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingProps) {
                 await updateDoc(doc(db, 'users', user.uid), { hasCompletedOnboarding: true });
             }
 
-            // 2. Publish the First Post via your Cloud Function
+            // 2. Publish the First Post via your Cloud Function using REAL credentials
             const idToken = await user.getIdToken();
             await fetch(CREATE_POST_URL, {
                 method: 'POST',
@@ -103,9 +114,10 @@ export default function OnboardingFlow({ onComplete }: OnboardingProps) {
                     mediaUrl: null,
                     mediaType: null,
                     tags: ["Discussion"], 
-                    displayName: user.displayName || "Anonymous",
-                    username: "new_user", 
-                    role: "user"
+                    displayName: realDisplayName,
+                    username: realUsername,
+                    userAvatar: realAvatar,
+                    role: realRole
                 })
             });
 
@@ -157,7 +169,8 @@ export default function OnboardingFlow({ onComplete }: OnboardingProps) {
                         <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
                             {suggestedUsers.map((u) => {
                                 const isSelected = selectedUsers.includes(u.id);
-                                const isCreatorOrMod = ['super_admin', 'admin', 'anime_producer', 'manga_producer'].includes(u.role);
+                                // ✅ SURGICAL FIX: Include 'creator' in the VIP UI check
+                                const isCreatorOrMod = ['moderator', 'anime_producer', 'manga_producer', 'creator'].includes(u.role);
                                 
                                 return (
                                     <TouchableOpacity 
@@ -166,13 +179,13 @@ export default function OnboardingFlow({ onComplete }: OnboardingProps) {
                                         onPress={() => toggleUser(u.id)}
                                         activeOpacity={0.8}
                                     >
-                                        <Image source={{ uri: u.avatar || 'https://via.placeholder.com/150' }} style={styles.avatar} />
+                                        <Image source={{ uri: u.avatar || 'https://api.dicebear.com/7.x/avataaars/svg?seed=Anime' }} style={styles.avatar} />
                                         <View style={styles.userInfo}>
                                             <Text style={[styles.userName, { color: theme.text }]}>{u.displayName || 'Anonymous'}</Text>
                                             <Text style={{ color: theme.subText, fontSize: 12 }}>@{u.username || 'user'}</Text>
                                             {isCreatorOrMod && (
                                                 <Text style={styles.vipBadge}>
-                                                    {u.role.includes('admin') ? 'MODERATOR' : 'CREATOR'}
+                                                    {u.role.includes('moderator') ? 'MODERATOR' : 'CREATOR'}
                                                 </Text>
                                             )}
                                         </View>
@@ -227,7 +240,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingProps) {
                         >
                             {loading ? <ActivityIndicator color="white" /> : (
                                 <>
-                                    <Text style={styles.buttonText}>Publish & Enter Feed</Text>
+                                    <Text style={styles.buttonText}>Make Your First Post Otaku</Text>
                                     <Ionicons name="rocket" size={20} color="white" />
                                 </>
                             )}

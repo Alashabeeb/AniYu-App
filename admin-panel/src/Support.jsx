@@ -59,7 +59,7 @@ export default function Support() {
     // --- 1. REAL-TIME TICKETS ---
     useEffect(() => {
         setLoading(true);
-        // ✅ BUG 2 FIX: Server-side filtering + Capped limits to prevent memory crashes
+        // Server-side filtering + Capped limits to prevent memory crashes
         const q = query(
             collection(db, 'supportTickets'), 
             where('status', '==', filter),
@@ -89,7 +89,7 @@ export default function Support() {
             setLoading(false); 
         });
         return () => unsubscribe();
-    }, [filter]); // ✅ Refreshes snapshot safely when tab changes
+    }, [filter]);
 
     // ✅ BUG 2 FIX: Load More Logic
     const handleLoadMore = async () => {
@@ -226,10 +226,14 @@ export default function Support() {
         } catch (e) { alert('Error: ' + e.message); }
     };
 
-    // ✅ BUG 2 FIX: Filtered client side ONLY by search, server handles status now
-    const filteredTickets = tickets.filter(t => 
-        (t.userName?.toLowerCase().includes(searchTerm.toLowerCase()) || t.userId?.includes(searchTerm))
-    );
+    // ✅ SURGICAL FIX: Safely handle the search term to prevent 'undefined.includes' crashes!
+    const filteredTickets = tickets.filter(t => {
+        if (!searchTerm) return true; // If search bar is empty, show all tickets
+        const search = searchTerm.toLowerCase();
+        const nameMatch = t.userName ? t.userName.toLowerCase().includes(search) : false;
+        const idMatch = t.userId ? t.userId.toLowerCase().includes(search) : false;
+        return nameMatch || idMatch;
+    });
 
     return (
         <>

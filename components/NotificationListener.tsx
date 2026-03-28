@@ -15,6 +15,7 @@ export default function NotificationListener() {
   const isFirstLoadUser = useRef(true);
   const isFirstLoadSocial = useRef(true);
   const isFirstLoadAnime = useRef(true);
+  const isFirstLoadBroadcast = useRef(true); // ✅ Added for Admin Broadcasts
 
   // ✅ BUG 7 FIX: Ref to store previous role and prevent spam toasts
   const previousRoleRef = useRef<string | null>(null);
@@ -23,7 +24,7 @@ export default function NotificationListener() {
   // 1. WATCH ACCOUNT STATUS (Ban/Unban)
   // ==========================================
   useEffect(() => {
-    if (!user) return;
+    if (!user?.uid) return; // ✅ FIXED: Now safely checks UID to ignore heartbeat noise
 
     const unsubUser = onSnapshot(doc(db, 'users', user.uid), (docSnapshot) => {
       if (docSnapshot.exists()) {
@@ -54,14 +55,14 @@ export default function NotificationListener() {
     });
 
     return () => unsubUser();
-  }, [user]);
+  }, [user?.uid]); // ✅ FIXED: Only restarts if the UID changes
 
   // ==========================================
   // 2. WATCH NOTIFICATIONS (Social & Admin DMs)
   // ==========================================
   // This listens to the subcollection where your Admin Panel writes to.
   useEffect(() => {
-    if (!user) return;
+    if (!user?.uid) return; // ✅ FIXED
 
     const q = query(
       collection(db, 'users', user.uid, 'notifications'),
@@ -103,14 +104,14 @@ export default function NotificationListener() {
     });
 
     return () => unsubSocial();
-  }, [user]);
+  }, [user?.uid]); // ✅ FIXED
 
   // ==========================================
   // 3. WATCH NEW CONTENT (Anime Uploads)
   // ==========================================
   useEffect(() => {
     // ✅ BUG 5 FIX: Added auth guard so guests do not open persistent Firestore connections
-    if (!user) return;
+    if (!user?.uid) return; // ✅ FIXED
 
     const q = query(
       collection(db, 'anime'),
@@ -134,7 +135,36 @@ export default function NotificationListener() {
     });
 
     return () => unsubContent();
-  }, [user]); // ✅ BUG 5 FIX: Added 'user' to the dependency array
+  }, [user?.uid]); // ✅ BUG 5 FIX: Safely dependent on user ID now
+
+  // ==========================================
+  // 4. WATCH GLOBAL ANNOUNCEMENTS (NEW)
+  // ==========================================
+  useEffect(() => {
+    if (!user?.uid) return; 
+
+    const q = query(
+      collection(db, 'announcements'),
+      orderBy('createdAt', 'desc'),
+      limit(1)
+    );
+
+    const unsubBroadcast = onSnapshot(q, (snapshot) => {
+      if (isFirstLoadBroadcast.current) {
+        isFirstLoadBroadcast.current = false;
+        return;
+      }
+
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === 'added') {
+          const data = change.doc.data();
+          showToast('📣 Admin Broadcast', data.title, 'warning');
+        }
+      });
+    });
+
+    return () => unsubBroadcast();
+  }, [user?.uid]); 
 
   return null; // Invisible Component
 }

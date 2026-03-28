@@ -189,8 +189,8 @@ export const createPost = onRequest((req, res) => {
       res.status(400).json({ error: "Post must have text or media." });
       return;
     }
-    if (text && text.length > 120) {
-      res.status(400).json({ error: "Post text cannot exceed 120 characters." });
+    if (text && text.length > 200) {
+      res.status(400).json({ error: "Post text cannot exceed 200 characters." });
       return;
     }
     if (!tags || tags.length === 0 || tags.length > 3) {

@@ -4,7 +4,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { Stack, useRouter } from 'expo-router';
 // ✅ BUG 24 FIX: Added runTransaction for atomic username claims
 import { doc, getDoc, runTransaction } from 'firebase/firestore';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -51,6 +51,9 @@ export default function EditProfileScreen() {
 
   const [interests, setInterests] = useState<string[]>([]);
 
+  // ✅ SURGICAL FIX: Track if a save was actually requested to prevent misfires
+  const pendingSave = useRef(false);
+
   const [alertConfig, setAlertConfig] = useState({
     visible: false,
     type: 'info' as 'success' | 'error' | 'warning' | 'info',
@@ -70,10 +73,20 @@ export default function EditProfileScreen() {
       load();
   }, [load]);
 
+  // ✅ SURGICAL FIX: Create a perpetually fresh reference to performSave
+  // This completely eliminates the "Stale Closure" bug!
+  const performSaveRef = useRef<(() => void) | null>(null);
   useEffect(() => {
-      if (isClosed) {
-          if (isEarnedReward) {
-              performSave(); 
+      performSaveRef.current = performSave;
+  });
+
+  useEffect(() => {
+      // Only run this logic if we actually initiated a save sequence
+      if (isClosed && pendingSave.current) {
+          pendingSave.current = false; // Reset the lock
+          
+          if (isEarnedReward && performSaveRef.current) {
+              performSaveRef.current(); 
           } else {
               setLoading(false);
               showAlert('warning', 'Save Canceled', 'You must watch the full ad to save your profile changes.');
@@ -177,6 +190,7 @@ export default function EditProfileScreen() {
                       text: "Watch Ad", 
                       onPress: () => {
                           setLoading(true); 
+                          pendingSave.current = true; // ✅ SURGICAL FIX: Lock in that we are waiting for an ad to finish!
                           show(); 
                       }
                   }

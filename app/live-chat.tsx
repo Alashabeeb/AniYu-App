@@ -26,7 +26,8 @@ import {
     updateDoc,
     where
 } from 'firebase/firestore';
-import { db } from '../config/firebaseConfig';
+// ✅ SURGICAL FIX: Added 'auth' to the imports so we can get the real security token
+import { auth, db } from '../config/firebaseConfig';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { uploadToR2 } from '../services/r2Storage';
@@ -140,7 +141,6 @@ export default function LiveChatScreen() {
     const handleSend = async () => {
         if ((!inputText.trim() && !imageUri) || !user || !activeTicket || sending) return;
 
-        // 🔐 SECURITY FIX: Hard length guard before Cloud Function call
         if (inputText.length > MAX_MESSAGE_CHARS) {
             Alert.alert("Too Long", `Message cannot exceed ${MAX_MESSAGE_CHARS} characters.`);
             return;
@@ -149,7 +149,6 @@ export default function LiveChatScreen() {
         setSending(true);
 
         try {
-            const currentUser = user as any; 
             const currentTicketId = activeTicket.id;
             
             let uploadedImageUrl = null;
@@ -158,8 +157,11 @@ export default function LiveChatScreen() {
                 uploadedImageUrl = typeof result === 'string' ? result : (result as any).url;
             }
 
-            // 🔐 SECURITY: Route message creation through rate-limited Cloud Function
-            const idToken = await currentUser.getIdToken();
+            // ✅ SURGICAL FIX: Ask the actual Firebase Auth Engine for the ID Token
+            const firebaseUser = auth.currentUser;
+            if (!firebaseUser) throw new Error("Not authenticated");
+            const idToken = await firebaseUser.getIdToken();
+
             const response = await fetch(CREATE_SUPPORT_MESSAGE_URL, {
                 method: 'POST',
                 headers: {
@@ -186,7 +188,10 @@ export default function LiveChatScreen() {
 
             setInputText('');
             setImageUri(null);
-        } catch (error) { Alert.alert("Error", "Could not send your message."); } 
+        } catch (error) { 
+            console.error("Message Send Error: ", error); // Helpful for future debugging
+            Alert.alert("Error", "Could not send your message."); 
+        } 
         finally { setSending(false); }
     };
 
@@ -365,7 +370,6 @@ export default function LiveChatScreen() {
                 </View>
             )}
 
-            {/* ✅ FIXED KEYBOARD AVOIDANCE (Height for Android, Padding for iOS) */}
             <KeyboardAvoidingView 
                 style={styles.keyboardView} 
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
