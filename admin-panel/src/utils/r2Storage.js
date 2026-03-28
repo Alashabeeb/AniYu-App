@@ -1,4 +1,6 @@
-import { auth } from '../firebase'; // Ensure this points to your firebase config
+// ✅ SURGICAL FIX: Imported appCheck and getToken so we can send the security token
+import { getToken } from 'firebase/app-check';
+import { appCheck, auth } from '../firebase'; // Ensure this points to your firebase config
 
 const CLOUD_FUNCTION_URL = "https://us-central1-aniyu-b841b.cloudfunctions.net/generateUploadUrl";
 
@@ -10,12 +12,17 @@ export const uploadToR2 = async (file, folderPath, onProgress) => {
     // 1. Get Token
     const idToken = await currentUser.getIdToken();
 
+    // ✅ SURGICAL FIX: Grab the App Check VIP Pass
+    const appCheckTokenResponse = await getToken(appCheck, false);
+
     // 2. Request URL
     const apiRes = await fetch(CLOUD_FUNCTION_URL, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${idToken}`
+            'Authorization': `Bearer ${idToken}`,
+            // ✅ SURGICAL FIX: Hand the VIP pass to the Cloud Function
+            'X-Firebase-AppCheck': appCheckTokenResponse.token
         },
         body: JSON.stringify({
             folder: folderPath,

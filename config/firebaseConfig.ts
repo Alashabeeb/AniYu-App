@@ -2,6 +2,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { initializeApp } from "firebase/app";
 import { getReactNativePersistence, initializeAuth } from 'firebase/auth';
 import { initializeFirestore } from 'firebase/firestore';
+
+// ✅ SURGICAL FIX: Added App Check and Performance Monitoring imports
+import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
+import { getPerformance } from 'firebase/performance';
+
 // ✅ SURGICAL UPDATE: Removed firebase/storage import
 
 // ✅ UPDATED: Read from Environment Variables
@@ -17,6 +22,27 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 
+// =========================================================================
+// 🔐 SECURITY & SCALE FIX: Firebase App Check & Performance
+// =========================================================================
+
+// 1. App Check: Blocks unverified connections (Bot/Hacker Protection)
+if (__DEV__) {
+    // Allows you to test in the Expo Go emulator without being blocked
+    (globalThis as any).FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+}
+
+// ✅ SURGICAL FIX: Assigned to 'appCheck' so we can export it
+const appCheck = initializeAppCheck(app, {
+    provider: new ReCaptchaV3Provider('6LdWBJwsAAAAAOuFuF2UGd_47rxd2GUFLq8XFHjY'),
+    isTokenAutoRefreshEnabled: true
+});
+
+// 2. Performance Monitoring: Tracks slow queries and screen load times for 100k+ scale
+const perf = getPerformance(app);
+
+// =========================================================================
+
 const auth = initializeAuth(app, {
   persistence: getReactNativePersistence(AsyncStorage)
 });
@@ -27,7 +53,8 @@ const db = initializeFirestore(app, {
 
 // ✅ SURGICAL UPDATE: Removed 'const storage = getStorage(app);'
 
-export { auth, db }; // ✅ Removed storage from export
+// ✅ SURGICAL FIX: Exported 'appCheck' so fetch() calls can grab the VIP token
+export { appCheck, auth, db, perf };
 
 // ✅ R2 CONFIGURATION EXPORT
 export const R2_CONFIG = {

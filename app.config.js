@@ -75,7 +75,16 @@ export default {
         }
       ],      
       "@react-native-google-signin/google-signin",
-      "expo-apple-authentication"
+      "expo-apple-authentication",
+      // ✅ SURGICAL FIX: Sentry Auto-Upload configuration added here
+      [
+        "@sentry/react-native/expo",
+        {
+          "url": "https://sentry.io/",
+          "project": "react-native",
+          "organization": "aniyu"
+        }
+      ]
     ],
     experiments: {
       typedRoutes: true,

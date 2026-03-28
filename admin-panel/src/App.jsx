@@ -7,7 +7,7 @@ import {
 import {
     Bell, BookOpen, ChevronDown, DollarSign, Edit, Eye, Flag,
     LayoutDashboard, LifeBuoy,
-    LogOut, Menu, MessageSquare, PieChart as PieChartIcon, RefreshCw, Settings, ThumbsUp, TrendingUp, Users as UsersIcon, Video, X
+    LogOut, Menu, MessageSquare, PieChart as PieChartIcon, RefreshCw, Settings, ShieldAlert, ThumbsUp, TrendingUp, Users as UsersIcon, Video, X
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, Navigate, Route, BrowserRouter as Router, Routes, useLocation, useNavigate } from 'react-router-dom';
@@ -446,6 +446,89 @@ function Dashboard({ role, userId }) {
   );
 }
 
+// --- 🔐 NEW: SECURITY DASHBOARD COMPONENT ---
+function SecurityDashboard() {
+  const [limits, setLimits] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchLimits = async () => {
+      setLoading(true);
+      try {
+          // Fetch the top 100 users hitting your Cloud Function rate limiters
+          const snap = await getDocs(query(collection(db, 'rateLimits'), orderBy('count', 'desc'), limit(100)));
+          setLimits(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      } catch (e) {
+          console.error("Error fetching rate limits:", e);
+      }
+      setLoading(false);
+  };
+
+  useEffect(() => { fetchLimits(); }, []);
+
+  const getStatus = (action, count) => {
+      // Dynamic threshold matching to your index.ts Cloud Functions
+      const thresholds = { upload: 20, delete: 30, createPost: 5, createComment: 20, supportMessage: 20, createReport: 5 };
+      const max = thresholds[action] || 20;
+      
+      if (count >= max) return <span className="status-badge" style={{backgroundColor: '#fef2f2', color: '#ef4444'}}>BLOCKED</span>;
+      if (count >= max * 0.8) return <span className="status-badge" style={{backgroundColor: '#fffbeb', color: '#f59e0b'}}>WARNING</span>;
+      return <span className="status-badge" style={{backgroundColor: '#f0fdf4', color: '#16a34a'}}>SAFE</span>;
+  };
+
+  return (
+      <div className="dashboard-container">
+          <div className="dashboard-header" style={{ marginBottom: '20px' }}>
+              <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <ShieldAlert style={{ color: '#ef4444' }} /> Security & Rate Limits
+              </h1>
+              <button onClick={fetchLimits} className="btn-refresh">
+                  <RefreshCw size={16} /> Refresh Data
+              </button>
+          </div>
+
+          <div className="table-wrapper">
+              <div className="table-header">
+                  <h3>Active API Usage (Last 1 Hour)</h3>
+              </div>
+              {loading ? (
+                  <div style={{ padding: 40, textAlign: 'center', color: '#6b7280' }}>Loading security logs...</div>
+              ) : (
+                  <table className="data-table">
+                      <thead>
+                          <tr>
+                              <th>User ID</th>
+                              <th>Action Type</th>
+                              <th>Hits</th>
+                              <th>Status</th>
+                              <th>Window Started</th>
+                          </tr>
+                      </thead>
+                      <tbody>
+                          {limits.length === 0 ? (
+                              <tr><td colSpan="5" style={{textAlign: 'center', padding: '30px', color: '#6b7280'}}>No rate limit data found yet.</td></tr>
+                          ) : (
+                              limits.map(limit => {
+                                  const [uid, action] = limit.id.split('_');
+                                  const date = new Date(limit.windowStart).toLocaleString();
+                                  return (
+                                      <tr key={limit.id}>
+                                          <td style={{ fontFamily: 'monospace', color: '#6b7280' }}>{uid}</td>
+                                          <td style={{ fontWeight: 'bold' }}>{action}</td>
+                                          <td><span style={{ fontWeight: 'bold', color: limit.count > 10 ? '#ef4444' : '#374151' }}>{limit.count}</span></td>
+                                          <td>{getStatus(action, limit.count)}</td>
+                                          <td style={{ fontSize: '0.8rem', color: '#9ca3af' }}>{date}</td>
+                                      </tr>
+                                  );
+                              })
+                          )}
+                      </tbody>
+                  </table>
+              )}
+          </div>
+      </div>
+  );
+}
+
 // --- LAYOUT COMPONENT (STANDARD CSS) ---
 function Layout({ logout, role, userId }) {
   const location = useLocation();
@@ -626,6 +709,11 @@ function Layout({ logout, role, userId }) {
                     <DollarSign size={20} /> <span>Affiliates</span>
                 </Link>
 
+                {/* ✅ NEW: Link to the Rate Limits Dashboard */}
+                <Link to="/security" className={isActive('/security')}>
+                    <ShieldAlert size={20} /> <span>Security Logs</span>
+                </Link>
+
                 <Link to="/support" className={isActive('/support')}>
                     <LifeBuoy size={20} /> <span>Support Desk</span>
                 </Link>
@@ -655,6 +743,13 @@ function Layout({ logout, role, userId }) {
         <main className="content-area">
             <Routes>
                 <Route path="/" element={<Dashboard role={role} userId={userId} />} />
+                
+                {/* ✅ NEW: Route for the Security Dashboard */}
+                <Route path="/security" element={
+                    <ProtectedRoute role={role} allowedRoles={['admin', 'super_admin']}>
+                        <SecurityDashboard />
+                    </ProtectedRoute>
+                } />
                 
                 <Route path="/upload-anime" element={
                     <ProtectedRoute role={role} allowedRoles={['admin', 'super_admin', 'anime_producer']}>

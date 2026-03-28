@@ -17,7 +17,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import CustomAlert from '../components/CustomAlert';
-import { auth, db } from '../config/firebaseConfig';
+
+// ✅ SURGICAL FIX: Imported appCheck and getToken for security
+import { getToken } from 'firebase/app-check';
+import { appCheck, auth, db } from '../config/firebaseConfig';
 import { useTheme } from '../context/ThemeContext';
 import { uploadToR2 } from '../services/r2Storage';
 import { getFriendlyErrorMessage } from '../utils/errorHandler';
@@ -167,11 +170,17 @@ export default function CreatePostScreen() {
           }
 
           const idToken = await user.getIdToken();
+
+          // ✅ SURGICAL FIX: Grab the App Check VIP Pass
+          const appCheckTokenResponse = await getToken(appCheck, false);
+
           const response = await fetch(CREATE_POST_URL, {
               method: 'POST',
               headers: {
                   'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${idToken}`
+                  'Authorization': `Bearer ${idToken}`,
+                  // ✅ SURGICAL FIX: Hand the VIP pass to the Cloud Function
+                  'X-Firebase-AppCheck': appCheckTokenResponse.token 
               },
               body: JSON.stringify({
                   text: text,

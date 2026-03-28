@@ -46,6 +46,19 @@ const checkRateLimit = async (uid: string, action: string, maxRequests: number):
 // 2. GENERATE UPLOAD URL FUNCTION
 export const generateUploadUrl = onRequest((req, res) => {
   cors(req, res, async () => {
+    // 🛡️ SECURITY: Verify Firebase App Check Token (Blocks Bot/Script Attacks)
+    const appCheckToken = req.header("X-Firebase-AppCheck");
+    if (!appCheckToken) {
+      res.status(401).json({ error: "Unauthorized: Missing App Check token." });
+      return;
+    }
+    try {
+      await admin.appCheck().verifyToken(appCheckToken);
+    } catch (err) {
+      res.status(401).json({ error: "Unauthorized: Invalid App Check token." });
+      return;
+    }
+
     // A. Security Check: Ensure user is logged in
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -105,6 +118,19 @@ export const generateUploadUrl = onRequest((req, res) => {
 // ✅ 2.5 DELETE FILE FROM R2 (Fixes Storage Leak)
 export const deleteR2File = onRequest((req, res) => {
   cors(req, res, async () => {
+    // 🛡️ SECURITY: Verify Firebase App Check Token
+    const appCheckToken = req.header("X-Firebase-AppCheck");
+    if (!appCheckToken) {
+      res.status(401).json({ error: "Unauthorized: Missing App Check token." });
+      return;
+    }
+    try {
+      await admin.appCheck().verifyToken(appCheckToken);
+    } catch (err) {
+      res.status(401).json({ error: "Unauthorized: Invalid App Check token." });
+      return;
+    }
+
     // A. Security Check: Ensure user is logged in
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -160,6 +186,19 @@ export const deleteR2File = onRequest((req, res) => {
 // 🔐 SECURITY: Create Post via Cloud Function (Rate Limited)
 export const createPost = onRequest((req, res) => {
   cors(req, res, async () => {
+    // 🛡️ SECURITY: Verify Firebase App Check Token
+    const appCheckToken = req.header("X-Firebase-AppCheck");
+    if (!appCheckToken) {
+      res.status(401).json({ error: "Unauthorized: Missing App Check token." });
+      return;
+    }
+    try {
+      await admin.appCheck().verifyToken(appCheckToken);
+    } catch (err) {
+      res.status(401).json({ error: "Unauthorized: Invalid App Check token." });
+      return;
+    }
+
     // A. Security Check: Ensure user is logged in
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -212,7 +251,7 @@ export const createPost = onRequest((req, res) => {
         username: username || "anonymous",
         userAvatar: userAvatar || null,
         role: role || "user", 
-        isRepost: false, // ✅ FIXED: Safely adds the isRepost field to prevent query errors
+        isRepost: false,
         tags: tags,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         likes: [],
@@ -241,6 +280,19 @@ export const createPost = onRequest((req, res) => {
 // 🔐 SECURITY: Create Comment via Cloud Function (Rate Limited)
 export const createComment = onRequest((req, res) => {
   cors(req, res, async () => {
+    // 🛡️ SECURITY: Verify Firebase App Check Token
+    const appCheckToken = req.header("X-Firebase-AppCheck");
+    if (!appCheckToken) {
+      res.status(401).json({ error: "Unauthorized: Missing App Check token." });
+      return;
+    }
+    try {
+      await admin.appCheck().verifyToken(appCheckToken);
+    } catch (err) {
+      res.status(401).json({ error: "Unauthorized: Invalid App Check token." });
+      return;
+    }
+
     // A. Security Check: Ensure user is logged in
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -291,7 +343,7 @@ export const createComment = onRequest((req, res) => {
         displayName: displayName || "Anonymous",
         userAvatar: userAvatar || null,
         role: role || "user",
-        isRepost: false, // ✅ FIXED: Keeps the entire database schema perfectly uniform
+        isRepost: false,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         parentId: parentId,
         likes: [],
@@ -322,6 +374,19 @@ export const createComment = onRequest((req, res) => {
 // 🔐 SECURITY: Create Support Message via Cloud Function (Rate Limited)
 export const createSupportMessage = onRequest((req, res) => {
   cors(req, res, async () => {
+    // 🛡️ SECURITY: Verify Firebase App Check Token
+    const appCheckToken = req.header("X-Firebase-AppCheck");
+    if (!appCheckToken) {
+      res.status(401).json({ error: "Unauthorized: Missing App Check token." });
+      return;
+    }
+    try {
+      await admin.appCheck().verifyToken(appCheckToken);
+    } catch (err) {
+      res.status(401).json({ error: "Unauthorized: Invalid App Check token." });
+      return;
+    }
+
     // A. Security Check: Ensure user is logged in
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -413,6 +478,19 @@ export const createSupportMessage = onRequest((req, res) => {
 // 🔐 SECURITY: Create Report via Cloud Function (Rate Limited)
 export const createReport = onRequest((req, res) => {
   cors(req, res, async () => {
+    // 🛡️ SECURITY: Verify Firebase App Check Token
+    const appCheckToken = req.header("X-Firebase-AppCheck");
+    if (!appCheckToken) {
+      res.status(401).json({ error: "Unauthorized: Missing App Check token." });
+      return;
+    }
+    try {
+      await admin.appCheck().verifyToken(appCheckToken);
+    } catch (err) {
+      res.status(401).json({ error: "Unauthorized: Invalid App Check token." });
+      return;
+    }
+
     // A. Auth check
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -467,8 +545,6 @@ export const createReport = onRequest((req, res) => {
 });
 
 // 3. AUTO-MODERATE NEW POSTS & COMMENTS USING GOOGLE GEMINI
-// ✅ ISSUE 2 FIX: Added timeoutSeconds: 30 so slow Gemini responses don't leave
-// the function hanging at the default 60s, wasting billed compute time.
 export const moderateNewPost = onDocumentCreated(
   { document: "posts/{postId}", timeoutSeconds: 30 },
   async (event) => {
@@ -478,10 +554,8 @@ export const moderateNewPost = onDocumentCreated(
   const newPost = snapshot.data();
   const postId = event.params.postId;
 
-  // If there's no text, skip moderation (e.g., image-only post)
   if (!newPost.text) return;
 
-  // Determine if this is a main post or a comment
   const isComment = !!newPost.parentId;
   const contentTypeLabel = isComment ? "comment" : "post";
 
@@ -497,7 +571,6 @@ export const moderateNewPost = onDocumentCreated(
     Return ONLY a valid JSON object in this exact format: {"flagged": boolean, "reason": "string explaining exactly which rule was broken, or empty if clean"}. 
     Text: "${newPost.text}"`;
 
-    // Call the free Google Gemini API
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
       method: "POST",
       headers: {
@@ -519,24 +592,20 @@ export const moderateNewPost = onDocumentCreated(
       return;
     }
 
-    // Parse the JSON returned by Gemini
     const rawText = result.candidates[0].content.parts[0].text;
     const moderationData = JSON.parse(rawText);
 
-    // Check if Gemini flagged the content
     if (moderationData.flagged) {
       
       const brokenRules = moderationData.reason || "General Violation";
       console.log(`🚨 ${contentTypeLabel} ${postId} flagged for: ${brokenRules}`);
 
-      // ACTION 1: Tag the post with explicit User UID and Content Type
       await snapshot.ref.update({
         moderationFlag: brokenRules,
         flaggedUserUid: newPost.userId || "Unknown", 
         flaggedContentType: contentTypeLabel         
       });
 
-      // ACTION 2: Create a ticket in the Admin Panel "Reports" collection
       await admin.firestore().collection("reports").add({
         targetId: postId,
         targetType: contentTypeLabel, 
@@ -557,7 +626,7 @@ export const moderateNewPost = onDocumentCreated(
   }
 });
 
-// 4. AUTO-SEND SPECIFIC USER NOTIFICATIONS (Social & Direct Admin)
+// 4. AUTO-SEND SPECIFIC USER NOTIFICATIONS
 export const sendTargetedPushNotification = onDocumentCreated("users/{userId}/notifications/{notificationId}", async (event) => {
     const snapshot = event.data;
     if (!snapshot) return;
@@ -565,7 +634,6 @@ export const sendTargetedPushNotification = onDocumentCreated("users/{userId}/no
     const notifData = snapshot.data();
     const userId = event.params.userId;
 
-    // Don't send push if it's already read or missing title/body
     if (notifData.read || !notifData.title || !notifData.body) return;
 
     try {
@@ -580,11 +648,11 @@ export const sendTargetedPushNotification = onDocumentCreated("users/{userId}/no
             sound: 'default',
             title: notifData.title,
             body: notifData.body,
-            data: { targetId: notifData.targetId, type: notifData.type }, // Deep linking data
-            badge: 1, // Increments app icon badge
-            threadId: 'aniyu_social', // iOS Grouping ID
-            categoryId: 'social_interaction', // iOS Category
-            channelId: 'social-updates', // Android Grouping Channel
+            data: { targetId: notifData.targetId, type: notifData.type }, 
+            badge: 1, 
+            threadId: 'aniyu_social', 
+            categoryId: 'social_interaction', 
+            channelId: 'social-updates', 
         };
 
         const response = await fetch('https://exp.host/--/api/v2/push/send', {
@@ -595,7 +663,6 @@ export const sendTargetedPushNotification = onDocumentCreated("users/{userId}/no
 
         const result = await response.json();
         
-        // Token Cleanup: If device is no longer registered, remove the dead token
         if (result.errors || (result.data && result.data.status === 'error' && result.data.details?.error === 'DeviceNotRegistered')) {
             console.log(`🧹 Cleaning up dead token for user: ${userId}`);
             await admin.firestore().doc(`users/${userId}`).update({ expoPushToken: admin.firestore.FieldValue.delete() });
@@ -605,12 +672,7 @@ export const sendTargetedPushNotification = onDocumentCreated("users/{userId}/no
     }
 });
 
-// 5. AUTO-SEND GLOBAL BROADCASTS (Scalable Batching)
-// ✅ BUG 25 FIX: Increased timeoutSeconds to 540 (9 minutes — Cloud Functions v2 max)
-// Previously used default 60s which would timeout silently at ~5k-8k users.
-// The while loop now safely paginates through ALL users regardless of count.
-// At 10k users: 20 iterations of 500 users each = well within 9 minutes.
-// At 100k users: 200 iterations = still completes safely.
+// 5. AUTO-SEND GLOBAL BROADCASTS
 export const sendGlobalBroadcastPush = onDocumentCreated(
     { document: "announcements/{announcementId}", timeoutSeconds: 540, memory: "256MiB" },
     async (event) => {
@@ -623,7 +685,6 @@ export const sendGlobalBroadcastPush = onDocumentCreated(
     try {
         console.log("🚀 Starting Global Broadcast via Cloud Functions...");
         
-        // Fetch users in chunks (Scalable approach)
         const usersRef = admin.firestore().collection("users");
         let lastDoc: any = null;
         let hasMore = true;
@@ -654,12 +715,11 @@ export const sendGlobalBroadcastPush = onDocumentCreated(
                     title: announcement.title,
                     body: announcement.body,
                     badge: 1,
-                    threadId: 'aniyu_announcements', // Separate iOS group for admin
+                    threadId: 'aniyu_announcements', 
                     categoryId: 'admin_broadcast',
-                    channelId: 'admin-broadcasts', // Separate Android channel
+                    channelId: 'admin-broadcasts', 
                 }));
 
-                // Send in chunks of 100 (Expo API Limit)
                 const fetchPromises = [];
                 for (let i = 0; i < messages.length; i += 100) {
                     const chunk = messages.slice(i, i + 100);
@@ -672,15 +732,14 @@ export const sendGlobalBroadcastPush = onDocumentCreated(
                     );
                 }
                 
-                // Process the 500-user batch concurrently
                 await Promise.all(fetchPromises);
                 totalSent += validTokens.length;
             }
 
             if (querySnapshot.docs.length < 500) {
-                hasMore = false; // We reached the end of the database
+                hasMore = false; 
             } else {
-                lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1]; // Set cursor for next loop
+                lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1]; 
             }
         }
         

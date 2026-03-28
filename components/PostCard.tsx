@@ -34,10 +34,13 @@ import {
     TouchableWithoutFeedback,
     View
 } from 'react-native';
-import { auth, db } from '../config/firebaseConfig';
+
+// ✅ SURGICAL FIX: Imported appCheck and getToken for security
+import { getToken } from 'firebase/app-check';
+import { appCheck, auth, db } from '../config/firebaseConfig';
 import { useTheme } from '../context/ThemeContext';
 import { sendSocialNotification } from '../services/notificationService';
-import { deleteFromR2 } from '../services/r2Storage'; // ✅ IMPORTED R2 DELETE FUNCTION
+import { deleteFromR2 } from '../services/r2Storage';
 
 interface PostCardProps {
   post: any;
@@ -218,7 +221,7 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
                 
                 commentCount: post.commentCount || 0,
                 views: post.views || 0,
-                role: post.role || 'user' // Ensures role is carried over in reposts
+                role: post.role || 'user' 
             });
             sendSocialNotification(authorId, 'repost', { uid: currentUser.uid, name: currentUser.displayName || 'User', avatar: currentUser.photoURL || '' }, '', targetPostId);
         } else {
@@ -250,7 +253,6 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
   const handleShare = async () => {
       try {
           const targetPostId = post.isRepost ? post.originalPostId : post.id;
-          // ✅ BUG 5 FIX: Removed the leading slash to ensure OS deep linking works correctly
           const postUrl = Linking.createURL('post-details', { queryParams: { postId: targetPostId } });
 
           await Share.share({
@@ -382,9 +384,15 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
     if (!currentUser) return;
     try {
       const idToken = await currentUser.getIdToken();
+      const appCheckTokenResponse = await getToken(appCheck, false); // ✅ Grab VIP Pass
+
       const response = await fetch(CREATE_REPORT_URL, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
+          headers: { 
+              'Content-Type': 'application/json', 
+              'Authorization': `Bearer ${idToken}`,
+              'X-Firebase-AppCheck': appCheckTokenResponse.token // ✅ Inject VIP Pass
+          },
           body: JSON.stringify({ type: 'post', targetId: post.id, targetContent: post.text || 'media', userId: authorId, reason })
       });
       if (response.status === 429) {

@@ -1,6 +1,10 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
+
+// ✅ SURGICAL FIX: Import App Check for the Web Admin Panel
+import { initializeAppCheck, ReCaptchaV3Provider } from "firebase/app-check";
+
 // ✅ SURGICAL UPDATE: Removed 'firebase/storage' completely. 
 // We rely 100% on Cloudflare R2 for all media.
 
@@ -17,6 +21,24 @@ export const firebaseConfig = {
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
+
+// =========================================================================
+// 🔐 SECURITY FIX: Firebase App Check for Admin Panel
+// =========================================================================
+
+// Allow local testing without being blocked by App Check (Vite syntax)
+if (import.meta.env.DEV) {
+    self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+}
+
+// ✅ SURGICAL FIX: Initialize and export the App Check instance
+export const appCheck = initializeAppCheck(app, {
+    // Uses the exact same Site Key as the mobile app
+    provider: new ReCaptchaV3Provider('6LdWBJwsAAAAAOuFuF2UGd_47rxd2GUFLq8XFHjY'),
+    isTokenAutoRefreshEnabled: true
+});
+
+// =========================================================================
 
 // Initialize Services
 export const auth = getAuth(app);

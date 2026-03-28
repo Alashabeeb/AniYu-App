@@ -26,8 +26,10 @@ import {
     updateDoc,
     where
 } from 'firebase/firestore';
-// ✅ SURGICAL FIX: Added 'auth' to the imports so we can get the real security token
-import { auth, db } from '../config/firebaseConfig';
+
+// ✅ SURGICAL FIX: Imported appCheck and getToken so we can send the security token
+import { getToken } from 'firebase/app-check';
+import { appCheck, auth, db } from '../config/firebaseConfig';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { uploadToR2 } from '../services/r2Storage';
@@ -157,16 +159,20 @@ export default function LiveChatScreen() {
                 uploadedImageUrl = typeof result === 'string' ? result : (result as any).url;
             }
 
-            // ✅ SURGICAL FIX: Ask the actual Firebase Auth Engine for the ID Token
             const firebaseUser = auth.currentUser;
             if (!firebaseUser) throw new Error("Not authenticated");
             const idToken = await firebaseUser.getIdToken();
+
+            // ✅ SURGICAL FIX: Grab the App Check VIP Pass
+            const appCheckTokenResponse = await getToken(appCheck, false);
 
             const response = await fetch(CREATE_SUPPORT_MESSAGE_URL, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${idToken}`
+                    'Authorization': `Bearer ${idToken}`,
+                    // ✅ SURGICAL FIX: Hand the VIP pass to the Cloud Function
+                    'X-Firebase-AppCheck': appCheckTokenResponse.token
                 },
                 body: JSON.stringify({
                     ticketId: currentTicketId,

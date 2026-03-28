@@ -27,7 +27,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import CustomAlert from '../components/CustomAlert';
 // ✅ IMPORT AD BANNER
 import AdBanner from '../components/AdBanner';
-import { auth, db } from '../config/firebaseConfig';
+
+// ✅ SURGICAL FIX: Imported appCheck and getToken for security
+import { getToken } from 'firebase/app-check';
+import { appCheck, auth, db } from '../config/firebaseConfig';
 import { useTheme } from '../context/ThemeContext';
 import { sendSocialNotification } from '../services/notificationService';
 import { deleteFromR2 } from '../services/r2Storage';
@@ -234,14 +237,9 @@ export default function PostDetailsScreen() {
                       await addDoc(collection(db, 'posts'), {
                           isRepost: true,
                           originalPostId: id,
-                          // ✅ FIX: userId must be the reposter's UID, not the original author's
-                          // Previously was targetPost.userId which caused reposts to appear
-                          // on the wrong user's profile and broke feed-profile queries
                           userId: user.uid,
                           repostedByUid: user.uid,
                           repostedByName: user.displayName || 'Someone',
-                          // ✅ FIX: originalUserId was missing entirely — this field is required
-                          // by feed.tsx sync logic and sendSocialNotification to identify the author
                           originalUserId: targetPost.userId,
                           displayName: targetPost.displayName,
                           username: targetPost.username,
@@ -256,7 +254,6 @@ export default function PostDetailsScreen() {
                           reposts: [], repostCount: 0,
                           commentCount: 0,
                           views: 0,
-                          // ✅ FIX: role was missing — needed for badge display on reposts
                           role: targetPost.role || 'user'
                       });
                       sendSocialNotification(targetPost.userId, 'repost', { uid: user.uid, name: user.displayName || 'User', avatar: user.photoURL || '' }, '', id).catch(()=>console.log("Silent notif error"));
@@ -366,9 +363,15 @@ export default function PostDetailsScreen() {
       setReportLoading(true);
       try {
         const idToken = await user.getIdToken();
+        const appCheckTokenResponse = await getToken(appCheck, false); // ✅ Grab VIP Pass
+
         const response = await fetch(CREATE_REPORT_URL, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
+            headers: { 
+                'Content-Type': 'application/json', 
+                'Authorization': `Bearer ${idToken}`,
+                'X-Firebase-AppCheck': appCheckTokenResponse.token // ✅ Inject VIP Pass
+            },
             body: JSON.stringify({ type: 'post', targetId: postId, targetContent: post?.text || 'media', userId: authorId, reason })
         });
         if (response.status === 429) {
@@ -393,7 +396,6 @@ export default function PostDetailsScreen() {
 
     setSending(true);
     try {
-      // ✅ BUG 3 FIX: Use pre-fetched state instead of querying Firestore
       const userData = currentUserData || {};
       const realUsername = userData.username || user.email?.split('@')[0] || "user"; 
       const realDisplayName = userData.displayName || user.displayName || "Anonymous";
@@ -401,11 +403,14 @@ export default function PostDetailsScreen() {
       const realRole = userData.role || 'user'; 
 
       const idToken = await user.getIdToken();
+      const appCheckTokenResponse = await getToken(appCheck, false); // ✅ Grab VIP Pass
+
       const response = await fetch(CREATE_COMMENT_URL, {
           method: 'POST',
           headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${idToken}`
+              'Authorization': `Bearer ${idToken}`,
+              'X-Firebase-AppCheck': appCheckTokenResponse.token // ✅ Inject VIP Pass
           },
           body: JSON.stringify({
               text: newComment,
@@ -440,7 +445,6 @@ export default function PostDetailsScreen() {
 
       setNewComment('');
       
-      // ✅ Automatically fetch the new comment so it appears in the list instantly
       fetchComments();
 
     } catch (e: any) { 

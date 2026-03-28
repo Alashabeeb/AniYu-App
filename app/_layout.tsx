@@ -14,6 +14,18 @@ import { useUserHeartbeat } from '../hooks/useUserHeartbeat';
 import mobileAds from 'react-native-google-mobile-ads';
 import ReturningUserAd from '../components/ReturningUserAd';
 
+// ✅ SENTRY CONFIGURATION (Must be initialized outside of the component tree to catch startup crashes)
+import * as Sentry from '@sentry/react-native';
+
+Sentry.init({
+  // ✅ SURGICAL FIX: Your live production DSN is now active
+  dsn: 'https://5a364c138d092be43d0a8920e2547102@o4511123795869696.ingest.us.sentry.io/4511123856031744', 
+  // Captures 20% of sessions for performance monitoring
+  tracesSampleRate: 0.2, 
+  // Tags every error with the app version automatically
+  release: 'com.aniyu.app@1.0.6', 
+});
+
 // ✅ EXPO FOREGROUND NOTIFICATION HANDLER
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -124,10 +136,13 @@ function RootLayoutNav() {
   );
 }
 
-export default function RootLayout() {
+// ✅ SENTRY FIX: Wrap the entire RootLayout in Sentry to catch all React rendering errors!
+function RootLayout() {
   return (
     <AuthProvider>
       <RootLayoutNav />
     </AuthProvider>
   );
 }
+
+export default Sentry.wrap(RootLayout);
