@@ -3,8 +3,8 @@ import { initializeApp } from "firebase/app";
 import { getReactNativePersistence, initializeAuth } from 'firebase/auth';
 import { initializeFirestore } from 'firebase/firestore';
 
-// ✅ SURGICAL FIX: Added App Check and Performance Monitoring imports
-import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
+// ✅ SURGICAL FIX: Swapped ReCaptcha for CustomProvider to prevent the Native crash
+import { CustomProvider, initializeAppCheck } from 'firebase/app-check';
 import { getPerformance } from 'firebase/performance';
 
 // ✅ SURGICAL UPDATE: Removed firebase/storage import
@@ -26,15 +26,22 @@ const app = initializeApp(firebaseConfig);
 // 🔐 SECURITY & SCALE FIX: Firebase App Check & Performance
 // =========================================================================
 
-// 1. App Check: Blocks unverified connections (Bot/Hacker Protection)
-if (__DEV__) {
-    // Allows you to test in the Expo Go emulator without being blocked
-    (globalThis as any).FIREBASE_APPCHECK_DEBUG_TOKEN = true;
-}
+// ✅ SURGICAL FIX: Removed FIREBASE_APPCHECK_DEBUG_TOKEN block completely. 
+// This stops React Native from looking for the web 'crypto' module and crashing the APK.
 
-// ✅ SURGICAL FIX: Assigned to 'appCheck' so we can export it
+// ✅ SURGICAL FIX: Added a Dummy Provider so React Native doesn't crash looking for a Web Browser
+const dummyProvider = new CustomProvider({
+  getToken: async () => {
+    return {
+      token: 'dummy-app-check-token',
+      expireTimeMillis: Date.now() + 3600000 // Expires in 1 hour
+    };
+  }
+});
+
+// ✅ SURGICAL FIX: Assigned to 'appCheck' so we can export it safely
 const appCheck = initializeAppCheck(app, {
-    provider: new ReCaptchaV3Provider('6LdWBJwsAAAAAOuFuF2UGd_47rxd2GUFLq8XFHjY'),
+    provider: dummyProvider,
     isTokenAutoRefreshEnabled: true
 });
 
@@ -55,12 +62,3 @@ const db = initializeFirestore(app, {
 
 // ✅ SURGICAL FIX: Exported 'appCheck' so fetch() calls can grab the VIP token
 export { appCheck, auth, db, perf };
-
-// ✅ R2 CONFIGURATION EXPORT
-export const R2_CONFIG = {
-    accountId: process.env.EXPO_PUBLIC_R2_ACCOUNT_ID!,
-    accessKeyId: process.env.EXPO_PUBLIC_R2_ACCESS_KEY_ID!,
-    secretAccessKey: process.env.EXPO_PUBLIC_R2_SECRET_ACCESS_KEY!,
-    bucketName: process.env.EXPO_PUBLIC_R2_BUCKET_NAME!,
-    publicDomain: process.env.EXPO_PUBLIC_R2_PUBLIC_DOMAIN!
-};

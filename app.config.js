@@ -2,7 +2,7 @@ export default {
   expo: {
     name: "AniYu",
     slug: "AniYu",
-    version: "1.0.8",
+    version: "1.0.9",
     orientation: "portrait",
     icon: "./assets/images/icon.png",
     scheme: "aniyu",
@@ -76,7 +76,6 @@ export default {
       ],      
       "@react-native-google-signin/google-signin",
       "expo-apple-authentication",
-      // ✅ SURGICAL FIX: Sentry Auto-Upload configuration added here
       [
         "@sentry/react-native/expo",
         {
