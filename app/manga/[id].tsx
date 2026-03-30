@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage'; // ✅ Added AsyncStorage
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { DocumentSnapshot } from 'firebase/firestore';
 import React, { useCallback, useEffect, useState } from 'react';
@@ -10,7 +10,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-// ✅ IMPORT ADMOB HOOKS & IDS
 import { useRewardedAd } from 'react-native-google-mobile-ads';
 import { AdUnitIds } from '../../constants/AdIds';
 
@@ -55,48 +54,31 @@ export default function MangaDetailScreen() {
 
   const [activeTab, setActiveTab] = useState('Overview');
 
-  // ✅ ADMOB: States to hold the item and the ACTION (Read vs Download)
   const [pendingChapter, setPendingChapter] = useState<any>(null);
   const [pendingAction, setPendingAction] = useState<'read' | 'download' | null>(null);
 
-  // ✅ ADMOB: Initialize the Rewarded Ad Hook
   const { isLoaded, isClosed, isEarnedReward, load, show } = useRewardedAd(AdUnitIds.rewarded, {
       requestNonPersonalizedAdsOnly: true,
   });
 
-  // ✅ ADMOB: Pre-load the ad securely
-  useEffect(() => {
-      load();
-  }, [load]);
+  useEffect(() => { load(); }, [load]);
 
-  // ✅ ADMOB: Listen for when the ad is closed to grant the exact reward requested
   useEffect(() => {
       if (isClosed) {
           if (isEarnedReward && pendingChapter) {
-              if (pendingAction === 'read') {
-                  performReadChapter(pendingChapter);
-              } else if (pendingAction === 'download') {
-                  performDownload(pendingChapter);
-              }
+              if (pendingAction === 'read') performReadChapter(pendingChapter);
+              else if (pendingAction === 'download') performDownload(pendingChapter);
           } else if (!isEarnedReward && pendingChapter) {
               Alert.alert("Ad Canceled", "You must watch the full ad to unlock this feature.");
           }
-          
           setPendingChapter(null);
           setPendingAction(null);
           load(); 
       }
   }, [isClosed, isEarnedReward, load, pendingChapter, pendingAction]);
 
-  // ✅ ISSUE 1 FIX: loadStatus uses useFocusEffect — correct, it needs to refresh
-  // on every return from chapter-read so downloaded/read badges stay up to date
   useFocusEffect(useCallback(() => { if (id) loadStatus(); }, [id]));
 
-  // ✅ ISSUE 1 FIX: loadData moved from useFocusEffect to useEffect with [id] dependency
-  // Previously: fired on EVERY screen focus → chapters reset + 2 Firestore reads every time
-  // user navigated back from reading a chapter.
-  // Now: fires ONCE on mount. useFocusEffect is only needed for status (downloads/read marks)
-  // not for the manga details and chapter list which don't change between navigations.
   useEffect(() => { if (id) loadData(); }, [id]);
 
   const loadStatus = async () => {
@@ -115,17 +97,9 @@ export default function MangaDetailScreen() {
       setManga(details);
 
       const chapData = await getMangaChapters(id as string, null);
-
-      // ✅ ISSUE 2 FIX: Only set chapters if we got results back
-      // Previously chapters were always reset to first page on every focus,
-      // meaning any "Load More" chapters the user had loaded were wiped on return.
-      // Now chapters only set on initial mount (this effect only fires once).
       setChapters(chapData.data);
 
-      // ✅ BUG 32 FIX: Only update lastVisible if we have docs
-      if (chapData.lastVisible) {
-          setLastVisible(chapData.lastVisible);
-      }
+      if (chapData.lastVisible) setLastVisible(chapData.lastVisible);
       if (chapData.data.length < 50) setHasMore(false);
 
       checkAndIncrementView();
@@ -139,19 +113,14 @@ export default function MangaDetailScreen() {
       setLoadingMore(true);
       try {
           const more = await getMangaChapters(id as string, lastVisible);
-          
-          // ✅ BUG 32 FIX: Guard against undefined cursor on empty arrays
           if (more.data && more.data.length > 0) {
               setChapters(prev => [...prev, ...more.data]);
-              setLastVisible(more.lastVisible); // Safely sets the next cursor
+              setLastVisible(more.lastVisible); 
           } else {
-              setHasMore(false); // Hard stop, preventing crash
+              setHasMore(false); 
           }
-      } catch (error) {
-          console.error("Error loading more chapters", error);
-      } finally {
-          setLoadingMore(false);
-      }
+      } catch (error) { console.error("Error loading more chapters", error); } 
+      finally { setLoadingMore(false); }
   };
 
   const checkAndIncrementView = async () => {
@@ -161,25 +130,38 @@ export default function MangaDetailScreen() {
       const localKey = `viewed_manga_${user.uid}_${id}`;
       try {
           const hasViewedLocally = await AsyncStorage.getItem(localKey);
-          
           if (!hasViewedLocally) {
               await AsyncStorage.setItem(localKey, 'true');
               await incrementMangaView(id as string);
           }
-      } catch (e) {
-          console.log("View track error", e);
-      }
+      } catch (e) { console.log("View track error", e); }
   };
 
+  // ✅ SURGICAL FIX: Upgraded to catch Cloud Function Rate Limits securely
   const submitReview = async () => {
       if (userRating === 0) return Alert.alert("Rate First", "Please tap the stars to rate.");
       const user = auth.currentUser;
       if (!user) return Alert.alert("Login Required", "You must be logged in to rate.");
+      
       setSubmittingReview(true);
-      await addMangaReview(id as string, user.uid, user.displayName || 'User', userRating);
+      const result = await addMangaReview(id as string, user.uid, user.displayName || 'User', userRating) as any;
       setSubmittingReview(false);
+
+      if (!result.success) {
+          Alert.alert("Error", result.error || "Could not submit rating.");
+          return;
+      }
+
       setModalVisible(false);
       Alert.alert("Thank you!", "Your rating has been saved.");
+
+      // Refresh score locally
+      try {
+          const freshDetails = await getMangaDetails(id as string);
+          if (freshDetails) {
+              setManga((prev: any) => ({ ...prev, score: (freshDetails as any).score }));
+          }
+      } catch (e) { console.log("Score refresh error", e); }
   };
 
   const performDownload = async (chapter: any) => {
@@ -194,7 +176,6 @@ export default function MangaDetailScreen() {
       finally { setDownloadingIds(prev => prev.filter(id => id !== chId)); }
   };
 
-  // ✅ ADMOB: Trigger Download Reward
   const handleDownload = (chapter: any) => {
       const chId = String(chapter.id || chapter.number);
       if (downloadedChapters.includes(chId)) return; 
@@ -205,19 +186,10 @@ export default function MangaDetailScreen() {
               "Watch a short ad to unlock the offline download for this chapter?",
               [
                   { text: "Cancel", style: "cancel" },
-                  { 
-                      text: "Watch Ad", 
-                      onPress: () => {
-                          setPendingChapter(chapter);
-                          setPendingAction('download'); 
-                          show();
-                      }
-                  }
+                  { text: "Watch Ad", onPress: () => { setPendingChapter(chapter); setPendingAction('download'); show(); } }
               ]
           );
-      } else {
-          performDownload(chapter); // Fallback if ad hasn't loaded
-      }
+      } else { performDownload(chapter); }
   };
 
   const performReadChapter = (chapter: any) => {
@@ -225,20 +197,12 @@ export default function MangaDetailScreen() {
       const fileUrl = chapter.pages?.[0];
 
       if (!fileUrl) { Alert.alert("Error", "Chapter file not available."); return; }
-      
       router.push({
           pathname: '/chapter-read', 
-          params: {
-              url: fileUrl, 
-              title: `${manga.title} - ${chapter.title || 'Chapter ' + chapter.number}`,
-              mangaId: manga.mal_id, 
-              chapterId: chId,
-              chapterNum: chapter.number
-          }
+          params: { url: fileUrl, title: `${manga.title} - ${chapter.title || 'Chapter ' + chapter.number}`, mangaId: manga.mal_id, chapterId: chId, chapterNum: chapter.number }
       });
   };
 
-  // ✅ ADMOB: Trigger Read Reward
   const handleReadChapter = (chapter: any) => {
       if (isLoaded) {
           Alert.alert(
@@ -246,24 +210,13 @@ export default function MangaDetailScreen() {
               "Watch a short ad to unlock and read this chapter?",
               [
                   { text: "Cancel", style: "cancel" },
-                  { 
-                      text: "Watch Ad", 
-                      onPress: () => {
-                          setPendingChapter(chapter);
-                          setPendingAction('read'); 
-                          show();
-                      }
-                  }
+                  { text: "Watch Ad", onPress: () => { setPendingChapter(chapter); setPendingAction('read'); show(); } }
               ]
           );
-      } else {
-          performReadChapter(chapter); // Fallback if ad hasn't loaded
-      }
+      } else { performReadChapter(chapter); }
   };
 
-  const openSocial = (url: string) => {
-      Linking.openURL(url).catch(err => console.error("Couldn't open link", err));
-  };
+  const openSocial = (url: string) => { Linking.openURL(url).catch(err => console.error("Couldn't open link", err)); };
 
   if (loading && !manga) return <View style={[styles.loading, { backgroundColor: theme.background }]}><ActivityIndicator size="large" color={theme.tint} /></View>;
   if (!manga) return null;
@@ -287,11 +240,7 @@ export default function MangaDetailScreen() {
 
         <View style={[styles.tabBar, { backgroundColor: theme.background, borderBottomColor: theme.border }]}>
             {['Overview', 'Chapters'].map(tab => (
-                <TouchableOpacity 
-                    key={tab} 
-                    style={[styles.tabItem, activeTab === tab && { borderBottomColor: theme.tint }]}
-                    onPress={() => setActiveTab(tab)}
-                >
+                <TouchableOpacity key={tab} style={[styles.tabItem, activeTab === tab && { borderBottomColor: theme.tint }]} onPress={() => setActiveTab(tab)}>
                     <Text style={[styles.tabText, { color: activeTab === tab ? theme.tint : theme.subText }]}>{tab}</Text>
                 </TouchableOpacity>
             ))}
@@ -322,7 +271,6 @@ export default function MangaDetailScreen() {
                         ))}
                     </View>
 
-                    {/* ✅ NEW: METADATA SECTION (Publisher, Platforms) */}
                     {manga.publisher && (
                         <View style={{ marginTop: 20 }}>
                             <Text style={{ color: theme.text, fontSize: 14 }}>
@@ -351,23 +299,13 @@ export default function MangaDetailScreen() {
                     {manga.hasReadingRights === false ? (
                         <View style={[styles.noLicenseContainer, { backgroundColor: theme.card }]}>
                             <Ionicons name="lock-closed" size={40} color={theme.subText} style={{ marginBottom: 15 }} />
-                            <Text style={[styles.noLicenseTitle, { color: theme.text }]}>
-                                Content Unavailable
-                            </Text>
-                            <Text style={[styles.noLicenseText, { color: theme.subText }]}>
-                                We currently do not hold the reading rights or licensing to provide chapters for this manga.
-                            </Text>
-                            <Text style={[styles.noLicenseText, { color: theme.subText, marginTop: 10 }]}>
-                                If you are a licensor or know how we can acquire these rights, your assistance would be greatly appreciated!
-                            </Text>
+                            <Text style={[styles.noLicenseTitle, { color: theme.text }]}>Content Unavailable</Text>
+                            <Text style={[styles.noLicenseText, { color: theme.subText }]}>We currently do not hold the reading rights or licensing to provide chapters for this manga.</Text>
+                            <Text style={[styles.noLicenseText, { color: theme.subText, marginTop: 10 }]}>If you are a licensor or know how we can acquire these rights, your assistance would be greatly appreciated!</Text>
                             
                             <View style={styles.socialRow}>
                                 {SOCIAL_LINKS.map(link => (
-                                    <TouchableOpacity 
-                                        key={link.id} 
-                                        style={[styles.socialBtn, { backgroundColor: link.color + '20' }]} 
-                                        onPress={() => openSocial(link.url)}
-                                    >
+                                    <TouchableOpacity key={link.id} style={[styles.socialBtn, { backgroundColor: link.color + '20' }]} onPress={() => openSocial(link.url)}>
                                         <Ionicons name={link.icon as any} size={22} color={link.color} />
                                     </TouchableOpacity>
                                 ))}
@@ -405,10 +343,7 @@ export default function MangaDetailScreen() {
                                 })}
                                 
                                 {hasMore && (
-                                    <TouchableOpacity 
-                                        onPress={handleLoadMore} 
-                                        style={{ padding: 15, alignItems: 'center', backgroundColor: theme.card, borderRadius: 8, marginTop: 10 }}
-                                    >
+                                    <TouchableOpacity onPress={handleLoadMore} style={{ padding: 15, alignItems: 'center', backgroundColor: theme.card, borderRadius: 8, marginTop: 10 }}>
                                         {loadingMore ? <ActivityIndicator color={theme.tint} /> : <Text style={{ color: theme.tint, fontWeight: 'bold' }}>Load More Chapters</Text>}
                                     </TouchableOpacity>
                                 )}
@@ -419,12 +354,7 @@ export default function MangaDetailScreen() {
             )}
         </ScrollView>
         
-        <Modal
-            animationType="fade"
-            transparent={true}
-            visible={modalVisible}
-            onRequestClose={() => setModalVisible(false)}
-        >
+        <Modal animationType="fade" transparent={true} visible={modalVisible} onRequestClose={() => setModalVisible(false)}>
             <View style={styles.modalOverlay}>
                 <View style={[styles.modalContent, { backgroundColor: theme.card }]}>
                     <Text style={[styles.modalTitle, { color: theme.text }]}>Rate this Manga</Text>
@@ -458,11 +388,9 @@ const styles = StyleSheet.create({
   headerContent: { position: 'absolute', bottom: 20, left: 20, right: 20, flexDirection: 'row', gap: 15 },
   smallPoster: { width: 100, height: 150, borderRadius: 8 },
   title: { fontSize: 22, fontWeight: 'bold' },
-  
   tabBar: { flexDirection: 'row', borderBottomWidth: 1, paddingHorizontal: 10 },
   tabItem: { flex: 1, alignItems: 'center', paddingVertical: 15, borderBottomWidth: 3, borderBottomColor: 'transparent' },
   tabText: { fontWeight: 'bold', fontSize: 14 },
-  
   contentScroll: { flex: 1 },
   detailsContainer: { padding: 20 },
   sectionTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 10 },
@@ -482,7 +410,6 @@ const styles = StyleSheet.create({
   modalButtons: { flexDirection: 'row', width: '100%', justifyContent: 'space-between', gap: 15 },
   cancelBtn: { padding: 12, flex: 1, alignItems: 'center', backgroundColor: '#f0f0f0', borderRadius: 8 },
   submitBtn: { padding: 12, flex: 1, alignItems: 'center', borderRadius: 8 },
-
   noLicenseContainer: { margin: 20, padding: 30, borderRadius: 16, alignItems: 'center', marginTop: 10 },
   noLicenseTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 10 },
   noLicenseText: { textAlign: 'center', lineHeight: 22, fontSize: 14 },

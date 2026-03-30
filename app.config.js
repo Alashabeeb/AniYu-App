@@ -83,7 +83,10 @@ export default {
           "project": "react-native",
           "organization": "aniyu"
         }
-      ]
+      ],
+      "@react-native-firebase/app",
+      "@react-native-firebase/app-check",
+      "@react-native-firebase/perf",
     ],
     experiments: {
       typedRoutes: true,

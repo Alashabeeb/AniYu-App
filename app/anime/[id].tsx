@@ -66,7 +66,6 @@ export default function AnimeDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('Overview'); 
   
-  // ✅ BUG 21 FIX: Pagination State
   const [lastEpDoc, setLastEpDoc] = useState<any>(null);
   const [loadingMoreEps, setLoadingMoreEps] = useState(false);
   const [hasMoreEps, setHasMoreEps] = useState(false);
@@ -324,21 +323,15 @@ export default function AnimeDetailScreen() {
       setLoading(true);
       const [detailsData, episodesData] = await Promise.all([
         getAnimeDetails(id as string),
-        getAnimeEpisodes(id as string) // Initial fetch
+        getAnimeEpisodes(id as string)
       ]);
       setAnime(detailsData);
 
-      // ✅ BUG 21 FIX: Handle paginated episode response
-      // ✅ ISSUE 1 FIX: Guard against service returning a flat array vs paginated object
-      // If animeService.ts getAnimeEpisodes is not yet updated to return { episodes, lastDoc, hasMore },
-      // this guard prevents a silent crash where episodesData.episodes would be undefined
       if (episodesData && Array.isArray(episodesData.episodes)) {
-          // New paginated format: { episodes, lastDoc, hasMore }
           setEpisodes(episodesData.episodes);
           setLastEpDoc(episodesData.lastDoc ?? null);
           setHasMoreEps(episodesData.hasMore ?? false);
       } else if (Array.isArray(episodesData)) {
-          // Old flat array format — service not yet updated, graceful fallback
           setEpisodes(episodesData);
           setLastEpDoc(null);
           setHasMoreEps(false);
@@ -348,7 +341,6 @@ export default function AnimeDetailScreen() {
           setHasMoreEps(false);
       }
 
-      // ✅ CONDITIONAL TRIGGER: ONLY Save to "Recently Viewed" if NO streaming rights
       const user = auth.currentUser;
       if (user && detailsData) {
           const animeData = detailsData as any;
@@ -374,7 +366,6 @@ export default function AnimeDetailScreen() {
           setRank(calculatedRank);
       }
 
-      // ✅ Guard: use the resolved episodes array safely
       const resolvedEpisodes = Array.isArray(episodesData?.episodes) 
           ? episodesData.episodes 
           : Array.isArray(episodesData) 
@@ -389,15 +380,15 @@ export default function AnimeDetailScreen() {
       setDownloadedEpIds(ids);
 
       resolvedEpisodes.forEach(ep => {
-          const epId = String(ep.mal_id);
-          if (isDownloading(epId)) {
-              setDownloadProgress(prev => ({ ...prev, [epId]: 0.01 }));
-              registerDownloadListener(epId, (p) => {
-                  setDownloadProgress(prev => ({ ...prev, [epId]: p }));
+          const epIdStr = String(ep.mal_id);
+          if (isDownloading(epIdStr)) {
+              setDownloadProgress(prev => ({ ...prev, [epIdStr]: 0.01 }));
+              registerDownloadListener(epIdStr, (p) => {
+                  setDownloadProgress(prev => ({ ...prev, [epIdStr]: p }));
                   if (p >= 1) {
-                      setDownloadedEpIds(prev => [...prev, epId]);
-                      setDownloadProgress(prev => { const n={...prev}; delete n[epId]; return n; });
-                      unregisterDownloadListener(epId);
+                      setDownloadedEpIds(prev => [...prev, epIdStr]);
+                      setDownloadProgress(prev => { const n={...prev}; delete n[epIdStr]; return n; });
+                      unregisterDownloadListener(epIdStr);
                   }
               });
           }
@@ -407,13 +398,11 @@ export default function AnimeDetailScreen() {
     finally { setLoading(false); }
   };
 
-  // ✅ BUG 21 FIX: Fetch next batch of episodes
   const loadMoreEpisodes = async () => {
       if (loadingMoreEps || !hasMoreEps) return;
       setLoadingMoreEps(true);
       try {
           const newEpsData = await getAnimeEpisodes(id as string, lastEpDoc);
-          // ✅ ISSUE 1 FIX: Same guard for paginated vs flat array on load more
           if (newEpsData && Array.isArray(newEpsData.episodes)) {
               setEpisodes(prev => [...prev, ...newEpsData.episodes]);
               setLastEpDoc(newEpsData.lastDoc ?? null);
@@ -559,6 +548,7 @@ export default function AnimeDetailScreen() {
     }
   };
 
+  // ✅ SURGICAL FIX: Integrated secure rate-limited feedback handling
   const submitReview = async () => {
       const user = auth.currentUser;
       if (!user) return Alert.alert("Login Required", "You must be logged in to rate.");
@@ -568,24 +558,32 @@ export default function AnimeDetailScreen() {
       }
 
       setSubmittingReview(true);
+      let reviewResult = { success: true, error: "" };
+      let commentResult = { success: true, error: "" };
       
       if (userRating > 0) {
-          await addAnimeReview(id as string, user.uid, user.displayName || 'User', userRating);
+          // Await the new secure backend service method
+          reviewResult = await addAnimeReview(id as string, user.uid, user.displayName || 'User', userRating) as any;
       }
 
       if (commentText.trim() !== '') {
-          await addAnimeComment(id as string, user.uid, user.displayName || 'User', commentText);
+          // Await the new secure backend service method
+          commentResult = await addAnimeComment(id as string, user.uid, user.displayName || 'User', commentText) as any;
       }
 
       setSubmittingReview(false);
+
+      if (!reviewResult.success || !commentResult.success) {
+          // If the backend rate limits or blocks the user, show the error
+          Alert.alert("Error", reviewResult.error || commentResult.error || "Could not submit your feedback.");
+          return;
+      }
+
       setModalVisible(false);
       setCommentText('');
       setUserRating(0);
       Alert.alert("Sent", "Feedback submitted successfully.");
 
-      // ✅ ISSUE 2 FIX: Only refresh the rank/score — not the entire screen
-      // Previously called loadAllData() which re-fetched all episodes and details
-      // just to update the score display — very expensive at scale
       try {
           const freshDetails = await getAnimeDetails(id as string);
           if (freshDetails) {
@@ -826,7 +824,6 @@ export default function AnimeDetailScreen() {
                             );
                         })}
 
-                        {/* ✅ BUG 21 FIX: Added Pagination "Load More" Button */}
                         {hasMoreEps && (
                             <TouchableOpacity 
                                 style={[styles.loadMoreBtn, { borderColor: theme.border }]}
@@ -1018,7 +1015,6 @@ const styles = StyleSheet.create({
   progressBarBg: { width: 40, height: 4, borderRadius: 2, overflow: 'hidden' },
   progressBarFill: { height: '100%' },
   
-  // ✅ BUG 21 FIX: Styles for the new Load More button
   loadMoreBtn: { padding: 15, alignItems: 'center', justifyContent: 'center', borderRadius: 8, borderWidth: 1, marginTop: 10 },
 
   detailsContainer: { padding: 20 },

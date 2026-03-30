@@ -1,3 +1,4 @@
+import { getToken } from 'firebase/app-check'; // ✅ ADDED APP CHECK
 import {
   collection,
   doc,
@@ -9,12 +10,11 @@ import {
   limit,
   orderBy,
   query,
-  runTransaction,
   startAfter,
   updateDoc,
   where
 } from 'firebase/firestore';
-import { db } from '../config/firebaseConfig';
+import { appCheck, auth, db } from '../config/firebaseConfig'; // ✅ ADDED AUTH & APPCHECK
 import { getContentRating, isContentAllowed } from './settingsService';
 
 // ✅ Helper to filter manga based on user settings
@@ -197,51 +197,35 @@ export const incrementMangaView = async (id: string) => {
   }
 };
 
+// =========================================================================
+// 🔐 SECURED: Cloud Function Endpoint for Manga Ratings
+// =========================================================================
+
+const REVIEW_URL = "https://us-central1-aniyu-b841b.cloudfunctions.net/submitMediaReview";
+
 // 7. Add Manga Review
 export const addMangaReview = async (mangaId: string, userId: string, userName: string, rating: number) => {
     try {
-        const mangaRef = doc(db, 'manga', mangaId);
-        const reviewRef = doc(db, 'manga', mangaId, 'reviews', userId); 
+        const idToken = await auth.currentUser?.getIdToken();
+        const appCheckToken = await getToken(appCheck, false);
 
-        await runTransaction(db, async (transaction) => {
-            const mangaDoc = await transaction.get(mangaRef);
-            const reviewDoc = await transaction.get(reviewRef);
-
-            if (!mangaDoc.exists()) throw "Manga does not exist!";
-
-            const data = mangaDoc.data();
-            let currentScore = data.score || 0;
-            let currentCount = data.scored_by || 0;
-            
-            let totalPoints = currentScore * currentCount;
-
-            if (reviewDoc.exists()) {
-                const oldRating = reviewDoc.data().rating || 0;
-                totalPoints = totalPoints - oldRating + rating;
-            } else {
-                totalPoints = totalPoints + rating;
-                currentCount = currentCount + 1; 
-            }
-
-            const newScore = currentCount > 0 ? (totalPoints / currentCount) : 0;
-
-            transaction.update(mangaRef, {
-                score: parseFloat(newScore.toFixed(1)), 
-                scored_by: currentCount
-            });
-
-            transaction.set(reviewRef, {
-                userId,
-                userName: userName || 'Anonymous',
-                rating,
-                createdAt: new Date().toISOString()
-            });
+        const response = await fetch(REVIEW_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${idToken}`,
+                'X-Firebase-AppCheck': appCheckToken.token
+            },
+            body: JSON.stringify({ targetType: 'manga', targetId: mangaId, rating, userName })
         });
 
-        return true;
-    } catch (error) {
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Failed to submit rating.");
+
+        return { success: true };
+    } catch (error: any) {
         console.error("Error adding rating:", error);
-        return false;
+        return { success: false, error: error.message };
     }
 };
 

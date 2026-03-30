@@ -4,9 +4,6 @@ import * as admin from "firebase-admin";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { onRequest } from "firebase-functions/v2/https";
 
-// Using require for cors to avoid type issues if @types/cors isn't installed
-const cors = require("cors")({ origin: true });
-
 admin.initializeApp();
 
 // 1. CONFIGURE R2 CLIENT
@@ -43,9 +40,9 @@ const checkRateLimit = async (uid: string, action: string, maxRequests: number):
   return true;
 };
 
+// ✅ SURGICAL FIX: Used Firebase v2 native { cors: true } to remove the yellow TS warning
 // 2. GENERATE UPLOAD URL FUNCTION
-export const generateUploadUrl = onRequest((req, res) => {
-  cors(req, res, async () => {
+export const generateUploadUrl = onRequest({ cors: true }, async (req, res) => {
     // 🛡️ SECURITY: Verify Firebase App Check Token (Blocks Bot/Script Attacks)
     const appCheckToken = req.header("X-Firebase-AppCheck");
     if (!appCheckToken) {
@@ -112,12 +109,10 @@ export const generateUploadUrl = onRequest((req, res) => {
       console.error("Error generating URL:", error);
       res.status(500).json({ error: "Internal Server Error" });
     }
-  });
 });
 
 // ✅ 2.5 DELETE FILE FROM R2 (Fixes Storage Leak)
-export const deleteR2File = onRequest((req, res) => {
-  cors(req, res, async () => {
+export const deleteR2File = onRequest({ cors: true }, async (req, res) => {
     // 🛡️ SECURITY: Verify Firebase App Check Token
     const appCheckToken = req.header("X-Firebase-AppCheck");
     if (!appCheckToken) {
@@ -180,12 +175,10 @@ export const deleteR2File = onRequest((req, res) => {
       console.error("Error deleting file from R2:", error);
       res.status(500).json({ error: "Internal Server Error" });
     }
-  });
 });
 
 // 🔐 SECURITY: Create Post via Cloud Function (Rate Limited)
-export const createPost = onRequest((req, res) => {
-  cors(req, res, async () => {
+export const createPost = onRequest({ cors: true }, async (req, res) => {
     // 🛡️ SECURITY: Verify Firebase App Check Token
     const appCheckToken = req.header("X-Firebase-AppCheck");
     if (!appCheckToken) {
@@ -274,12 +267,10 @@ export const createPost = onRequest((req, res) => {
       console.error("Error creating post:", error);
       res.status(500).json({ error: "Internal Server Error" });
     }
-  });
 });
 
 // 🔐 SECURITY: Create Comment via Cloud Function (Rate Limited)
-export const createComment = onRequest((req, res) => {
-  cors(req, res, async () => {
+export const createComment = onRequest({ cors: true }, async (req, res) => {
     // 🛡️ SECURITY: Verify Firebase App Check Token
     const appCheckToken = req.header("X-Firebase-AppCheck");
     if (!appCheckToken) {
@@ -368,12 +359,10 @@ export const createComment = onRequest((req, res) => {
       console.error("Error creating comment:", error);
       res.status(500).json({ error: "Internal Server Error" });
     }
-  });
 });
 
 // 🔐 SECURITY: Create Support Message via Cloud Function (Rate Limited)
-export const createSupportMessage = onRequest((req, res) => {
-  cors(req, res, async () => {
+export const createSupportMessage = onRequest({ cors: true }, async (req, res) => {
     // 🛡️ SECURITY: Verify Firebase App Check Token
     const appCheckToken = req.header("X-Firebase-AppCheck");
     if (!appCheckToken) {
@@ -472,12 +461,10 @@ export const createSupportMessage = onRequest((req, res) => {
       console.error("Error creating support message:", error);
       res.status(500).json({ error: "Internal Server Error" });
     }
-  });
 });
 
 // 🔐 SECURITY: Create Report via Cloud Function (Rate Limited)
-export const createReport = onRequest((req, res) => {
-  cors(req, res, async () => {
+export const createReport = onRequest({ cors: true }, async (req, res) => {
     // 🛡️ SECURITY: Verify Firebase App Check Token
     const appCheckToken = req.header("X-Firebase-AppCheck");
     if (!appCheckToken) {
@@ -541,7 +528,6 @@ export const createReport = onRequest((req, res) => {
       console.error("Error creating report:", error);
       res.status(500).json({ error: "Internal Server Error" });
     }
-  });
 });
 
 // 3. AUTO-MODERATE NEW POSTS & COMMENTS USING GOOGLE GEMINI
@@ -746,5 +732,153 @@ export const sendGlobalBroadcastPush = onDocumentCreated(
         console.log(`✅ Broadcast successfully queued for ${totalSent} devices.`);
     } catch (error) {
         console.error("Error sending broadcast:", error);
+    }
+});
+
+// 🔐 SECURITY: Universal Media Review (Anime & Manga)
+export const submitMediaReview = onRequest({ cors: true }, async (req, res) => {
+    const appCheckToken = req.header("X-Firebase-AppCheck");
+    if (!appCheckToken) {
+      res.status(401).json({ error: "Missing App Check token." });
+      return;
+    }
+    try { await admin.appCheck().verifyToken(appCheckToken); } catch (e) { 
+      res.status(401).json({ error: "Invalid App Check token." });
+      return;
+    }
+
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const idToken = authHeader.split("Bearer ")[1];
+    let decodedToken;
+    try { decodedToken = await admin.auth().verifyIdToken(idToken); } catch (e) { 
+      res.status(401).json({ error: "Invalid Token" });
+      return;
+    }
+
+    // Rate Limit: 10 reviews per hour
+    const allowed = await checkRateLimit(decodedToken.uid, "submitReview", 10);
+    if (!allowed) {
+      res.status(429).json({ error: "You are reviewing too fast. Please wait." });
+      return;
+    }
+
+    const { targetType, targetId, rating, userName } = req.body;
+    
+    // Strict Input Validation
+    if (!['anime', 'manga'].includes(targetType) || !targetId) {
+      res.status(400).json({ error: "Invalid media type." });
+      return;
+    }
+    if (typeof rating !== 'number' || rating < 1 || rating > 5) {
+      res.status(400).json({ error: "Rating must be between 1 and 5." });
+      return;
+    }
+
+    try {
+      const targetRef = admin.firestore().collection(targetType).doc(targetId);
+      const reviewRef = targetRef.collection('reviews').doc(decodedToken.uid);
+
+      await admin.firestore().runTransaction(async (transaction) => {
+        const targetDoc = await transaction.get(targetRef);
+        if (!targetDoc.exists) throw new Error("Media not found");
+
+        const reviewDoc = await transaction.get(reviewRef);
+        const data = targetDoc.data() || {};
+        
+        let currentScore = data.score || 0;
+        let currentCount = data.scored_by || 0;
+        let totalPoints = currentScore * currentCount;
+
+        if (reviewDoc.exists) {
+          const oldRating = reviewDoc.data()?.rating || 0;
+          totalPoints = totalPoints - oldRating + rating;
+        } else {
+          totalPoints += rating;
+          currentCount += 1;
+        }
+
+        const newScore = currentCount > 0 ? (totalPoints / currentCount) : 0;
+
+        transaction.update(targetRef, {
+          score: parseFloat(newScore.toFixed(1)),
+          scored_by: currentCount
+        });
+
+        transaction.set(reviewRef, {
+          userId: decodedToken.uid,
+          userName: userName || 'Anonymous',
+          rating,
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+      });
+
+      res.status(200).json({ success: true });
+    } catch (error: any) {
+      console.error(error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+});
+
+// 🔐 SECURITY: Universal Media Comment (Anime & Manga)
+export const submitMediaComment = onRequest({ cors: true }, async (req, res) => {
+    const appCheckToken = req.header("X-Firebase-AppCheck");
+    if (!appCheckToken) {
+      res.status(401).json({ error: "Missing App Check token." });
+      return;
+    }
+    try { await admin.appCheck().verifyToken(appCheckToken); } catch (e) { 
+      res.status(401).json({ error: "Invalid App Check token." });
+      return;
+    }
+
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    const idToken = authHeader.split("Bearer ")[1];
+    let decodedToken;
+    try { decodedToken = await admin.auth().verifyIdToken(idToken); } catch (e) { 
+      res.status(401).json({ error: "Invalid Token" });
+      return;
+    }
+
+    // Rate Limit: 20 comments per hour
+    const allowed = await checkRateLimit(decodedToken.uid, "submitMediaComment", 20);
+    if (!allowed) {
+      res.status(429).json({ error: "You are commenting too fast." });
+      return;
+    }
+
+    const { targetType, targetId, text, userName } = req.body;
+    
+    // Strict Input Validation
+    if (!['anime', 'manga'].includes(targetType) || !targetId) {
+      res.status(400).json({ error: "Invalid media type." });
+      return;
+    }
+    if (!text || text.trim().length === 0 || text.length > 300) {
+      res.status(400).json({ error: "Comment must be 1 to 300 characters." });
+      return;
+    }
+
+    try {
+      const commentsRef = admin.firestore().collection(targetType).doc(targetId).collection('comments');
+      await commentsRef.add({
+        userId: decodedToken.uid,
+        userName: userName || 'Anonymous',
+        text: text.trim(),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        isPrivate: true
+      });
+
+      res.status(200).json({ success: true });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Internal Server Error" });
     }
 });

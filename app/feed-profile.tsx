@@ -2,7 +2,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import {
-    addDoc,
     arrayRemove,
     arrayUnion,
     collection,
@@ -14,7 +13,6 @@ import {
     onSnapshot,
     orderBy,
     query,
-    serverTimestamp,
     setDoc,
     startAfter,
     updateDoc,
@@ -40,7 +38,14 @@ import { auth, db } from '../config/firebaseConfig';
 import { useTheme } from '../context/ThemeContext';
 import { sendSocialNotification } from '../services/notificationService';
 
+// ✅ SURGICAL FIX: Imported App Check tools for secure reporting
+import { getToken } from 'firebase/app-check';
+import { appCheck } from '../config/firebaseConfig';
+
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+// 🔐 SECURITY: Report now goes through the rate-limited Cloud Function
+const CREATE_REPORT_URL = "https://us-central1-aniyu-b841b.cloudfunctions.net/createReport";
 
 const REPORT_REASONS = [
     "Pretending to be someone else",
@@ -152,7 +157,6 @@ export default function FeedProfileScreen() {
       if (!initial) setLoadingMorePosts(true); 
 
       try {
-          // ✅ PERFECT MATCH FOR YOUR NEW INDEX
           let q = query(
               collection(db, 'posts'), 
               where('userId', '==', targetUserId), 
@@ -375,23 +379,49 @@ export default function FeedProfileScreen() {
       ]);
   };
 
+  // ✅ SURGICAL FIX: Integrated App Check and Rate-Limited Cloud Function for Reporting
   const submitReportUser = async (reason: string) => {
     if (!currentUser || !targetUserId) return;
     setReportLoading(true);
     try {
-      await addDoc(collection(db, 'reports'), { 
-          type: 'user', 
-          targetId: targetUserId, 
-          userId: targetUserId, 
-          targetName: userData?.username || 'Unknown', 
-          reportedBy: currentUser.uid, 
-          reason, 
-          createdAt: serverTimestamp(), 
-          status: 'pending' 
+      const idToken = await currentUser.getIdToken();
+      const appCheckTokenResponse = await getToken(appCheck, false); // ✅ GRAB VIP PASS
+
+      const response = await fetch(CREATE_REPORT_URL, {
+          method: 'POST',
+          headers: { 
+              'Content-Type': 'application/json', 
+              'Authorization': `Bearer ${idToken}`,
+              'X-Firebase-AppCheck': appCheckTokenResponse.token // ✅ INJECT VIP PASS
+          },
+          body: JSON.stringify({ 
+              type: 'user', 
+              targetId: targetUserId, 
+              userId: targetUserId,
+              targetName: userData?.username || 'Unknown',
+              reason 
+          })
       });
-      Alert.alert("Report Submitted", "We will review this profile.");
+
+      const result = await response.json();
+
+      if (!response.ok) {
+          if (response.status === 429) {
+              Alert.alert("Slow Down", "You are reporting too fast. Please wait.");
+          } else {
+              Alert.alert("Error", result.error || "Could not submit report.");
+          }
+          return;
+      }
+
       setReportModalVisible(false);
-    } catch { Alert.alert("Error", "Could not submit."); } finally { setReportLoading(false); }
+      Alert.alert("Report Submitted", "Thank you. We will review this profile shortly.");
+    } catch (error) {
+      console.error(error);
+      Alert.alert("Error", "Could not connect to the server.");
+    } finally {
+      setReportLoading(false);
+    }
   };
 
   const renderList = (data: any[], emptyMsg: string, loadMoreFunc: () => void, tabName: string) => (

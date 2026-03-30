@@ -1,5 +1,5 @@
+import { getToken } from 'firebase/app-check'; // ✅ ADDED APP CHECK
 import {
-  addDoc,
   collection,
   doc,
   getCountFromServer,
@@ -15,7 +15,7 @@ import {
   updateDoc,
   where
 } from 'firebase/firestore';
-import { db } from '../config/firebaseConfig';
+import { appCheck, auth, db } from '../config/firebaseConfig'; // ✅ ADDED AUTH & APPCHECK
 import { getContentRating } from './settingsService';
 
 // ✅ Helper to get allowed ratings based on user settings
@@ -258,52 +258,36 @@ export const searchAnime = async (queryText: string) => {
   }
 };
 
-// Add Rating
+// =========================================================================
+// 🔐 SECURED: Cloud Function Endpoints for Ratings & Comments
+// =========================================================================
+
+const REVIEW_URL = "https://us-central1-aniyu-b841b.cloudfunctions.net/submitMediaReview";
+const COMMENT_URL = "https://us-central1-aniyu-b841b.cloudfunctions.net/submitMediaComment";
+
+// Add Rating (Secured)
 export const addAnimeReview = async (animeId: string, userId: string, userName: string, rating: number) => {
     try {
-        const animeRef = doc(db, 'anime', animeId);
-        const reviewRef = doc(db, 'anime', animeId, 'reviews', userId); 
+        const idToken = await auth.currentUser?.getIdToken();
+        const appCheckToken = await getToken(appCheck, false);
 
-        await runTransaction(db, async (transaction) => {
-            const animeDoc = await transaction.get(animeRef);
-            const reviewDoc = await transaction.get(reviewRef);
-
-            // ✅ BUG 31 FIX: Throw a proper Error object instead of a string literal.
-            if (!animeDoc.exists()) throw new Error("Anime does not exist!");
-
-            const data = animeDoc.data();
-            let currentScore = data.score || 0;
-            let currentCount = data.scored_by || 0;
-            
-            let totalPoints = currentScore * currentCount;
-
-            if (reviewDoc.exists()) {
-                const oldRating = reviewDoc.data().rating || 0;
-                totalPoints = totalPoints - oldRating + rating;
-            } else {
-                totalPoints = totalPoints + rating;
-                currentCount = currentCount + 1; 
-            }
-
-            const newScore = currentCount > 0 ? (totalPoints / currentCount) : 0;
-
-            transaction.update(animeRef, {
-                score: parseFloat(newScore.toFixed(1)), 
-                scored_by: currentCount
-            });
-
-            transaction.set(reviewRef, {
-                userId,
-                userName: userName || 'Anonymous',
-                rating,
-                createdAt: new Date().toISOString()
-            });
+        const response = await fetch(REVIEW_URL, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json', 
+                'Authorization': `Bearer ${idToken}`,
+                'X-Firebase-AppCheck': appCheckToken.token
+            },
+            body: JSON.stringify({ targetType: 'anime', targetId: animeId, rating, userName }) 
         });
 
-        return true;
-    } catch (error) {
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Failed to submit rating.");
+        
+        return { success: true };
+    } catch (error: any) {
         console.error("Error adding rating:", error);
-        return false;
+        return { success: false, error: error.message };
     }
 };
 
@@ -376,20 +360,28 @@ export const getUserReaction = async (animeId: string, userId: string) => {
     }
 };
 
-// Submit Comment
+// Submit Comment (Secured)
 export const addAnimeComment = async (animeId: string, userId: string, userName: string, text: string) => {
     try {
-        const commentsRef = collection(db, 'anime', animeId, 'comments');
-        await addDoc(commentsRef, {
-            userId,
-            userName,
-            text,
-            createdAt: new Date().toISOString(),
-            isPrivate: true 
+        const idToken = await auth.currentUser?.getIdToken();
+        const appCheckToken = await getToken(appCheck, false);
+
+        const response = await fetch(COMMENT_URL, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json', 
+                'Authorization': `Bearer ${idToken}`,
+                'X-Firebase-AppCheck': appCheckToken.token
+            },
+            body: JSON.stringify({ targetType: 'anime', targetId: animeId, text, userName })
         });
-        return true;
-    } catch (error) {
+
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Failed to submit comment.");
+        
+        return { success: true };
+    } catch (error: any) {
         console.error("Error adding comment:", error);
-        return false;
+        return { success: false, error: error.message };
     }
 };
