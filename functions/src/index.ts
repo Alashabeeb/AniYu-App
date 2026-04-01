@@ -45,6 +45,7 @@ const checkRateLimit = async (uid: string, action: string, maxRequests: number):
 // 2. GENERATE UPLOAD URL FUNCTION
 export const generateUploadUrl = onRequest({ cors: true }, async (req, res) => {
     // 🛡️ SECURITY: Verify Firebase App Check Token (Blocks Bot/Script Attacks)
+    /* ⚠️ TEMPORARILY BYPASSED FOR SIDELOAD TESTING ⚠️
     const appCheckToken = req.header("X-Firebase-AppCheck");
     if (!appCheckToken) {
       res.status(401).json({ error: "Unauthorized: Missing App Check token." });
@@ -56,6 +57,7 @@ export const generateUploadUrl = onRequest({ cors: true }, async (req, res) => {
       res.status(401).json({ error: "Unauthorized: Invalid App Check token." });
       return;
     }
+    */
 
     // A. Security Check: Ensure user is logged in
     const authHeader = req.headers.authorization;
@@ -115,6 +117,7 @@ export const generateUploadUrl = onRequest({ cors: true }, async (req, res) => {
 // ✅ 2.5 DELETE FILE FROM R2 (Fixes Storage Leak)
 export const deleteR2File = onRequest({ cors: true }, async (req, res) => {
     // 🛡️ SECURITY: Verify Firebase App Check Token
+    /* ⚠️ TEMPORARILY BYPASSED FOR SIDELOAD TESTING ⚠️
     const appCheckToken = req.header("X-Firebase-AppCheck");
     if (!appCheckToken) {
       res.status(401).json({ error: "Unauthorized: Missing App Check token." });
@@ -126,6 +129,7 @@ export const deleteR2File = onRequest({ cors: true }, async (req, res) => {
       res.status(401).json({ error: "Unauthorized: Invalid App Check token." });
       return;
     }
+    */
 
     // A. Security Check: Ensure user is logged in
     const authHeader = req.headers.authorization;
@@ -181,6 +185,7 @@ export const deleteR2File = onRequest({ cors: true }, async (req, res) => {
 // 🔐 SECURITY: Create Post via Cloud Function (Rate Limited)
 export const createPost = onRequest({ cors: true }, async (req, res) => {
     // 🛡️ SECURITY: Verify Firebase App Check Token
+    /* ⚠️ TEMPORARILY BYPASSED FOR SIDELOAD TESTING ⚠️
     const appCheckToken = req.header("X-Firebase-AppCheck");
     if (!appCheckToken) {
       res.status(401).json({ error: "Unauthorized: Missing App Check token." });
@@ -192,6 +197,7 @@ export const createPost = onRequest({ cors: true }, async (req, res) => {
       res.status(401).json({ error: "Unauthorized: Invalid App Check token." });
       return;
     }
+    */
 
     // A. Security Check: Ensure user is logged in
     const authHeader = req.headers.authorization;
@@ -273,6 +279,7 @@ export const createPost = onRequest({ cors: true }, async (req, res) => {
 // 🔐 SECURITY: Create Comment via Cloud Function (Rate Limited)
 export const createComment = onRequest({ cors: true }, async (req, res) => {
     // 🛡️ SECURITY: Verify Firebase App Check Token
+    /* ⚠️ TEMPORARILY BYPASSED FOR SIDELOAD TESTING ⚠️
     const appCheckToken = req.header("X-Firebase-AppCheck");
     if (!appCheckToken) {
       res.status(401).json({ error: "Unauthorized: Missing App Check token." });
@@ -284,6 +291,7 @@ export const createComment = onRequest({ cors: true }, async (req, res) => {
       res.status(401).json({ error: "Unauthorized: Invalid App Check token." });
       return;
     }
+    */
 
     // A. Security Check: Ensure user is logged in
     const authHeader = req.headers.authorization;
@@ -365,6 +373,7 @@ export const createComment = onRequest({ cors: true }, async (req, res) => {
 // 🔐 SECURITY: Create Support Message via Cloud Function (Rate Limited)
 export const createSupportMessage = onRequest({ cors: true }, async (req, res) => {
     // 🛡️ SECURITY: Verify Firebase App Check Token
+    /* ⚠️ TEMPORARILY BYPASSED FOR SIDELOAD TESTING ⚠️
     const appCheckToken = req.header("X-Firebase-AppCheck");
     if (!appCheckToken) {
       res.status(401).json({ error: "Unauthorized: Missing App Check token." });
@@ -376,6 +385,7 @@ export const createSupportMessage = onRequest({ cors: true }, async (req, res) =
       res.status(401).json({ error: "Unauthorized: Invalid App Check token." });
       return;
     }
+    */
 
     // A. Security Check: Ensure user is logged in
     const authHeader = req.headers.authorization;
@@ -467,6 +477,7 @@ export const createSupportMessage = onRequest({ cors: true }, async (req, res) =
 // 🔐 SECURITY: Create Report via Cloud Function (Rate Limited)
 export const createReport = onRequest({ cors: true }, async (req, res) => {
     // 🛡️ SECURITY: Verify Firebase App Check Token
+    /* ⚠️ TEMPORARILY BYPASSED FOR SIDELOAD TESTING ⚠️
     const appCheckToken = req.header("X-Firebase-AppCheck");
     if (!appCheckToken) {
       res.status(401).json({ error: "Unauthorized: Missing App Check token." });
@@ -478,6 +489,7 @@ export const createReport = onRequest({ cors: true }, async (req, res) => {
       res.status(401).json({ error: "Unauthorized: Invalid App Check token." });
       return;
     }
+    */
 
     // A. Auth check
     const authHeader = req.headers.authorization;
@@ -554,7 +566,7 @@ export const moderateNewPost = onDocumentCreated(
     }
 
     const prompt = `You are a strict auto-moderator for an Anime community app. Evaluate the following user ${contentTypeLabel}. 
-    Flag it if it contains ANY of the following: 1. Hate speech or extreme toxicity. 2. Harassment or bullying. 3. Explicit or NSFW content. 4. Major Anime/Manga spoilers without warning. 5. Negative comments, complaints, or slander specifically directed at this app or its developers. 
+    Flag it if it contains ANY of the following: 1. Hate speech or extreme toxicity. 2. Harassment or bullying. 3. Explicit or NSFW content. 4. Negative comments, complaints, or slander specifically directed at this app or its developers. 
     Return ONLY a valid JSON object in this exact format: {"flagged": boolean, "reason": "string explaining exactly which rule was broken, or empty if clean"}. 
     Text: "${newPost.text}"`;
 
@@ -738,6 +750,7 @@ export const sendGlobalBroadcastPush = onDocumentCreated(
 
 // 🔐 SECURITY: Universal Media Review (Anime & Manga)
 export const submitMediaReview = onRequest({ cors: true }, async (req, res) => {
+    /* ⚠️ TEMPORARILY BYPASSED FOR SIDELOAD TESTING ⚠️
     const appCheckToken = req.header("X-Firebase-AppCheck");
     if (!appCheckToken) {
       res.status(401).json({ error: "Missing App Check token." });
@@ -747,6 +760,7 @@ export const submitMediaReview = onRequest({ cors: true }, async (req, res) => {
       res.status(401).json({ error: "Invalid App Check token." });
       return;
     }
+    */
 
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -826,6 +840,7 @@ export const submitMediaReview = onRequest({ cors: true }, async (req, res) => {
 
 // 🔐 SECURITY: Universal Media Comment (Anime & Manga)
 export const submitMediaComment = onRequest({ cors: true }, async (req, res) => {
+    /* ⚠️ TEMPORARILY BYPASSED FOR SIDELOAD TESTING ⚠️
     const appCheckToken = req.header("X-Firebase-AppCheck");
     if (!appCheckToken) {
       res.status(401).json({ error: "Missing App Check token." });
@@ -835,6 +850,7 @@ export const submitMediaComment = onRequest({ cors: true }, async (req, res) => 
       res.status(401).json({ error: "Invalid App Check token." });
       return;
     }
+    */
 
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
