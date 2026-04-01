@@ -1,7 +1,8 @@
 import { DeleteObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import * as admin from "firebase-admin";
-import { onDocumentCreated } from "firebase-functions/v2/firestore";
+// ✅ SURGICAL FIX: Added onDocumentUpdated to imports
+import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { onRequest } from "firebase-functions/v2/https";
 
 admin.initializeApp();
@@ -880,5 +881,125 @@ export const submitMediaComment = onRequest({ cors: true }, async (req, res) => 
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: "Internal Server Error" });
+    }
+});
+
+// ============================================================================
+// 📨 NEW: BACKGROUND SUPPORT TICKET NOTIFICATIONS
+// ============================================================================
+
+// Trigger 1: Notify User when Ticket Status or Agent Changes
+export const onSupportTicketStatusChanged = onDocumentUpdated("supportTickets/{ticketId}", async (event) => {
+    const before = event.data?.before.data();
+    const after = event.data?.after.data();
+    
+    if (!before || !after) return;
+
+    const userId = after.userId || after.uid;
+    if (!userId) return;
+
+    let title = '';
+    let body = '';
+
+    // Condition A: Ticket Accepted by Admin
+    if (before.status === 'pending' && after.status === 'active') {
+        title = 'Support Ticket Accepted';
+        body = `${after.assignedAdminName || 'An agent'} has joined the chat and is reviewing your ticket.`;
+    }
+    // Condition B: Ticket Transferred to another Admin
+    else if (before.assignedAdminName !== after.assignedAdminName && after.status === 'active') {
+        title = 'Ticket Transferred';
+        body = `Your ticket has been transferred to ${after.assignedAdminName || 'another agent'}.`;
+    }
+    // Condition C: Ticket Resolved
+    else if (before.status !== 'resolved' && after.status === 'resolved') {
+        title = 'Support Ticket Resolved';
+        body = `Your ticket has been marked as resolved by ${after.resolvedBy || 'Support Team'}.`;
+    }
+
+    // If none of these conditions were met, abort.
+    if (!title) return;
+
+    try {
+        const userDoc = await admin.firestore().doc(`users/${userId}`).get();
+        const pushToken = userDoc.data()?.expoPushToken;
+        if (!pushToken || !pushToken.startsWith('ExponentPushToken')) return;
+
+        const message = {
+            to: pushToken,
+            sound: 'default',
+            title: title,
+            body: body,
+            data: { targetId: event.params.ticketId, type: 'support_update' }, 
+            badge: 1, 
+        };
+
+        const response = await fetch('https://exp.host/--/api/v2/push/send', {
+            method: 'POST',
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify(message),
+        });
+
+        const result = await response.json();
+        
+        // Cleanup dead tokens
+        if (result.errors || (result.data && result.data.status === 'error' && result.data.details?.error === 'DeviceNotRegistered')) {
+            await admin.firestore().doc(`users/${userId}`).update({ expoPushToken: admin.firestore.FieldValue.delete() });
+        }
+    } catch (error) {
+        console.error("Error sending support status push:", error);
+    }
+});
+
+// Trigger 2: Notify User when Admin sends a new Message
+export const onSupportAdminMessageAdded = onDocumentCreated("supportTickets/{ticketId}/messages/{messageId}", async (event) => {
+    const messageData = event.data?.data();
+    if (!messageData) return;
+
+    // We ONLY want to notify the user if the message was sent by the Admin or System
+    if (messageData.senderModel === 'user') return;
+
+    const ticketId = event.params.ticketId;
+
+    try {
+        const ticketDoc = await admin.firestore().doc(`supportTickets/${ticketId}`).get();
+        if (!ticketDoc.exists) return;
+
+        const ticketData = ticketDoc.data()!;
+        const userId = ticketData.userId || ticketData.uid;
+        if (!userId) return;
+
+        const userDoc = await admin.firestore().doc(`users/${userId}`).get();
+        const pushToken = userDoc.data()?.expoPushToken;
+        if (!pushToken || !pushToken.startsWith('ExponentPushToken')) return;
+
+        let pushBody = messageData.text || 'Sent an attachment';
+        if (pushBody.length > 100) pushBody = pushBody.substring(0, 100) + '...';
+
+        const pushTitle = messageData.senderModel === 'system' ? 'System Message' : `Support: ${ticketData.assignedAdminName || 'Agent'}`;
+
+        const pushPayload = {
+            to: pushToken,
+            sound: 'default',
+            title: pushTitle,
+            body: pushBody,
+            data: { targetId: ticketId, type: 'support_message' }, 
+            badge: 1, 
+        };
+
+        const response = await fetch('https://exp.host/--/api/v2/push/send', {
+            method: 'POST',
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify(pushPayload),
+        });
+
+        const result = await response.json();
+        
+        // Cleanup dead tokens
+        if (result.errors || (result.data && result.data.status === 'error' && result.data.details?.error === 'DeviceNotRegistered')) {
+            await admin.firestore().doc(`users/${userId}`).update({ expoPushToken: admin.firestore.FieldValue.delete() });
+        }
+    } catch (error) {
+        console.error("Error sending support message push:", error);
     }
 });

@@ -273,8 +273,13 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
           const batch = writeBatch(db);
 
           if (!isPinned) {
+              // ✅ SURGICAL FIX: Check if the old pinned post still exists before trying to update it!
               if (oldPinnedPostId && oldPinnedPostId !== post.id) {
-                  batch.update(doc(db, 'posts', oldPinnedPostId), { pinned: false });
+                  const oldPostRef = doc(db, 'posts', oldPinnedPostId);
+                  const oldPostSnap = await getDoc(oldPostRef);
+                  if (oldPostSnap.exists()) {
+                      batch.update(oldPostRef, { pinned: false });
+                  }
               }
               batch.update(doc(db, 'posts', post.id), { pinned: true });
               batch.update(userRef, { pinnedPostId: post.id });
@@ -285,9 +290,9 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
           
           await batch.commit();
           Alert.alert("Success", isPinned ? "Post Unpinned." : "Post Pinned to Profile.");
-      } catch (e) {
-          console.error(e);
-          Alert.alert("Error", "Could not pin post.");
+      } catch (e: any) {
+          console.error("Pin Error:", e);
+          Alert.alert("Error", e.message || "Could not pin post.");
       }
   };
 

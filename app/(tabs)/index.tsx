@@ -167,12 +167,14 @@ export default function HomeScreen() {
                   if (trending) setTrending(trending);
                   if (upcoming) setUpcoming(upcoming);
                   if (recommended) setRecommended(recommended);
-                  if (trending && trending.length > 0) setLoading(false); 
+                  
+                  // ✅ SURGICAL FIX: Force loading to false if we successfully read ANY cache data
+                  setLoading(false);
               }
 
               // Check if the cache is still fresh enough to skip Firestore reads
-              if (timestamp && (Date.now() - timestamp < CACHE_TTL_MS)) {
-                  return true; // Cache is valid, skip network fetch
+              if (timestamp && (Date.now() - timestamp < CACHE_TTL_MS) && trending && trending.length > 0) {
+                  return true; // Cache is valid and populated, skip network fetch
               }
           }
           return false; // Cache is stale or missing, proceed to network fetch
@@ -249,6 +251,7 @@ export default function HomeScreen() {
     } catch (error) {
       console.error("Network error, sticking to cache:", error);
     } finally {
+      // ✅ SURGICAL FIX: Force loading to false no matter what happens in the Try block
       if (!isRefresh && isMountedRef.current) setLoading(false);
     }
   };

@@ -3,7 +3,7 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { Stack, useRouter } from 'expo-router';
 // ✅ BUG 24 FIX: Added runTransaction for atomic username claims
-import { doc, getDoc, runTransaction } from 'firebase/firestore';
+import { doc, getDoc, runTransaction, updateDoc } from 'firebase/firestore';
 import React, { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
@@ -48,6 +48,9 @@ export default function EditProfileScreen() {
   const [bio, setBio] = useState('');
   const [avatar, setAvatar] = useState('');
   const [banner, setBanner] = useState('');
+
+  // ✅ Keep track of original username so we know if they are actually changing it
+  const [originalUsername, setOriginalUsername] = useState('');
 
   const [interests, setInterests] = useState<string[]>([]);
 
@@ -108,6 +111,7 @@ export default function EditProfileScreen() {
         const data = docSnap.data();
         setDisplayName(data.displayName || '');
         setUsername(data.username || '');
+        setOriginalUsername(data.username || ''); // ✅ Store original to check for changes
         setBio(data.bio || '');
         setAvatar(data.avatar || '');
         setBanner(data.banner || '');
@@ -190,7 +194,7 @@ export default function EditProfileScreen() {
                       text: "Watch Ad", 
                       onPress: () => {
                           setLoading(true); 
-                          pendingSave.current = true; // ✅ SURGICAL FIX: Lock in that we are waiting for an ad to finish!
+                          pendingSave.current = true; 
                           show(); 
                       }
                   }
@@ -210,34 +214,10 @@ export default function EditProfileScreen() {
         const lowerCaseUsername = username.trim().toLowerCase();
         const userDocRef = doc(db, "users", user.uid);
 
-        // ✅ BUG 24 FIX: Implemented Atomic Transaction to strictly prevent duplicate usernames
-        await runTransaction(db, async (transaction) => {
-            const userDocSnap = await transaction.get(userDocRef);
-            const currentData = userDocSnap.exists() ? userDocSnap.data() : null;
-            const oldUsername = currentData?.username;
-
-            if (oldUsername !== lowerCaseUsername) {
-                // User is claiming a new username. Lock it in the dedicated 'usernames' collection.
-                const newUsernameRef = doc(db, "usernames", lowerCaseUsername);
-                const newUsernameSnap = await transaction.get(newUsernameRef);
-
-                // If someone else already owns this document, abort the transaction!
-                if (newUsernameSnap.exists() && newUsernameSnap.data()?.uid !== user.uid) {
-                    throw new Error("USERNAME_TAKEN");
-                }
-
-                // Claim the new username securely
-                transaction.set(newUsernameRef, { uid: user.uid, claimedAt: new Date().toISOString() });
-
-                // Free up their old username so someone else can claim it
-                if (oldUsername) {
-                    const oldUsernameRef = doc(db, "usernames", oldUsername);
-                    transaction.delete(oldUsernameRef);
-                }
-            }
-
-            // Update the actual user profile document
-            transaction.update(userDocRef, {
+        // ✅ SURGICAL FIX: If the username hasn't changed, skip the strict Transaction!
+        // This allows the standard profile save to happen even on a slow/offline connection.
+        if (originalUsername.toLowerCase() === lowerCaseUsername) {
+             await updateDoc(userDocRef, {
                 displayName: displayName.trim(),
                 username: lowerCaseUsername, 
                 bio: bio.trim(),
@@ -245,12 +225,40 @@ export default function EditProfileScreen() {
                 banner,
                 interests 
             });
-        });
+        } else {
+            // They are changing their username, so we MUST run the strict transaction.
+            await runTransaction(db, async (transaction) => {
+                const userDocSnap = await transaction.get(userDocRef);
+                const currentData = userDocSnap.exists() ? userDocSnap.data() : null;
+                const oldUsername = currentData?.username;
 
-        // ✅ NEW ISSUE FIX: Update the AsyncStorage profile cache after a successful save.
-        // create-post.tsx reads from this cache key to get username/avatar/displayName.
-        // Without this update, after editing their profile, the user would see their OLD
-        // username and avatar on posts until they fully closed and reopened the app.
+                if (oldUsername !== lowerCaseUsername) {
+                    const newUsernameRef = doc(db, "usernames", lowerCaseUsername);
+                    const newUsernameSnap = await transaction.get(newUsernameRef);
+
+                    if (newUsernameSnap.exists() && newUsernameSnap.data()?.uid !== user.uid) {
+                        throw new Error("USERNAME_TAKEN");
+                    }
+
+                    transaction.set(newUsernameRef, { uid: user.uid, claimedAt: new Date().toISOString() });
+
+                    if (oldUsername) {
+                        const oldUsernameRef = doc(db, "usernames", oldUsername);
+                        transaction.delete(oldUsernameRef);
+                    }
+                }
+
+                transaction.update(userDocRef, {
+                    displayName: displayName.trim(),
+                    username: lowerCaseUsername, 
+                    bio: bio.trim(),
+                    avatar,
+                    banner,
+                    interests 
+                });
+            });
+        }
+
         const updatedProfile = {
             displayName: displayName.trim(),
             username: lowerCaseUsername,
@@ -261,11 +269,9 @@ export default function EditProfileScreen() {
         };
         await AsyncStorage.setItem(`user_profile_${user.uid}`, JSON.stringify(updatedProfile));
 
-        // Also update the feed preferences cache so the new interests take effect immediately
-        // without waiting for the next app launch to re-fetch from Firestore
         await AsyncStorage.setItem(`prefs_${user.uid}`, JSON.stringify({
             interests,
-            blockedUsers: [] // preserve structure — blockedUsers will re-sync on next feed load
+            blockedUsers: [] 
         }));
 
         showAlert('success', 'Profile Updated', 'Your changes have been saved successfully.');
@@ -273,6 +279,9 @@ export default function EditProfileScreen() {
         console.error(error);
         if (error.message === "USERNAME_TAKEN") {
             showAlert('error', 'Username Taken', 'This username is already taken by another user. Please choose a different one.');
+        } else if (error.message?.includes('network') || error.message?.includes('offline')) {
+            // ✅ Provide a clean message if the transaction fails due to network
+             showAlert('error', 'Connection Unstable', 'Cannot change username on a weak connection. Try again later.');
         } else {
             showAlert('error', 'Update Failed', 'Could not update profile. Please check your connection.');
         }

@@ -3,16 +3,15 @@ import { initializeApp } from "firebase/app";
 import { getReactNativePersistence, initializeAuth } from 'firebase/auth';
 import { initializeFirestore } from 'firebase/firestore';
 
-// ✅ SURGICAL FIX: Swapped ReCaptcha for CustomProvider to prevent the Native crash
-import firebasePerf from '@react-native-firebase/perf';
+// ✅ Web SDK Imports
 import { CustomProvider, initializeAppCheck } from 'firebase/app-check';
-// ✅ REAL NATIVE APP CHECK IMPORTS FOR APK
+
+// ✅ Native SDK Imports (For APK)
 import nativeFirebase from '@react-native-firebase/app';
 import nativeAppCheck from '@react-native-firebase/app-check';
+import firebasePerf from '@react-native-firebase/perf';
 
-// ✅ SURGICAL UPDATE: Removed firebase/storage import
-
-// ✅ UPDATED: Read from Environment Variables and cast as string to satisfy TypeScript
+// ✅ Read from Environment Variables
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY as string,
   authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN as string,
@@ -29,21 +28,34 @@ const app = initializeApp(firebaseConfig);
 // 🔐 SECURITY & SCALE FIX: Firebase App Check & Performance
 // =========================================================================
 
-// ✅ SURGICAL FIX: Removed FIREBASE_APPCHECK_DEBUG_TOKEN block completely. 
-// This stops React Native from looking for the web 'crypto' module and crashing the APK.
-
-// ✅ SURGICAL FIX: Initialize the Native Firebase bridge for real App Check
+// 1. Initialize the Native Firebase bridge
 if (!nativeFirebase.apps.length) {
-  // Cast as any to remove the red underline caused by strict typing
   nativeFirebase.initializeApp(firebaseConfig as any);
 }
 
-// ✅ SURGICAL FIX: Replaced Dummy Provider with REAL Native Token Provider
+// ✅ SURGICAL FIX 1: We MUST install the provider on the Native Android OS first!
+// This tells Android to use Google Play Integrity to generate the token.
+const rnfbProvider = nativeAppCheck().newReactNativeFirebaseAppCheckProvider();
+rnfbProvider.configure({
+  android: {
+    provider: __DEV__ ? 'debug' : 'playIntegrity',
+  },
+  apple: {
+    provider: __DEV__ ? 'debug' : 'appAttest',
+  }
+});
+
+// Install the configured provider natively
+nativeAppCheck().initializeAppCheck({
+  provider: rnfbProvider,
+  isTokenAutoRefreshEnabled: true
+});
+
+// ✅ SURGICAL FIX 2: Now the CustomProvider can safely ask the Native OS for the token
 const nativeProvider = new CustomProvider({
   getToken: async () => {
     try {
-      // 🔧 FIX: React Native Firebase only returns the 'token'. 
-      // We extract it, and manually append the 1-hour expiration time to satisfy the provider.
+      // Android will no longer crash here because Play Integrity is properly installed
       const { token } = await nativeAppCheck().getToken(false);
       return { 
         token, 
@@ -51,12 +63,12 @@ const nativeProvider = new CustomProvider({
       };
     } catch (error) {
       console.error("Native App Check Error:", error);
-      throw error; // Will be caught and handled securely
+      throw error; 
     }
   }
 });
 
-// ✅ SURGICAL FIX: Assigned to 'appCheck' so we can export it safely
+// Initialize the Web SDK with our Native Bridge
 const appCheck = initializeAppCheck(app, {
     provider: nativeProvider,
     isTokenAutoRefreshEnabled: true
@@ -72,10 +84,7 @@ const db = initializeFirestore(app, {
   experimentalForceLongPolling: true, 
 });
 
-// 2. Performance Monitoring: Tracks slow queries and screen load times natively for 100k+ scale
+// Native Performance Monitoring
 const perf = firebasePerf();
 
-// ✅ SURGICAL UPDATE: Removed 'const storage = getStorage(app);'
-
-// ✅ SURGICAL FIX: Exported 'appCheck' so fetch() calls can grab the VIP token
 export { appCheck, auth, db, perf };
