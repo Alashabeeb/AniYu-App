@@ -252,6 +252,7 @@ export default function Support() {
                 border: 1px solid #e5e7eb; 
                 box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05); 
                 overflow: hidden; 
+                position: relative; /* ✅ SURGICAL FIX: Traps the absolute right-panel inside this container so it doesn't fly under the navbar! */
             }
             .left-panel { width: 350px; background: white; border-right: 1px solid #e5e7eb; display: flex; flex-direction: column; z-index: 10; }
             .right-panel { flex: 1; display: flex; flex-direction: column; background: #f8fafc; position: relative; }
@@ -269,11 +270,11 @@ export default function Support() {
             .ticket-card { padding: 18px 20px; border-bottom: 1px solid #f3f4f6; cursor: pointer; transition: all 0.2s; position: relative; }
             .ticket-card:hover { background: #f8fafc; }
             
-            /* ✅ SURGICAL UPDATE: Forces the back button to display on mobile devices */
+            /* ✅ SURGICAL UPDATE: Added margin-top to ensure it pushes below navbar on mobile */
             @media (max-width: 992px) {
-                .support-container { margin: 10px; height: calc(100vh - 80px); }
+                .support-container { margin: 0px 10px 10px 10px; height: calc(100vh - 100px); }
                 .left-panel { width: 100%; display: var(--show-list); border-right: none; }
-                .right-panel { width: 100%; display: var(--show-chat); position: absolute; inset: 0; z-index: 20; border-radius: 16px; }
+                .right-panel { width: 100%; display: var(--show-chat); position: absolute; inset: 0; z-index: 20; border-radius: 16px; background: white; }
                 .mobile-back-btn { display: flex !important; align-items: center; justify-content: center; margin-right: 5px; }
             }
 

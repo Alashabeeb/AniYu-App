@@ -1,5 +1,6 @@
 import { collection, doc, getDocs, orderBy, query, updateDoc, where } from 'firebase/firestore';
 import {
+    ArrowLeft, // ✅ SURGICAL ADDITION: Added for mobile back button
     CheckCircle,
     ChevronRight,
     Copy,
@@ -151,20 +152,98 @@ export default function Affiliate() {
   };
 
   return (
-    <div className="container" style={{ display: 'flex', gap: 20, height: '85vh', overflow: 'hidden' }}>
+    <>
+    {/* ✅ SURGICAL UPDATE: Responsive Styles matching Support Desk */}
+    <style>{`
+        .affiliate-container {
+            display: flex;
+            gap: 20px;
+            height: 85vh;
+            overflow: hidden;
+            position: relative;
+        }
+        .affiliate-left-panel {
+            width: 35%;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            height: 100%;
+            z-index: 10;
+        }
+        .affiliate-right-panel {
+            width: 65%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+        .mobile-back-btn {
+            display: none;
+            background: transparent;
+            border: none;
+            padding: 5px 10px 5px 0;
+            cursor: pointer;
+            color: #4b5563;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 20px;
+        }
+        
+        @media (max-width: 992px) {
+            .affiliate-container {
+                margin: 0px 10px 10px 10px; 
+                height: calc(100vh - 100px); 
+                border-radius: 16px;
+                gap: 0;
+            }
+            .affiliate-left-panel {
+                width: 100%;
+                display: var(--show-list) !important;
+            }
+            .affiliate-right-panel {
+                width: 100%;
+                display: var(--show-detail) !important;
+                position: absolute;
+                inset: 0;
+                z-index: 20;
+                background: white; /* Matches standard background */
+                border-radius: 16px;
+            }
+            .mobile-back-btn {
+                display: flex !important;
+                align-items: center;
+                justify-content: center;
+                margin-right: 15px;
+            }
+            .stats-grid {
+                grid-template-columns: 1fr !important; /* Stack cards vertically on mobile */
+            }
+            .header-profile-container {
+                flex-direction: column;
+                align-items: flex-start !important;
+                gap: 20px;
+            }
+            .link-container {
+                flex-direction: column;
+            }
+        }
+    `}</style>
+
+    <div className="container affiliate-container" style={{ '--show-list': selectedAffiliate ? 'none' : 'flex', '--show-detail': selectedAffiliate ? 'flex' : 'none' }}>
         
         {/* LEFT PANE: Affiliate Roster */}
-        <div style={{ width: '35%', display: 'flex', flexDirection: 'column', gap: 15, height: '100%' }}>
+        <div className="affiliate-left-panel">
             <div className="card" style={{ flex: 1, display: 'flex', flexDirection: 'column', marginBottom: 0, overflow: 'hidden' }}>
-                <div className="card-header blue" style={{ padding: '15px 20px', background: '#eff6ff', color: '#1e40af', borderBottom: '1px solid #bfdbfe' }}>
-                    <Users size={20} />
+                <div className="card-header blue" style={{ padding: '15px 20px', background: '#eff6ff', color: '#1e40af', borderBottom: '1px solid #bfdbfe', display: 'flex', alignItems: 'center' }}>
+                    <Users size={20} style={{ marginRight: 8 }} />
                     <span style={{ fontWeight: 800 }}>Affiliate Roster ({affiliates.length})</span>
                 </div>
                 
                 <div style={{ flex: 1, overflowY: 'auto', padding: 10 }}>
                     {loading ? (
-                        <div style={{ textAlign: 'center', padding: 40 }}>
-                            {/* ✅ Fixed: Using Loader2 icon instead of ActivityIndicator */}
+                        <div style={{ textAlign: 'center', padding: 40, display: 'flex', justifyContent: 'center' }}>
                             <Loader2 className="animate-spin" color="#2563eb" size={32} />
                         </div>
                     ) : affiliates.length === 0 ? (
@@ -186,7 +265,7 @@ export default function Affiliate() {
                                         }}
                                     >
                                         <div style={{ display: 'flex', alignItems: 'center', gap: 10, overflow: 'hidden' }}>
-                                            <div style={{ width: 40, height: 40, borderRadius: '50%', background: isSelected ? '#60a5fa' : '#cbd5e1', display: 'flex', alignItems: 'center', justifyContent: 'center', color: isSelected ? 'white' : '#475569', fontWeight: 'bold' }}>
+                                            <div style={{ width: 40, height: 40, minWidth: 40, borderRadius: '50%', background: isSelected ? '#60a5fa' : '#cbd5e1', display: 'flex', alignItems: 'center', justifyContent: 'center', color: isSelected ? 'white' : '#475569', fontWeight: 'bold' }}>
                                                 {(aff.displayName || aff.email || '?').charAt(0).toUpperCase()}
                                             </div>
                                             <div style={{ overflow: 'hidden' }}>
@@ -215,7 +294,7 @@ export default function Affiliate() {
         </div>
 
         {/* RIGHT PANE: Detailed Analytics */}
-        <div style={{ width: '65%', height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <div className="affiliate-right-panel">
             <div className="card" style={{ flex: 1, marginBottom: 0, overflowY: 'auto' }}>
                 {!selectedAffiliate ? (
                     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}>
@@ -227,14 +306,18 @@ export default function Affiliate() {
                     <div style={{ padding: 30 }}>
                         
                         {/* HEADER PROFILE */}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 30, paddingBottom: 20, borderBottom: '1px solid #e2e8f0' }}>
+                        <div className="header-profile-container" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 30, paddingBottom: 20, borderBottom: '1px solid #e2e8f0' }}>
                             <div style={{ display: 'flex', gap: 20, alignItems: 'center' }}>
-                                <div style={{ width: 80, height: 80, borderRadius: '50%', background: '#3b82f6', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '2.5rem', fontWeight: 900 }}>
+                                {/* ✅ SURGICAL ADDITION: Mobile Back Button */}
+                                <button className="mobile-back-btn" onClick={() => setSelectedAffiliate(null)}>
+                                    <ArrowLeft size={24} />
+                                </button>
+                                <div style={{ width: 80, height: 80, minWidth: 80, borderRadius: '50%', background: '#3b82f6', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '2.5rem', fontWeight: 900 }}>
                                     {(selectedAffiliate.displayName || selectedAffiliate.email || '?').charAt(0).toUpperCase()}
                                 </div>
-                                <div>
-                                    <h1 style={{ margin: '0 0 5px 0', fontSize: '1.8rem', color: '#0f172a' }}>{selectedAffiliate.displayName || 'Unknown User'}</h1>
-                                    <div style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: 8 }}>{selectedAffiliate.email}</div>
+                                <div style={{ overflow: 'hidden' }}>
+                                    <h1 style={{ margin: '0 0 5px 0', fontSize: '1.8rem', color: '#0f172a', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{selectedAffiliate.displayName || 'Unknown User'}</h1>
+                                    <div style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: 8, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{selectedAffiliate.email}</div>
                                     <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: '#dcfce7', color: '#166534', padding: '4px 10px', borderRadius: 12, fontSize: '0.75rem', fontWeight: 'bold' }}>
                                         <CheckCircle size={12} /> Active Affiliate
                                     </div>
@@ -242,7 +325,7 @@ export default function Affiliate() {
                             </div>
                             <button 
                                 onClick={() => revokeAffiliate(selectedAffiliate)}
-                                style={{ background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca', padding: '8px 15px', borderRadius: 8, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}
+                                style={{ background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca', padding: '8px 15px', borderRadius: 8, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', whiteSpace: 'nowrap' }}
                             >
                                 <Trash2 size={16} /> Revoke Access
                             </button>
@@ -253,16 +336,16 @@ export default function Affiliate() {
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#475569', fontWeight: 800, marginBottom: 10 }}>
                                 <LinkIcon size={18} /> Unique Tracking Link
                             </div>
-                            <div style={{ display: 'flex', gap: 10 }}>
+                            <div className="link-container" style={{ display: 'flex', gap: 10 }}>
                                 <input 
                                     type="text" 
                                     readOnly 
                                     value={`https://aniyu.site/ref/${selectedAffiliate.affiliateCode}`} 
-                                    style={{ flex: 1, padding: '12px 15px', borderRadius: 8, border: '1px solid #cbd5e1', background: 'white', color: '#334155', fontWeight: 600, outline: 'none' }}
+                                    style={{ flex: 1, padding: '12px 15px', borderRadius: 8, border: '1px solid #cbd5e1', background: 'white', color: '#334155', fontWeight: 600, outline: 'none', width: '100%', boxSizing: 'border-box' }}
                                 />
                                 <button 
                                     onClick={() => copyToClipboard(`https://aniyu.site/ref/${selectedAffiliate.affiliateCode}`)}
-                                    style={{ background: '#3b82f6', color: 'white', border: 'none', padding: '0 20px', borderRadius: 8, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}
+                                    style={{ background: '#3b82f6', color: 'white', border: 'none', padding: '12px 20px', borderRadius: 8, fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, cursor: 'pointer' }}
                                 >
                                     <Copy size={18} /> Copy
                                 </button>
@@ -273,19 +356,16 @@ export default function Affiliate() {
                         <h3 style={{ margin: '0 0 15px 0', color: '#1e293b', display: 'flex', alignItems: 'center', gap: 8 }}>
                             <TrendingUp size={20} color="#8b5cf6" /> Performance Metrics
                         </h3>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20 }}>
+                        <div className="stats-grid">
                             
                             <div style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: 12, padding: 20, boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
                                 <div style={{ color: '#64748b', fontSize: '0.85rem', fontWeight: 700, textTransform: 'uppercase', marginBottom: 5 }}>Total Link Clicks</div>
                                 <div style={{ fontSize: '2.5rem', fontWeight: 900, color: '#0f172a' }}>{selectedAffiliate.affiliateClicks || 0}</div>
                             </div>
 
-                            {/* ✅ SURGICAL UPDATE: Added onClick handler & styling to make this box clickable */}
                             <div 
                                 onClick={handleViewReferredUsers}
                                 style={{ background: 'white', border: '1px solid #10b981', borderRadius: 12, padding: 20, boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', cursor: 'pointer', transition: 'all 0.2s', position: 'relative' }}
-                                onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
-                                onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
                             >
                                 <div style={{ color: '#64748b', fontSize: '0.85rem', fontWeight: 700, textTransform: 'uppercase', marginBottom: 5 }}>Successful Signups</div>
                                 <div style={{ fontSize: '2.5rem', fontWeight: 900, color: '#10b981' }}>{selectedAffiliate.affiliateSignups || 0}</div>
@@ -310,7 +390,7 @@ export default function Affiliate() {
         {/* MODAL: Create New Affiliate */}
         {isModalOpen && (
             <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-                <div style={{ background: 'white', width: 500, borderRadius: 16, overflow: 'hidden', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
+                <div style={{ background: 'white', width: '90%', maxWidth: 500, borderRadius: 16, overflow: 'hidden', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
                     <div style={{ background: '#f8fafc', padding: '20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <h2 style={{ margin: 0, fontSize: '1.2rem', color: '#0f172a' }}>Create Affiliate Link</h2>
                         <button onClick={() => setIsModalOpen(false)} style={{ background: 'none', border: 'none', fontSize: '1.5rem', cursor: 'pointer', color: '#64748b' }}>&times;</button>
@@ -322,7 +402,7 @@ export default function Affiliate() {
                                 <Search size={18} style={{ position: 'absolute', left: 12, top: 12, color: '#94a3b8' }} />
                                 <input 
                                     type="text" 
-                                    placeholder="Search user by email or name..." 
+                                    placeholder="Search email or name..." 
                                     value={searchQuery}
                                     onChange={(e) => setSearchQuery(e.target.value)}
                                     style={{ width: '100%', padding: '12px 10px 12px 38px', borderRadius: 8, border: '1px solid #cbd5e1', outline: 'none', boxSizing: 'border-box' }}
@@ -340,15 +420,15 @@ export default function Affiliate() {
                             
                             {searchResults.map(user => (
                                 <div key={user.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 15, border: '1px solid #e2e8f0', borderRadius: 8, marginBottom: 10 }}>
-                                    <div>
-                                        <div style={{ fontWeight: 700, color: '#1e293b' }}>{user.displayName || 'Unknown User'}</div>
-                                        <div style={{ fontSize: '0.85rem', color: '#64748b' }}>{user.email}</div>
+                                    <div style={{ overflow: 'hidden', paddingRight: 10 }}>
+                                        <div style={{ fontWeight: 700, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user.displayName || 'Unknown User'}</div>
+                                        <div style={{ fontSize: '0.85rem', color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user.email}</div>
                                     </div>
                                     <button 
                                         onClick={() => makeAffiliate(user)}
-                                        style={{ background: '#dcfce7', color: '#166534', border: '1px solid #bbf7d0', padding: '6px 12px', borderRadius: 6, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}
+                                        style={{ background: '#dcfce7', color: '#166534', border: '1px solid #bbf7d0', padding: '6px 12px', borderRadius: 6, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', whiteSpace: 'nowrap' }}
                                     >
-                                        <UserPlus size={16} /> Make Affiliate
+                                        <UserPlus size={16} /> <span className="hide-on-mobile">Make</span>
                                     </button>
                                 </div>
                             ))}
@@ -361,12 +441,12 @@ export default function Affiliate() {
         {/* ✅ SURGICAL ADDITION: MODAL: View Referred Users */}
         {isReferredModalOpen && (
             <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-                <div style={{ background: 'white', width: 600, maxHeight: '80vh', borderRadius: 16, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
+                <div style={{ background: 'white', width: '90%', maxWidth: 600, maxHeight: '80vh', borderRadius: 16, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
                     <div style={{ background: '#f8fafc', padding: '20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
                             <h2 style={{ margin: 0, fontSize: '1.2rem', color: '#0f172a' }}>Referred Users</h2>
                             <div style={{ fontSize: '0.85rem', color: '#64748b', marginTop: 4 }}>
-                                Users who signed up using <strong style={{color: '#10b981'}}>{selectedAffiliate?.affiliateCode}</strong>
+                                Signed up via <strong style={{color: '#10b981'}}>{selectedAffiliate?.affiliateCode}</strong>
                             </div>
                         </div>
                         <button onClick={() => setIsReferredModalOpen(false)} style={{ background: 'none', border: 'none', fontSize: '1.5rem', cursor: 'pointer', color: '#64748b' }}>&times;</button>
@@ -386,14 +466,14 @@ export default function Affiliate() {
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                                 {referredUsers.map(user => (
                                     <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: 15, padding: 15, border: '1px solid #e2e8f0', borderRadius: 8 }}>
-                                        <div style={{ width: 40, height: 40, borderRadius: '50%', background: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', fontWeight: 'bold' }}>
+                                        <div style={{ width: 40, height: 40, minWidth: 40, borderRadius: '50%', background: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', fontWeight: 'bold' }}>
                                             {(user.displayName || user.email || '?').charAt(0).toUpperCase()}
                                         </div>
-                                        <div style={{ flex: 1 }}>
-                                            <div style={{ fontWeight: 700, color: '#1e293b' }}>{user.displayName || 'Unknown User'}</div>
-                                            <div style={{ fontSize: '0.85rem', color: '#64748b' }}>{user.email}</div>
+                                        <div style={{ flex: 1, overflow: 'hidden' }}>
+                                            <div style={{ fontWeight: 700, color: '#1e293b', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{user.displayName || 'Unknown User'}</div>
+                                            <div style={{ fontSize: '0.85rem', color: '#64748b', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{user.email}</div>
                                         </div>
-                                        <div style={{ fontSize: '0.75rem', color: '#94a3b8', textAlign: 'right' }}>
+                                        <div style={{ fontSize: '0.75rem', color: '#94a3b8', textAlign: 'right', whiteSpace: 'nowrap' }}>
                                             Joined<br/>
                                             {user.createdAt ? (user.createdAt.toDate ? user.createdAt.toDate().toLocaleDateString() : new Date(user.createdAt).toLocaleDateString()) : 'Unknown Date'}
                                         </div>
@@ -406,5 +486,6 @@ export default function Affiliate() {
             </div>
         )}
     </div>
+    </>
   );
 }

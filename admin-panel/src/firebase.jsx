@@ -31,10 +31,10 @@ if (import.meta.env.DEV) {
     self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
 }
 
-// ✅ SURGICAL FIX: Initialize and export the App Check instance
+// ✅ SURGICAL FIX: Initialize and export the App Check instance using the .env variable
 export const appCheck = initializeAppCheck(app, {
-    // Uses the exact same Site Key as the mobile app
-    provider: new ReCaptchaV3Provider('6LdWBJwsAAAAAOuFuF2UGd_47rxd2GUFLq8XFHjY'),
+    // Uses the Web-specific ReCaptcha V3 Provider
+    provider: new ReCaptchaV3Provider(import.meta.env.VITE_RECAPTCHA_SITE_KEY),
     isTokenAutoRefreshEnabled: true
 });
 
