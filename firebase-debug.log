@@ -47,3 +47,39 @@
 [debug] [2026-04-01T21:52:11.073Z] >>> [apiv2][query] GET https://firebase.googleapis.com/v1beta1/projects/aniyu-b841b/adminSdkConfig [none]
 [debug] [2026-04-01T21:52:15.299Z] <<< [apiv2][status] GET https://firebase.googleapis.com/v1beta1/projects/aniyu-b841b/adminSdkConfig 200
 [debug] [2026-04-01T21:52:15.300Z] <<< [apiv2][body] GET https://firebase.googleapis.com/v1beta1/projects/aniyu-b841b/adminSdkConfig {"projectId":"aniyu-b841b","storageBucket":"aniyu-b841b.firebasestorage.app"}
+[debug] [2026-04-01T21:52:15.345Z] Validating nodejs source
+[warn] ⚠  functions: package.json indicates an outdated version of firebase-functions. Please upgrade using npm install --save firebase-functions@latest in your functions directory. 
+[debug] [2026-04-01T21:52:18.033Z] > [functions] package.json contents: {
+  "name": "functions",
+  "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "serve": "npm run build && firebase emulators:start --only functions",
+    "shell": "npm run build && firebase functions:shell",
+    "start": "npm run shell",
+    "deploy": "firebase deploy --only functions",
+    "logs": "firebase functions:log"
+  },
+  "engines": {
+    "node": "24"
+  },
+  "main": "lib/index.js",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.992.0",
+    "@aws-sdk/s3-request-presigner": "^3.992.0",
+    "cors": "^2.8.6",
+    "firebase-admin": "^13.6.0",
+    "firebase-functions": "^7.0.0"
+  },
+  "devDependencies": {
+    "firebase-functions-test": "^3.4.1",
+    "typescript": "^5.7.3"
+  },
+  "private": true
+}
+[debug] [2026-04-01T21:52:18.034Z] Building nodejs source
+[info] i  functions: Loading and analyzing source code for codebase default to determine what to deploy 
+[debug] [2026-04-01T21:52:18.037Z] Could not find functions.yaml. Must use http discovery
+[debug] [2026-04-01T21:52:18.061Z] Found firebase-functions binary at '/home/abdulhakeem/AniYu/functions/node_modules/.bin/firebase-functions'
+[info] Serving at port 8216
+
