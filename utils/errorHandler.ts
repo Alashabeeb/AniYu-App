@@ -15,8 +15,9 @@ export const getFriendlyErrorMessage = (error: any): string => {
     // ==========================================
     // 🛡️ SECURITY & APP CHECK ERRORS
     // ==========================================
-    if (lowerErr.includes('app check') || lowerErr.includes('token-error') || lowerErr.includes('appcheck')) {
-        return "Security verification failed. Please ensure you are using the official AniYu app from the Play Store.";
+    // ✅ SURGICAL FIX: Added 'app-check' (with hyphen) to catch the exact Firebase error
+    if (lowerErr.includes('app-check') || lowerErr.includes('app check') || lowerErr.includes('token-error') || lowerErr.includes('appcheck')) {
+        return "Security verification failed. Please ensure you downloaded the app from the official Google Play Store.";
     }
     if (lowerErr.includes('unauthorized') || lowerErr.includes('invalid token')) {
         return "Your session has expired. Please log out and log back in.";
