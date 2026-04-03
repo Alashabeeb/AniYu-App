@@ -1,7 +1,9 @@
 import { onAuthStateChanged } from 'firebase/auth';
 import {
     collection, doc, getCountFromServer, getDoc, getDocs,
-    limit, orderBy,
+    limit,
+    onSnapshot,
+    orderBy, // ✅ SURGICAL ADDITION: Added onSnapshot
     query, serverTimestamp, updateDoc, where
 } from 'firebase/firestore';
 import {
@@ -9,7 +11,7 @@ import {
     LayoutDashboard, LifeBuoy,
     LogOut, Menu, MessageSquare, PieChart as PieChartIcon, RefreshCw, Settings, ShieldAlert, ThumbsUp, TrendingUp, Users as UsersIcon, Video, X
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react'; // ✅ SURGICAL ADDITION: Added useRef
 import { Link, Navigate, Route, BrowserRouter as Router, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
@@ -529,6 +531,187 @@ function SecurityDashboard() {
   );
 }
 
+// ✅ SURGICAL ADDITION: 📡 GLOBAL NOTIFICATION ANTENNA (With Auto-Read & Perfect Alignment)
+function SystemAntenna({ isAdmin, position = "header" }) {
+    const navigate = useNavigate();
+    const [showDropdown, setShowDropdown] = useState(false);
+    
+    // Store the actual documents to track read status
+    const [tickets, setTickets] = useState([]);
+    const [reports, setReports] = useState([]);
+
+    const initialTickets = useRef(true);
+    const initialReports = useRef(true);
+    const dropdownRef = useRef(null);
+
+    // Close the dropdown if the admin clicks outside of it
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+                setShowDropdown(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    useEffect(() => {
+        if (!isAdmin) return;
+
+        if ("Notification" in window && Notification.permission !== "denied" && Notification.permission !== "granted") {
+            Notification.requestPermission();
+        }
+
+        const triggerChromeNotification = (title, body) => {
+            if ("Notification" in window && Notification.permission === "granted") {
+                const n = new Notification(title, { body, icon: '/vite.svg' });
+                n.onclick = () => { window.focus(); n.close(); };
+            }
+        };
+
+        // Listen to Support Tickets
+        const qTickets = query(collection(db, 'supportTickets'), where('status', '==', 'pending'));
+        const unsubTickets = onSnapshot(qTickets, (snap) => {
+            setTickets(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+            if (initialTickets.current) { initialTickets.current = false; return; }
+            snap.docChanges().forEach(change => {
+                // Only notify if it hasn't been read yet
+                if (change.type === 'added') triggerChromeNotification("New Support Ticket 🚨", "A user needs help!");
+                if (change.type === 'modified' && change.doc.data().unreadAdmin !== false) triggerChromeNotification("New Reply 💬", "A user replied to their ticket.");
+            });
+        });
+
+        // Listen to Reports
+        const qReports = query(collection(db, 'reports'), where('status', '==', 'pending'));
+        const unsubReports = onSnapshot(qReports, (snap) => {
+            setReports(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+            if (initialReports.current) { initialReports.current = false; return; }
+            snap.docChanges().forEach(change => {
+                if (change.type === 'added') triggerChromeNotification("New Report 🚩", "A new user report requires your review.");
+            });
+        });
+
+        return () => { unsubTickets(); unsubReports(); };
+    }, [isAdmin]);
+
+    if (!isAdmin) return <div style={{width: 24}}></div>;
+
+    // 🔥 DYNAMIC FILTERING: Only count items that haven't been clicked/read yet
+    const unreadTickets = tickets.filter(t => t.unreadAdmin !== false);
+    const unreadReports = reports.filter(r => r.isRead !== true);
+    const pendingCount = unreadTickets.length + unreadReports.length;
+    
+    const allNotifications = [
+        ...unreadTickets.map(t => ({ id: t.id, type: 'ticket', text: `${t.userName || 'A user'} needs support`, time: t.updatedAt?.toDate ? t.updatedAt.toDate() : new Date(), link: '/support' })),
+        ...unreadReports.map(r => ({ id: r.id, type: 'report', text: `Report: Requires review`, time: r.createdAt?.toDate ? r.createdAt.toDate() : new Date(), link: '/reports' }))
+    ].sort((a, b) => b.time - a.time).slice(0, 5);
+
+    const timeAgo = (date) => {
+        const seconds = Math.floor((new Date() - date) / 1000);
+        if (seconds < 60) return 'Just now';
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return `${minutes}m ago`;
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return `${hours}h ago`;
+        return `${Math.floor(hours / 24)}d ago`;
+    };
+
+    // 🔥 CLICK HANDLER: Marks the item as read in Firebase so it disappears from the bell
+    const handleNotificationClick = async (notif) => {
+        setShowDropdown(false);
+        try {
+            if (notif.type === 'ticket') {
+                await updateDoc(doc(db, 'supportTickets', notif.id), { unreadAdmin: false });
+            } else if (notif.type === 'report') {
+                await updateDoc(doc(db, 'reports', notif.id), { isRead: true });
+            }
+        } catch (error) {
+            console.error("Error marking as read:", error);
+        }
+        navigate(notif.link);
+    };
+
+    return (
+        <div ref={dropdownRef} style={{ position: 'relative' }}>
+            {/* The Bell Icon */}
+            <div 
+                onClick={() => setShowDropdown(!showDropdown)}
+                style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '5px', cursor: 'pointer', transition: 'transform 0.2s ease' }}
+                onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.1)'}
+                onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+            >
+                <Bell size={22} color={pendingCount > 0 ? "#ef4444" : "#9ca3af"} />
+                {pendingCount > 0 && (
+                    <span style={{ position: 'absolute', top: -2, right: -2, background: '#ef4444', color: 'white', borderRadius: '50%', width: 18, height: 18, fontSize: '0.7rem', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', border: '2px solid white' }}>
+                        {pendingCount > 99 ? '99+' : pendingCount}
+                    </span>
+                )}
+            </div>
+
+            {/* The Dropdown Menu */}
+            {showDropdown && (
+                <div style={{ 
+                    position: 'absolute', 
+                    top: '100%', 
+                    // 🔥 ALIGNMENT FIX: Shifts left for Sidebar, shifts slightly right for Mobile Header
+                    left: position === 'sidebar' ? '20px' : 'auto',
+                    right: position === 'header' ? '-10px' : 'auto',
+                    marginTop: '15px', 
+                    width: '300px', 
+                    background: 'white', 
+                    borderRadius: '12px', 
+                    boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)', 
+                    border: '1px solid #e5e7eb', 
+                    zIndex: 1000, 
+                    overflow: 'hidden' 
+                }}>
+                    
+                    {/* Dropdown Header */}
+                    <div style={{ padding: '15px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc' }}>
+                        <h3 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 800, color: '#1f2937' }}>Notifications</h3>
+                        <span style={{ fontSize: '0.75rem', background: '#e0e7ff', color: '#4f46e5', padding: '2px 8px', borderRadius: '10px', fontWeight: 'bold' }}>{pendingCount} New</span>
+                    </div>
+                    
+                    {/* Dropdown List */}
+                    <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                        {allNotifications.length === 0 ? (
+                            <div style={{ padding: '30px 15px', textAlign: 'center', color: '#9ca3af', fontSize: '0.85rem' }}>No new notifications</div>
+                        ) : (
+                            allNotifications.map((notif, i) => (
+                                <div 
+                                    key={notif.id + i}
+                                    onClick={() => handleNotificationClick(notif)}
+                                    style={{ padding: '12px 15px', borderBottom: '1px solid #f3f4f6', display: 'flex', gap: '12px', cursor: 'pointer', transition: 'background 0.2s' }}
+                                    onMouseEnter={(e) => e.currentTarget.style.background = '#f9fafb'}
+                                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                                >
+                                    <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: notif.type === 'ticket' ? '#eff6ff' : '#fef2f2', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                        {notif.type === 'ticket' ? <LifeBuoy size={16} color="#3b82f6" /> : <Flag size={16} color="#ef4444" />}
+                                    </div>
+                                    <div style={{ flex: 1, overflow: 'hidden' }}>
+                                        <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#374151', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{notif.text}</div>
+                                        <div style={{ fontSize: '0.7rem', color: '#9ca3af', marginTop: '2px' }}>{timeAgo(notif.time)}</div>
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+
+                    {/* View All Button */}
+                    <div 
+                        onClick={() => { setShowDropdown(false); navigate('/notifications'); }}
+                        style={{ padding: '12px', textAlign: 'center', background: '#f8fafc', borderTop: '1px solid #e5e7eb', fontSize: '0.85rem', fontWeight: 700, color: '#2563eb', cursor: 'pointer' }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = '#eff6ff'}
+                        onMouseLeave={(e) => e.currentTarget.style.background = '#f8fafc'}
+                    >
+                        View All Notifications
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
 // --- LAYOUT COMPONENT (STANDARD CSS) ---
 function Layout({ logout, role, userId }) {
   const location = useLocation();
@@ -665,6 +848,10 @@ function Layout({ logout, role, userId }) {
               {isSuperAdmin ? 'Owner' : isAdmin ? 'Admin' : 'Studio'}
             </span>
           </h1>
+          
+          {/* ✅ SURGICAL ADDITION: Display the Antenna icon on the desktop sidebar */}
+          <SystemAntenna isAdmin={isAdmin} />
+
           <button onClick={() => setSidebarOpen(false)} className="close-btn">
             <X size={24} />
           </button>
@@ -709,7 +896,6 @@ function Layout({ logout, role, userId }) {
                     <DollarSign size={20} /> <span>Affiliates</span>
                 </Link>
 
-                {/* ✅ NEW: Link to the Rate Limits Dashboard */}
                 <Link to="/security" className={isActive('/security')}>
                     <ShieldAlert size={20} /> <span>Security Logs</span>
                 </Link>
@@ -737,14 +923,15 @@ function Layout({ logout, role, userId }) {
                 <Menu size={24} />
             </button>
             <span style={{fontWeight: '700', fontSize: '1.1rem', color:'#1f2937'}}>Admin Panel</span>
-            <div style={{width: 24}}></div> 
+            
+            {/* ✅ SURGICAL ADDITION: Display the Antenna icon on the mobile header */}
+            <SystemAntenna isAdmin={isAdmin} />
         </header>
 
         <main className="content-area">
             <Routes>
                 <Route path="/" element={<Dashboard role={role} userId={userId} />} />
                 
-                {/* ✅ NEW: Route for the Security Dashboard */}
                 <Route path="/security" element={
                     <ProtectedRoute role={role} allowedRoles={['admin', 'super_admin']}>
                         <SecurityDashboard />
