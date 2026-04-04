@@ -74,7 +74,7 @@ export const generateUploadUrl = onRequest({ cors: true }, async (req, res) => {
     }
 
     // 🔐 SECURITY: Rate limit — 20 upload requests per user per hour
-    const allowed = await checkRateLimit(decodedToken.uid, "upload", 20);
+    const allowed = await checkRateLimit(decodedToken.uid, "upload", 500);
     if (!allowed) {
       res.status(429).json({ error: "Too many upload requests. Please try again later." });
       return;
