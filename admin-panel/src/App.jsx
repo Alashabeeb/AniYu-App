@@ -558,6 +558,7 @@ function SystemAntenna({ isAdmin, position = "header" }) {
     useEffect(() => {
         if (!isAdmin) return;
 
+        // Request Browser Notification Permission
         if ("Notification" in window && Notification.permission !== "denied" && Notification.permission !== "granted") {
             Notification.requestPermission();
         }
@@ -569,15 +570,26 @@ function SystemAntenna({ isAdmin, position = "header" }) {
             }
         };
 
-        // Listen to Support Tickets
-        const qTickets = query(collection(db, 'supportTickets'), where('status', '==', 'pending'));
+        // ✅ BUG FIX: Listen to BOTH 'pending' and 'active' tickets so we catch user replies!
+        const qTickets = query(collection(db, 'supportTickets'), where('status', 'in', ['pending', 'active']));
         const unsubTickets = onSnapshot(qTickets, (snap) => {
             setTickets(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-            if (initialTickets.current) { initialTickets.current = false; return; }
+            
+            if (initialTickets.current) { 
+                initialTickets.current = false; 
+                return; 
+            }
+            
             snap.docChanges().forEach(change => {
-                // Only notify if it hasn't been read yet
-                if (change.type === 'added') triggerChromeNotification("New Support Ticket 🚨", "A user needs help!");
-                if (change.type === 'modified' && change.doc.data().unreadAdmin !== false) triggerChromeNotification("New Reply 💬", "A user replied to their ticket.");
+                const data = change.doc.data();
+                // Alert for brand new tickets
+                if (change.type === 'added' && data.status === 'pending') {
+                    triggerChromeNotification("New Support Ticket 🚨", "A user needs help!");
+                }
+                // Alert for user replies to an active ticket
+                else if (change.type === 'modified' && data.unreadAdmin === true) {
+                    triggerChromeNotification("New Reply 💬", "A user replied to their ticket.");
+                }
             });
         });
 
@@ -596,7 +608,7 @@ function SystemAntenna({ isAdmin, position = "header" }) {
 
     if (!isAdmin) return <div style={{width: 24}}></div>;
 
-    // 🔥 DYNAMIC FILTERING: Only count items that haven't been clicked/read yet
+    // 🔥 DYNAMIC FILTERING: Count anything that hasn't been explicitly read by an admin
     const unreadTickets = tickets.filter(t => t.unreadAdmin !== false);
     const unreadReports = reports.filter(r => r.isRead !== true);
     const pendingCount = unreadTickets.length + unreadReports.length;
@@ -616,7 +628,7 @@ function SystemAntenna({ isAdmin, position = "header" }) {
         return `${Math.floor(hours / 24)}d ago`;
     };
 
-    // 🔥 CLICK HANDLER: Marks the item as read in Firebase so it disappears from the bell
+    // 🔥 CLICK HANDLER: Marks the item as read so it disappears from the bell
     const handleNotificationClick = async (notif) => {
         setShowDropdown(false);
         try {

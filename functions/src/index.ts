@@ -74,7 +74,7 @@ export const generateUploadUrl = onRequest({ cors: true }, async (req, res) => {
     }
 
     // 🔐 SECURITY: Rate limit — 20 upload requests per user per hour
-    const allowed = await checkRateLimit(decodedToken.uid, "upload", 500);
+    const allowed = await checkRateLimit(decodedToken.uid, "upload", 1000);
     if (!allowed) {
       res.status(429).json({ error: "Too many upload requests. Please try again later." });
       return;
@@ -448,11 +448,18 @@ export const createSupportMessage = onRequest({ cors: true }, async (req, res) =
         createdAt: admin.firestore.FieldValue.serverTimestamp()
       });
 
-      batch.update(ticketRef, {
+      // ✅ BUG FIX: Re-open resolved tickets when a user replies
+      const updatePayload: any = {
         lastMessage: text?.trim() || 'Sent an attachment',
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         unreadAdmin: true
-      });
+      };
+
+      if (ticketData.status === 'resolved') {
+        updatePayload.status = 'pending';
+      }
+
+      batch.update(ticketRef, updatePayload);
 
       await batch.commit();
 

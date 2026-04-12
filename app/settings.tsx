@@ -2,6 +2,8 @@ import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { Stack, useRouter } from 'expo-router';
 import { deleteUser } from 'firebase/auth';
+// ✅ SURGICAL FIX: Added Firestore imports for deep deletion
+import { deleteDoc, doc } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -17,7 +19,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import CustomAlert from '../components/CustomAlert';
-import { auth } from '../config/firebaseConfig';
+// ✅ SURGICAL FIX: Imported db
+import { auth, db } from '../config/firebaseConfig';
 import { useTheme } from '../context/ThemeContext';
 import { clearHistory } from '../services/historyService';
 import { getNotificationPreference, setNotificationPreference } from '../services/notificationService';
@@ -142,6 +145,12 @@ export default function SettingsScreen() {
               onPress: async () => {
                   try {
                       setLoading(true);
+                      
+                      // ✅ SURGICAL FIX: Wipe data from Firestore BEFORE deleting Auth
+                      if (user?.uid) {
+                          await deleteDoc(doc(db, 'users', user.uid));
+                      }
+                      
                       await deleteUser(user!);
                       router.replace('/login');
                   } catch (e: any) { 

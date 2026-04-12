@@ -397,7 +397,6 @@ export default function HomeScreen() {
                   onItemPress={handleContinueWatchingClick}
               />
           )}
-            <AdBanner />
           {/* ✅ RAIL 2: RECENTLY VIEWED */}
           {recentlyViewed.length > 0 && (
               <TrendingRail 
@@ -417,7 +416,6 @@ export default function HomeScreen() {
               onMore={() => router.push('/anime-list?type=trending')} 
           />
 
-            <AdBanner />
           
           <TrendingRail 
               title="Upcoming Anime" 

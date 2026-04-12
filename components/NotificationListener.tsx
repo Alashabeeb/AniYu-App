@@ -140,6 +140,9 @@ export default function NotificationListener() {
   // ==========================================
   // 4. WATCH GLOBAL ANNOUNCEMENTS (NEW)
   // ==========================================
+  // ✅ BUG FIX: Memory ref to prevent cache-to-server double firing spam
+  const lastSeenBroadcastId = useRef<string | null>(null);
+
   useEffect(() => {
     if (!user?.uid) return; 
 
@@ -150,15 +153,29 @@ export default function NotificationListener() {
     );
 
     const unsubBroadcast = onSnapshot(q, (snapshot) => {
+      // 1. If snapshot is totally empty (e.g., empty local cache), ignore it.
+      if (snapshot.empty) return;
+
+      const latestDoc = snapshot.docs[0];
+
+      // 2. On the true first load, just memorize the ID and stay silent.
       if (isFirstLoadBroadcast.current) {
         isFirstLoadBroadcast.current = false;
+        lastSeenBroadcastId.current = latestDoc.id;
         return;
       }
 
+      // 3. For all future updates, only toast if the ID is genuinely NEW
       snapshot.docChanges().forEach((change) => {
         if (change.type === 'added') {
-          const data = change.doc.data();
-          showToast('📣 Admin Broadcast', data.title, 'warning');
+          // Compare the new ID against our memory
+          if (change.doc.id !== lastSeenBroadcastId.current) {
+            const data = change.doc.data();
+            showToast('📣 Admin Broadcast', data.title || 'New Announcement', 'warning');
+            
+            // Update our memory so we don't show this specific one again
+            lastSeenBroadcastId.current = change.doc.id; 
+          }
         }
       });
     });
