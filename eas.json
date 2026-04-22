@@ -12,8 +12,7 @@
       "channel": "preview",
       "android": {
         "buildType": "apk"
-      },
-      "prebuildCommand": "./scripts/prebuild.sh"
+      }
     },
     "production": {
       "channel": "production"
