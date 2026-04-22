@@ -1,0 +1,4 @@
+#!/bin/bash
+npx expo prebuild --platform android
+mkdir -p android/app/src/main/assets
+cp ./assets/adi-registration.properties ./android/app/src/main/assets/adi-registration.properties
