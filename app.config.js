@@ -87,6 +87,7 @@ export default {
       "@react-native-firebase/app",
       "@react-native-firebase/app-check",
       "@react-native-firebase/perf",
+      "./plugins/copyVerificationFile"
     ],
     experiments: {
       typedRoutes: true,
