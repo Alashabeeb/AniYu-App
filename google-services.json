@@ -14,11 +14,11 @@
       },
       "oauth_client": [
         {
-          "client_id": "891600067276-krpjmdmj3nqr1uqqlakfd4e1aqvf9pjd.apps.googleusercontent.com",
+          "client_id": "891600067276-cltg0787s8lmfk1ofr5fbvg86pkll9e2.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "com.aniyu.app",
-            "certificate_hash": "de9e0a17d5daea6d5079d04320a80ca7c4ad6e37"
+            "certificate_hash": "14bae614751f16a992270e61e9cc94889fab5948"
           }
         },
         {
