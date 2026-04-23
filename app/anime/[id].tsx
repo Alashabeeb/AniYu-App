@@ -48,13 +48,6 @@ const RANKS = [
     { name: 'KAGE', min: 100, max: Infinity },
 ];
 
-const SOCIAL_LINKS = [
-    { id: 'mail', icon: 'mail', url: 'mailto:aniyuhq@gmail.com', color: '#EA4335' },
-    { id: 'X', icon: 'logo-X', url: 'https://x.com/AniYuApp', color: '#1DA1F2' },
-    { id: 'linkedin', icon: 'logo-linkedin', url: 'www.linkedin.com/in/abdulhakeem-habeebullah-257438255', color: '#0A66C2' },
-    { id: 'whatsapp', icon: 'logo-whatsapp', url: 'https://wa.me/+2348111542402', color: '#25D366' },
-];
-
 export default function AnimeDetailScreen() {
   const { id, episodeId } = useLocalSearchParams();
   const { theme } = useTheme();
@@ -939,21 +932,6 @@ export default function AnimeDetailScreen() {
                     <Text style={[styles.noLicenseText, { color: theme.subText }]}>
                         We currently do not hold the streaming rights or licensing to provide episodes for this anime.
                     </Text>
-                    <Text style={[styles.noLicenseText, { color: theme.subText, marginTop: 10 }]}>
-                        If you are a licensor or know how we can acquire these rights, your assistance would be greatly appreciated!
-                    </Text>
-                    
-                    <View style={styles.socialRow}>
-                        {SOCIAL_LINKS.map(link => (
-                            <TouchableOpacity 
-                                key={link.id} 
-                                style={[styles.socialBtn, { backgroundColor: link.color + '20' }]} 
-                                onPress={() => openSocial(link.url)}
-                            >
-                                <Ionicons name={link.icon as any} size={22} color={link.color} />
-                            </TouchableOpacity>
-                        ))}
-                    </View>
                 </View>
             </View>
         </Modal>

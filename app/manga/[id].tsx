@@ -24,12 +24,6 @@ import {
     incrementMangaView
 } from '../../services/mangaService';
 
-const SOCIAL_LINKS = [
-    { id: 'mail', icon: 'mail', url: 'mailto:partnerships@aniyu.com', color: '#EA4335' },
-    { id: 'twitter', icon: 'logo-twitter', url: 'https://twitter.com/aniyu_app', color: '#1DA1F2' },
-    { id: 'linkedin', icon: 'logo-linkedin', url: 'https://linkedin.com/company/aniyu', color: '#0A66C2' },
-    { id: 'whatsapp', icon: 'logo-whatsapp', url: 'https://wa.me/1234567890', color: '#25D366' },
-];
 
 export default function MangaDetailScreen() {
   const { id } = useLocalSearchParams();
@@ -300,16 +294,7 @@ export default function MangaDetailScreen() {
                         <View style={[styles.noLicenseContainer, { backgroundColor: theme.card }]}>
                             <Ionicons name="lock-closed" size={40} color={theme.subText} style={{ marginBottom: 15 }} />
                             <Text style={[styles.noLicenseTitle, { color: theme.text }]}>Content Unavailable</Text>
-                            <Text style={[styles.noLicenseText, { color: theme.subText }]}>We currently do not hold the reading rights or licensing to provide chapters for this manga.</Text>
-                            <Text style={[styles.noLicenseText, { color: theme.subText, marginTop: 10 }]}>If you are a licensor or know how we can acquire these rights, your assistance would be greatly appreciated!</Text>
-                            
-                            <View style={styles.socialRow}>
-                                {SOCIAL_LINKS.map(link => (
-                                    <TouchableOpacity key={link.id} style={[styles.socialBtn, { backgroundColor: link.color + '20' }]} onPress={() => openSocial(link.url)}>
-                                        <Ionicons name={link.icon as any} size={22} color={link.color} />
-                                    </TouchableOpacity>
-                                ))}
-                            </View>
+                            <Text style={[styles.noLicenseText, { color: theme.subText }]}>We currently do not hold the reading rights or licensing to provide chapters for this manga.</Text>                            
                         </View>
                     ) : (
                         <>

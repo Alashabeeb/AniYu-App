@@ -4,7 +4,7 @@ import { TestIds } from 'react-native-google-mobile-ads';
 // ✅ SURGICAL FIX: Use an explicit manual toggle instead of __DEV__
 // KEEP THIS AS 'true' WHILE TESTING YOUR APK.
 // Change it to 'false' ONLY when you are ready to upload the final AAB to the Play Store.
-const USE_TEST_ADS = false; 
+const USE_TEST_ADS = true; 
 
 // Your Real AdMob Unit IDs
 const REAL_BANNER_ANDROID = 'ca-app-pub-9826157970378029/5111670223';
