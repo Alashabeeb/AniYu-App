@@ -169,7 +169,9 @@ export const getRecommendedAnime = async (userGenres: string[]) => {
     })) as any[];
 
     results = results.filter((a: any) => allowed.includes(a.ageRating || 'All'));
-    return results.sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 50);
+    
+    // ✅ UPDATED: Now sorts by 'score' (highest rated) instead of 'views' (most popular)
+    return results.sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 50);
 
   } catch (error) {
     console.error("Error fetching recommendations:", error);

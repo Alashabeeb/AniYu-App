@@ -22,7 +22,8 @@ import {
     TextInput, TouchableOpacity,
     View
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+// ✅ ADDED: useSafeAreaInsets to protect the floating header from the notch
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTheme } from '../../context/ThemeContext';
 
@@ -48,6 +49,7 @@ const MAX_SEARCH_CHARS = 15;
 export default function HomeScreen() {
   const router = useRouter();
   const { theme, isDark } = useTheme();
+  const insets = useSafeAreaInsets(); // ✅ ADDED: Get device notch heights
   
   // ✅ BUG 1 & 3 FIX: Use reactive state so the notification listener updates if auth changes
   const { user: currentUser } = useAuth();
@@ -231,19 +233,24 @@ export default function HomeScreen() {
           getTopGenres(history) // ✅ FIX: Pass the same history — no 3rd AsyncStorage read
       ]);
 
-      const recommendedData = await getRecommendedAnime(userGenres);
+      const rawRecommendedData = await getRecommendedAnime(userGenres);
+
+      // ✅ ADDED: Filter out the top 10 trending anime from the recommended list
+      // This ensures 0% overlap between the "Trending" rail and "Recommended" rail
+      const trendingIds = new Set(trendingData.slice(0, 10).map((a: any) => a.mal_id));
+      const uniqueRecommendedData = rawRecommendedData.filter((a: any) => !trendingIds.has(a.mal_id));
 
       if (isMountedRef.current) {
           setTrending(trendingData);
           setUpcoming(upcomingData);
-          setRecommended(recommendedData);
+          setRecommended(uniqueRecommendedData); // ✅ Set the filtered list here
       }
 
       // ✅ BUG 2 FIX: Save the current timestamp alongside the data
       await AsyncStorage.setItem(HOME_DATA_CACHE_KEY, JSON.stringify({
           trending: trendingData,
           upcoming: upcomingData,
-          recommended: recommendedData,
+          recommended: uniqueRecommendedData, // ✅ Save the filtered list to cache
           timestamp: Date.now()
       }));
 
@@ -327,44 +334,51 @@ export default function HomeScreen() {
   }
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
-      <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
+    // ✅ CHANGED: Replaced SafeAreaView with standard View so the carousel goes full screen under the notch
+    <View style={[styles.container, { backgroundColor: theme.background }]}>
+      {/* Set status bar to light-content so it's visible over the anime images */}
+      <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
-      <View style={styles.topHeader}>
-          <Text style={[styles.brandText, { color: theme.text }]}>AniYu</Text>
-          
-          <TouchableOpacity 
-            style={styles.notificationBtn} 
-            onPress={() => router.push('/notifications')}
-          >
-              <Ionicons name="notifications-outline" size={26} color={theme.text} />
-              {hasUnread && <View style={styles.redDotHeader} />}
-          </TouchableOpacity>
-      </View>
+      {/* ✅ ADDED: Floating absolute header pinned to the top, pushed down by safe area insets */}
+      <View style={[styles.floatingHeader, { paddingTop: insets.top }]}>
+          <View style={styles.topHeader}>
+              <Text style={styles.brandTextShadow}>AniYu</Text>
+              
+              <TouchableOpacity 
+                style={styles.notificationBtn} 
+                onPress={() => router.push('/notifications')}
+              >
+                  <Ionicons name="notifications-outline" size={26} color="white" style={styles.iconShadow} />
+                  {hasUnread && <View style={styles.redDotHeader} />}
+              </TouchableOpacity>
+          </View>
 
-      <View style={styles.headerContainer}>
-        <View style={[styles.searchBar, { backgroundColor: theme.card }]}>
-          <Ionicons name="search" size={20} color={theme.subText} style={{ marginRight: 10 }} />
-          <TextInput
-            placeholder="Search anime..."
-            placeholderTextColor={theme.subText}
-            style={[styles.input, { color: theme.text }]}
-            value={queryText}
-            onChangeText={setQueryText}
-            onSubmitEditing={handleSearch} 
-            returnKeyType="search"
-            maxLength={MAX_SEARCH_CHARS}
-          />
-          {queryText.length > 0 && (
-            <TouchableOpacity onPress={clearSearch}>
-               <Ionicons name="close-circle" size={20} color={theme.subText} />
-            </TouchableOpacity>
-          )}
-        </View>
+          <View style={styles.headerContainer}>
+            {/* Added a glassmorphism effect to the search bar so it's visible over images */}
+            <View style={styles.glassSearchBar}>
+              <Ionicons name="search" size={20} color="rgba(255,255,255,0.8)" style={{ marginRight: 10 }} />
+              <TextInput
+                placeholder="Search anime..."
+                placeholderTextColor="rgba(255,255,255,0.7)"
+                style={[styles.input, { color: 'white' }]}
+                value={queryText}
+                onChangeText={setQueryText}
+                onSubmitEditing={handleSearch} 
+                returnKeyType="search"
+                maxLength={MAX_SEARCH_CHARS}
+              />
+              {queryText.length > 0 && (
+                <TouchableOpacity onPress={clearSearch}>
+                   <Ionicons name="close-circle" size={20} color="rgba(255,255,255,0.8)" />
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
       </View>
 
       {isSearching ? (
-        <View style={{ flex: 1 }}>
+        // ✅ Added padding to push search results below the floating header
+        <View style={{ flex: 1, paddingTop: insets.top + 100 }}>
             {searchLoading ? (
                 <View style={styles.center}>
                     <ActivityIndicator size="small" color={theme.tint} />
@@ -387,6 +401,7 @@ export default function HomeScreen() {
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.tint} />}
         >
+          {/* HeroCarousel is now at the very top of the screen */}
           <HeroCarousel data={trending.slice(0, 5)} />
           
           {/* ✅ RAIL 1: CONTINUE WATCHING */}
@@ -450,7 +465,7 @@ export default function HomeScreen() {
           <View style={{ height: 100 }} />
         </ScrollView>
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -458,13 +473,45 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   
+  // ✅ ADDED: Styles for the new floating transparent header
+  floatingHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+  },
+  brandTextShadow: { 
+    fontSize: 24, 
+    fontWeight: '900', 
+    fontFamily: 'System', 
+    letterSpacing: 0.5,
+    color: 'white',
+    textShadowColor: 'rgba(0,0,0,0.6)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
+  iconShadow: {
+    textShadowColor: 'rgba(0,0,0,0.6)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
+  glassSearchBar: {
+    flexDirection: 'row', 
+    borderRadius: 12, 
+    paddingHorizontal: 15, 
+    height: 45, 
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.4)', // Glassmorphism dark fade
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+
   topHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingTop: 10, paddingBottom: 5 },
-  brandText: { fontSize: 24, fontWeight: '900', fontFamily: 'System', letterSpacing: 0.5 },
   notificationBtn: { padding: 5, position: 'relative' },
   redDotHeader: { position: 'absolute', top: 5, right: 6, width: 8, height: 8, borderRadius: 4, backgroundColor: 'red', borderWidth: 1, borderColor: 'white' },
 
   headerContainer: { paddingHorizontal: 20, paddingBottom: 10, paddingTop: 10 },
-  searchBar: { flexDirection: 'row', borderRadius: 12, paddingHorizontal: 15, height: 45, alignItems: 'center' },
   input: { flex: 1, fontSize: 16 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: 50 },
   searchCard: { flexDirection: 'row', marginBottom: 12, borderRadius: 12, overflow: 'hidden', alignItems: 'center' },
