@@ -5,12 +5,15 @@ import { useRouter } from 'expo-router';
 import React, { useMemo } from 'react';
 import { Dimensions, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Carousel from 'react-native-reanimated-carousel';
+import { useSafeAreaInsets } from 'react-native-safe-area-context'; // ✅ ADDED
+
 import { auth } from '../config/firebaseConfig';
 
 const { width } = Dimensions.get('window');
 
 export default function HeroCarousel({ data }: { data: any[] }) {
   const router = useRouter();
+  const insets = useSafeAreaInsets(); // ✅ ADDED
 
   const dailyHeroAnime = useMemo(() => {
       if (!data || data.length === 0) return [];
@@ -36,7 +39,8 @@ export default function HeroCarousel({ data }: { data: any[] }) {
   if (dailyHeroAnime.length === 0) return null;
 
   return (
-    <View style={{ height: 450 }}>
+    // ✅ ADDED: marginTop uses insets.top so the image starts exactly beneath the notch
+    <View style={{ height: 450, marginTop: insets.top }}>
       <Carousel
         loop
         width={width}
