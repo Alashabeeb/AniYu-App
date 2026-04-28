@@ -54,7 +54,7 @@ export default function ReturningUserAd({ onAppReady }: { onAppReady?: () => voi
       }
     };
     checkUserStatus();
-  }, [load]);
+  }, []); // ✅ FIX: Removed [load] to stop the infinite loop on returning users
 
   // 2. Cold Start: Show the ad exactly once when it finishes loading initially
   useEffect(() => {
@@ -64,7 +64,7 @@ export default function ReturningUserAd({ onAppReady }: { onAppReady?: () => voi
       hasShownColdStartAd.current = true; 
       signalReady(); 
     }
-  }, [isReturningUser, isLoaded, show]);
+  }, [isReturningUser, isLoaded]); // ✅ FIX: Removed [show]
 
   // Handle Ad Load Error (e.g., No Ad Inventory or Bad Connection)
   useEffect(() => {
@@ -79,7 +79,7 @@ export default function ReturningUserAd({ onAppReady }: { onAppReady?: () => voi
       isShowingAd.current = false; // ✅ Unlock the ad now that the user has fully closed it
       load(); 
     }
-  }, [isClosed, load]);
+  }, [isClosed]); // ✅ FIX: Removed [load]
 
   // 4. Warm Start: Show the pre-loaded ad when they exit the app and come back!
   useEffect(() => {
@@ -94,7 +94,7 @@ export default function ReturningUserAd({ onAppReady }: { onAppReady?: () => voi
     return () => {
       subscription.remove();
     };
-  }, [isReturningUser, isLoaded, show]);
+  }, [isReturningUser, isLoaded]); // ✅ FIX: Removed [show]
 
   return null;
 }

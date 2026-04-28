@@ -2,7 +2,7 @@ export default {
   expo: {
     name: "AniYu",
     slug: "AniYu",
-    version: "1.1.5",
+    version: "1.1.6",
     orientation: "portrait",
     icon: "./assets/images/icon.png",
     scheme: "aniyu",
@@ -24,7 +24,7 @@ export default {
       usesAppleSignIn: true
     },
     android: {
-      versionCode: 7, // <--- ADD THIS LINE HERE
+      versionCode: 8, // <--- ADD THIS LINE HERE
       adaptiveIcon: {
         backgroundColor: "#E6F4FE",
         foregroundImage: "./assets/images/android-icon-foreground.png",

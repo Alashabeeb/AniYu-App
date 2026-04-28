@@ -5,7 +5,7 @@ import { useRouter } from 'expo-router';
 import React, { useMemo } from 'react';
 import { Dimensions, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Carousel from 'react-native-reanimated-carousel';
-import { useSafeAreaInsets } from 'react-native-safe-area-context'; // ✅ ADDED
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { auth } from '../config/firebaseConfig';
 
@@ -13,7 +13,7 @@ const { width } = Dimensions.get('window');
 
 export default function HeroCarousel({ data }: { data: any[] }) {
   const router = useRouter();
-  const insets = useSafeAreaInsets(); // ✅ ADDED
+  const insets = useSafeAreaInsets();
 
   const dailyHeroAnime = useMemo(() => {
       if (!data || data.length === 0) return [];
@@ -39,12 +39,12 @@ export default function HeroCarousel({ data }: { data: any[] }) {
   if (dailyHeroAnime.length === 0) return null;
 
   return (
-    // ✅ ADDED: marginTop uses insets.top so the image starts exactly beneath the notch
-    <View style={{ height: 450, marginTop: insets.top }}>
+    // ✅ CHANGED: Height increased from 450 to 600
+    <View style={{ height: 600, marginTop: insets.top }}>
       <Carousel
         loop
         width={width}
-        height={450}
+        height={600} // ✅ CHANGED: Height increased to 600
         autoPlay={true}
         data={dailyHeroAnime}
         scrollAnimationDuration={1000}
@@ -63,7 +63,7 @@ export default function HeroCarousel({ data }: { data: any[] }) {
                 <Image 
                     source={{ uri: imageUrl }} 
                     style={styles.image} 
-                    contentFit="cover" 
+                    contentFit="contain" // ✅ CHANGED: "cover" to "contain" so the full image is visible
                     transition={500}
                 />
                 
