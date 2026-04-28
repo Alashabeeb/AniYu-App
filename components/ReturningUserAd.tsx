@@ -8,11 +8,14 @@ export default function ReturningUserAd({ onAppReady }: { onAppReady?: () => voi
   const [isReturningUser, setIsReturningUser] = useState(false);
   const hasShownColdStartAd = useRef(false);
   const isFirstLaunchSession = useRef(false);
-  const readySignaled = useRef(false); // Ensures we only signal the Splash Screen to hide once!
+  const readySignaled = useRef(false); 
+  
+  // ✅ ADDED: The Lock. This tracks if an ad is currently on the screen.
+  const isShowingAd = useRef(false); 
 
   // Initialize the Ad hook
   const { isLoaded, isClosed, error, load, show } = useInterstitialAd(AdUnitIds.interstitial, {
-    requestNonPersonalizedAdsOnly: true, // Safer for privacy compliance
+    requestNonPersonalizedAdsOnly: true, 
   });
 
   // Helper to safely trigger the Splash Screen to hide
@@ -38,18 +41,16 @@ export default function ReturningUserAd({ onAppReady }: { onAppReady?: () => voi
         const hasLaunched = await AsyncStorage.getItem('has_launched_before');
         
         if (hasLaunched === 'true') {
-          // Returning user! Flag them and start loading the ad in the background
           setIsReturningUser(true);
           load(); 
         } else {
-          // First time user! Mark them as a returning user for NEXT time, but don't load the ad today.
           isFirstLaunchSession.current = true;
           await AsyncStorage.setItem('has_launched_before', 'true');
-          signalReady(); // ✅ First-time user: Drop Splash Screen immediately, no ads.
+          signalReady(); 
         }
       } catch (error) {
         console.error('AsyncStorage Error:', error);
-        signalReady(); // Error reading storage, drop splash screen safely.
+        signalReady(); 
       }
     };
     checkUserStatus();
@@ -58,31 +59,34 @@ export default function ReturningUserAd({ onAppReady }: { onAppReady?: () => voi
   // 2. Cold Start: Show the ad exactly once when it finishes loading initially
   useEffect(() => {
     if (isReturningUser && isLoaded && !hasShownColdStartAd.current && !isFirstLaunchSession.current) {
+      isShowingAd.current = true; // ✅ Lock the ad so AppState ignores the background transition
       show();
-      hasShownColdStartAd.current = true; // Lock it so it never shows twice via this trigger
-      signalReady(); // ✅ Ad is popping up! Drop the Splash Screen underneath it.
+      hasShownColdStartAd.current = true; 
+      signalReady(); 
     }
   }, [isReturningUser, isLoaded, show]);
 
   // Handle Ad Load Error (e.g., No Ad Inventory or Bad Connection)
   useEffect(() => {
     if (error) {
-       signalReady(); // ✅ Ad failed to load. Drop the Splash Screen so they aren't stuck.
+       signalReady(); 
     }
   }, [error]);
 
   // 3. Background Pre-loading: Load a fresh ad whenever the user closes the current one
   useEffect(() => {
     if (isClosed) {
-      load(); // Silently get the next ad ready for when they leave and come back!
+      isShowingAd.current = false; // ✅ Unlock the ad now that the user has fully closed it
+      load(); 
     }
   }, [isClosed, load]);
 
   // 4. Warm Start: Show the pre-loaded ad when they exit the app and come back!
   useEffect(() => {
     const subscription = AppState.addEventListener('change', nextAppState => {
-      if (nextAppState === 'active' && isReturningUser && isLoaded && !isFirstLaunchSession.current) {
-         // App came back to foreground. Show the pre-loaded ad instantly!
+      // ✅ ADDED check for !isShowingAd.current. If an ad is currently playing, do nothing!
+      if (nextAppState === 'active' && isReturningUser && isLoaded && !isFirstLaunchSession.current && !isShowingAd.current) {
+         isShowingAd.current = true; // ✅ Lock it
          show();
       }
     });
