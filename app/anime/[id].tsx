@@ -1,11 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Image } from 'expo-image'; // ✅ FIX 4: expo-image for better memory management on low-end devices
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { arrayUnion, doc, getDoc, increment, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator, Alert, Image,
+    ActivityIndicator, Alert,
+    AppState, // ✅ FIX 3: Battery — pause video + heartbeat when app backgrounds
+    AppStateStatus,
     Linking,
     Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View
 } from 'react-native';
@@ -87,6 +90,12 @@ export default function AnimeDetailScreen() {
 
   const resumeTimeRef = useRef<number | null>(null);
 
+  // ✅ FIX 2: isMountedRef — prevents setState on unmounted component (memory leak)
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    return () => { isMountedRef.current = false; };
+  }, []);
+
   const player = useVideoPlayer(currentVideoSource, player => { 
       player.loop = false; 
   });
@@ -98,6 +107,26 @@ export default function AnimeDetailScreen() {
   useEffect(() => {
       load();
   }, [load]);
+
+  // ✅ FIX 3: Battery — save progress and pause player when app goes to background
+  const saveCurrentProgress = useCallback(async () => {
+      if (!anime || !currentEpId || !player) return;
+      const activeEp = episodes.find(e => String(e.mal_id) === currentEpId);
+      
+      if (activeEp && player.currentTime > 5) {
+          await saveWatchProgress(anime, { ...activeEp, id: currentEpId }, player.currentTime, player.duration || 0);
+      }
+  }, [anime, currentEpId, episodes, player]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (nextState === 'background' || nextState === 'inactive') {
+        saveCurrentProgress();
+        try { if (player) player.pause(); } catch (e) {}
+      }
+    });
+    return () => subscription.remove();
+  }, [saveCurrentProgress, player]);
 
   useEffect(() => {
       if (isClosed) {
@@ -136,6 +165,7 @@ export default function AnimeDetailScreen() {
       const checkHistory = async () => {
           if (!anime || !currentEpId) return;
           const history = await getContinueWatching();
+          if (!isMountedRef.current) return; // ✅ FIX 2
           const savedItem = history.find(h => String(h.mal_id) === String(anime.mal_id));
           if (savedItem && String(savedItem.episodeId) === String(currentEpId)) {
               resumeTimeRef.current = savedItem.progress;
@@ -153,6 +183,7 @@ export default function AnimeDetailScreen() {
           try {
               const progressRef = doc(db, 'users', user.uid, 'anime_progress', String(anime.mal_id));
               const snap = await getDoc(progressRef);
+              if (!isMountedRef.current) return; // ✅ FIX 2
               if (snap.exists()) {
                   const data = snap.data();
                   if (data.watchedEpisodes) setWatchedEpisodeIds(data.watchedEpisodes);
@@ -173,15 +204,6 @@ export default function AnimeDetailScreen() {
           return () => clearTimeout(timer);
       }
   }, [player, currentVideoSource]);
-
-  const saveCurrentProgress = useCallback(async () => {
-      if (!anime || !currentEpId || !player) return;
-      const activeEp = episodes.find(e => String(e.mal_id) === currentEpId);
-      
-      if (activeEp && player.currentTime > 5) {
-          await saveWatchProgress(anime, { ...activeEp, id: currentEpId }, player.currentTime, player.duration || 0);
-      }
-  }, [anime, currentEpId, episodes, player]);
 
   useEffect(() => {
       if (!currentEpId || !anime || !player) return;
@@ -230,9 +252,12 @@ export default function AnimeDetailScreen() {
               watchedEpisodes: arrayUnion(currentEpId),
               totalEpisodes: anime.totalEpisodes || episodes.length 
           }, { merge: true });
+
+          if (!isMountedRef.current) return; // ✅ FIX 2
           setWatchedEpisodeIds(prev => !prev.includes(currentEpId) ? [...prev, currentEpId] : prev);
           
           const progressSnap = await getDoc(progressRef);
+          if (!isMountedRef.current) return; // ✅ FIX 2
           if (progressSnap.exists()) {
               const data = progressSnap.data();
               if ((data.watchedEpisodes?.length || 0) >= (data.totalEpisodes || 0) && !data.isCompleted) {
@@ -272,7 +297,7 @@ export default function AnimeDetailScreen() {
       if (activeTab === 'Similar' && similarAnime.length === 0 && anime?.genres) {
         try {
           const similar = await getSimilarAnime(anime.genres, id as string);
-          setSimilarAnime(similar);
+          if (isMountedRef.current) setSimilarAnime(similar); // ✅ FIX 2
         } catch (error) {
           console.error("Error loading similar anime:", error);
         }
@@ -285,6 +310,7 @@ export default function AnimeDetailScreen() {
       const determineSource = async () => {
           if (!currentEpId) return;
           const localUri = await getLocalEpisodeUri(currentEpId);
+          if (!isMountedRef.current) return; // ✅ FIX 2
           if (localUri) setCurrentVideoSource(localUri);
           else {
               const activeEpisode = episodes.find(e => String(e.mal_id) === currentEpId);
@@ -301,7 +327,7 @@ export default function AnimeDetailScreen() {
       const localKey = `viewed_anime_${user.uid}_${id}`;
       try {
           const hasViewedLocally = await AsyncStorage.getItem(localKey);
-          
+          if (!isMountedRef.current) return; // ✅ FIX 2
           if (!hasViewedLocally) {
               await AsyncStorage.setItem(localKey, 'true');
               await incrementAnimeView(id as string);
@@ -318,6 +344,9 @@ export default function AnimeDetailScreen() {
         getAnimeDetails(id as string),
         getAnimeEpisodes(id as string)
       ]);
+
+      if (!isMountedRef.current) return; // ✅ FIX 2
+
       setAnime(detailsData);
 
       if (episodesData && Array.isArray(episodesData.episodes)) {
@@ -344,19 +373,19 @@ export default function AnimeDetailScreen() {
       
       const animeData = detailsData as any; 
       
-      if(animeData) {
+      if (animeData) {
           setLikesCount(animeData.likes || 0);
           setDislikesCount(animeData.dislikes || 0);
       }
 
-      if(user && id) {
+      if (user && id) {
           const reaction = await getUserReaction(id as string, user.uid);
-          setUserReaction(reaction);
+          if (isMountedRef.current) setUserReaction(reaction); // ✅ FIX 2
       }
 
       if (animeData?.views !== undefined) {
           const calculatedRank = await getAnimeRank(animeData.views);
-          setRank(calculatedRank);
+          if (isMountedRef.current) setRank(calculatedRank); // ✅ FIX 2
       }
 
       const resolvedEpisodes = Array.isArray(episodesData?.episodes) 
@@ -365,18 +394,23 @@ export default function AnimeDetailScreen() {
           ? episodesData 
           : [];
 
-      const ids: string[] = [];
-      for (const ep of resolvedEpisodes) {
-          const localUri = await getLocalEpisodeUri(ep.mal_id);
-          if (localUri) ids.push(String(ep.mal_id));
-      }
+      // ✅ FIX 1: Promise.all — all 50 AsyncStorage reads fire concurrently instead of sequentially
+      const localUriResults = await Promise.all(
+          resolvedEpisodes.map((ep: any) => getLocalEpisodeUri(ep.mal_id))
+      );
+      const ids: string[] = resolvedEpisodes
+          .filter((_: any, i: number) => !!localUriResults[i])
+          .map((ep: any) => String(ep.mal_id));
+
+      if (!isMountedRef.current) return; // ✅ FIX 2
       setDownloadedEpIds(ids);
 
-      resolvedEpisodes.forEach(ep => {
+      resolvedEpisodes.forEach((ep: any) => {
           const epIdStr = String(ep.mal_id);
           if (isDownloading(epIdStr)) {
               setDownloadProgress(prev => ({ ...prev, [epIdStr]: 0.01 }));
               registerDownloadListener(epIdStr, (p) => {
+                  if (!isMountedRef.current) return; // ✅ FIX 2
                   setDownloadProgress(prev => ({ ...prev, [epIdStr]: p }));
                   if (p >= 1) {
                       setDownloadedEpIds(prev => [...prev, epIdStr]);
@@ -388,7 +422,7 @@ export default function AnimeDetailScreen() {
       });
 
     } catch (error) { console.error(error); } 
-    finally { setLoading(false); }
+    finally { if (isMountedRef.current) setLoading(false); } // ✅ FIX 2
   };
 
   const loadMoreEpisodes = async () => {
@@ -396,6 +430,7 @@ export default function AnimeDetailScreen() {
       setLoadingMoreEps(true);
       try {
           const newEpsData = await getAnimeEpisodes(id as string, lastEpDoc);
+          if (!isMountedRef.current) return; // ✅ FIX 2
           if (newEpsData && Array.isArray(newEpsData.episodes)) {
               setEpisodes(prev => [...prev, ...newEpsData.episodes]);
               setLastEpDoc(newEpsData.lastDoc ?? null);
@@ -407,7 +442,7 @@ export default function AnimeDetailScreen() {
       } catch (error) {
           console.error(error);
       } finally {
-          setLoadingMoreEps(false);
+          if (isMountedRef.current) setLoadingMoreEps(false); // ✅ FIX 2
       }
   };
 
@@ -474,12 +509,14 @@ export default function AnimeDetailScreen() {
       try {
         setDownloadProgress(prev => ({ ...prev, [epId]: 0.01 }));
         registerDownloadListener(epId, (progress) => {
+             if (!isMountedRef.current) return; // ✅ FIX 2
              setDownloadProgress(prev => ({ ...prev, [epId]: progress }));
         });
 
         const localUri = await downloadEpisodeToFile(anime, ep);
 
         if (localUri) {
+            if (!isMountedRef.current) return; // ✅ FIX 2
             setDownloadedEpIds(prev => [...prev, epId]);
             setDownloadProgress(prev => {
                 const newState = { ...prev };
@@ -501,6 +538,7 @@ export default function AnimeDetailScreen() {
         }
     } catch (e) {
         Alert.alert("Error", "Download failed.");
+        if (!isMountedRef.current) return; // ✅ FIX 2
         setDownloadProgress(prev => { const n = { ...prev }; delete n[epId]; return n; });
         unregisterDownloadListener(epId);
     }
@@ -514,7 +552,8 @@ export default function AnimeDetailScreen() {
             { text: "Cancel", style: "cancel" },
             { text: "Delete", style: "destructive", onPress: async () => {
                 await removeDownload(epId);
-                setDownloadedEpIds(prev => prev.filter(id => id !== epId));
+                if (isMountedRef.current) // ✅ FIX 2
+                    setDownloadedEpIds(prev => prev.filter(id => id !== epId));
             }}
         ]);
         return;
@@ -564,6 +603,7 @@ export default function AnimeDetailScreen() {
           commentResult = await addAnimeComment(id as string, user.uid, user.displayName || 'User', commentText) as any;
       }
 
+      if (!isMountedRef.current) return; // ✅ FIX 2
       setSubmittingReview(false);
 
       if (!reviewResult.success || !commentResult.success) {
@@ -579,12 +619,13 @@ export default function AnimeDetailScreen() {
 
       try {
           const freshDetails = await getAnimeDetails(id as string);
+          if (!isMountedRef.current) return; // ✅ FIX 2
           if (freshDetails) {
               const fd = freshDetails as any;
               setAnime((prev: any) => ({ ...prev, score: fd.score }));
               if (fd.views !== undefined) {
                   const freshRank = await getAnimeRank(fd.views);
-                  setRank(freshRank);
+                  if (isMountedRef.current) setRank(freshRank); // ✅ FIX 2
               }
           }
       } catch (e) { console.log("Score refresh error", e); }
@@ -618,7 +659,8 @@ export default function AnimeDetailScreen() {
                 />
             ) : (
                 <View style={styles.posterContainer}>
-                    <Image source={{ uri: anime.images?.jpg?.image_url }} style={styles.heroPoster} resizeMode="cover" />
+                    {/* ✅ FIX 4: expo-image — better memory management & disk caching on low-end devices */}
+                    <Image source={{ uri: anime.images?.jpg?.image_url }} style={styles.heroPoster} contentFit="cover" />
                     <View style={styles.posterOverlay}>
                         <Ionicons name={anime.hasStreamingRights === false ? "eye-off-outline" : "play-circle-outline"} size={50} color="white" style={{opacity: 0.8}} />
                         <Text style={{color:'white', fontWeight:'bold', marginTop:5}}>
@@ -842,7 +884,8 @@ export default function AnimeDetailScreen() {
                                     style={[styles.similarCard, { backgroundColor: theme.card }]}
                                     onPress={() => router.push(`/anime/${item.mal_id}`)}
                                 >
-                                    <Image source={{ uri: item.images?.jpg?.image_url }} style={styles.similarPoster} />
+                                    {/* ✅ FIX 4: expo-image — disk caching prevents re-downloads on low-end devices */}
+                                    <Image source={{ uri: item.images?.jpg?.image_url }} style={styles.similarPoster} contentFit="cover" />
                                     <Text numberOfLines={2} style={[styles.similarTitle, { color: theme.text }]}>{item.title}</Text>
                                     <Text style={{ color: theme.subText, fontSize: 10 }}>{item.type} • {item.score ? Number(item.score).toFixed(1) : 'N/A'}</Text>
                                 </TouchableOpacity>

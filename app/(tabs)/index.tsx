@@ -3,24 +3,25 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import {
-    collection,
-    doc,
-    getDoc,
-    limit,
-    onSnapshot,
-    query,
-    where
+  collection,
+  doc,
+  getDoc,
+  limit,
+  onSnapshot,
+  query,
+  where
 } from 'firebase/firestore';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    FlatList,
-    Keyboard,
-    RefreshControl,
-    ScrollView, StatusBar, StyleSheet,
-    Text,
-    TextInput, TouchableOpacity,
-    View
+  ActivityIndicator,
+  Animated, // ✅ UI: Scroll-animated header
+  FlatList,
+  Keyboard,
+  RefreshControl,
+  StatusBar, StyleSheet,
+  Text,
+  TextInput, TouchableOpacity,
+  View
 } from 'react-native';
 // ✅ ADDED: useSafeAreaInsets to protect the floating header from the notch
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -46,10 +47,30 @@ const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 // 🔐 SECURITY: Max search length
 const MAX_SEARCH_CHARS = 15;
 
+// ✅ UI: Scroll threshold at which header finishes transitioning to glass
+const HEADER_SCROLL_THRESHOLD = 80;
+
 export default function HomeScreen() {
   const router = useRouter();
   const { theme, isDark } = useTheme();
   const insets = useSafeAreaInsets(); // ✅ ADDED: Get device notch heights
+
+  // ✅ UI: Tracks scroll position for the header animation
+  const scrollY = useRef(new Animated.Value(0)).current;
+
+  // ✅ UI: Header background — solid black at rest, transitions to glass on scroll
+  const headerBgColor = scrollY.interpolate({
+    inputRange: [0, HEADER_SCROLL_THRESHOLD],
+    outputRange: ['rgba(0,0,0,1)', 'rgba(0,0,0,0.42)'],
+    extrapolate: 'clamp',
+  });
+
+  // ✅ UI: Bottom border fades in as glass effect activates
+  const headerBorderOpacity = scrollY.interpolate({
+    inputRange: [0, HEADER_SCROLL_THRESHOLD],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
   
   // ✅ BUG 1 & 3 FIX: Use reactive state so the notification listener updates if auth changes
   const { user: currentUser } = useAuth();
@@ -310,7 +331,8 @@ export default function HomeScreen() {
     Keyboard.dismiss();
   };
 
-  const renderSearchItem = ({ item }: { item: any }) => (
+  // ✅ PERF: Memoized so it's not recreated on every render
+  const renderSearchItem = useCallback(({ item }: { item: any }) => (
     <TouchableOpacity 
       style={[styles.searchCard, { backgroundColor: theme.card }]}
       onPress={() => router.push(`/anime/${item.mal_id}`)}
@@ -323,7 +345,10 @@ export default function HomeScreen() {
         </Text>
       </View>
     </TouchableOpacity>
-  );
+  ), [theme, router]);
+
+  // ✅ UI: Header height — used to push content below the fixed header
+  const HEADER_HEIGHT = insets.top + 110;
 
   if (loading) {
     return (
@@ -339,8 +364,11 @@ export default function HomeScreen() {
       {/* Set status bar to light-content so it's visible over the anime images */}
       <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
-      {/* ✅ ADDED: Floating absolute header pinned to the top, pushed down by safe area insets */}
-      <View style={[styles.floatingHeader, { paddingTop: insets.top }]}>
+      {/* ✅ UI: Animated floating header — solid black at rest, glass on scroll */}
+      <Animated.View style={[styles.floatingHeader, { paddingTop: insets.top, backgroundColor: headerBgColor }]}>
+          {/* ✅ UI: Glass border fades in as the user scrolls */}
+          <Animated.View style={[styles.headerBorder, { opacity: headerBorderOpacity }]} />
+
           <View style={styles.topHeader}>
               <Text style={styles.brandTextShadow}>AniYu</Text>
               
@@ -354,7 +382,7 @@ export default function HomeScreen() {
           </View>
 
           <View style={styles.headerContainer}>
-            {/* Added a glassmorphism effect to the search bar so it's visible over images */}
+            {/* ✅ UI: Search bar becomes more glass-like when header is in glass mode */}
             <View style={styles.glassSearchBar}>
               <Ionicons name="search" size={20} color="rgba(255,255,255,0.8)" style={{ marginRight: 10 }} />
               <TextInput
@@ -374,11 +402,11 @@ export default function HomeScreen() {
               )}
             </View>
           </View>
-      </View>
+      </Animated.View>
 
       {isSearching ? (
-        // ✅ Added padding to push search results below the floating header
-        <View style={{ flex: 1, paddingTop: insets.top + 100 }}>
+        // ✅ Push search results below the fixed header
+        <View style={{ flex: 1, paddingTop: HEADER_HEIGHT }}>
             {searchLoading ? (
                 <View style={styles.center}>
                     <ActivityIndicator size="small" color={theme.tint} />
@@ -397,73 +425,83 @@ export default function HomeScreen() {
             )}
         </View>
       ) : (
-        <ScrollView 
+        // ✅ UI: Animated.ScrollView drives the header animation via scrollY
+        <Animated.ScrollView
           showsVerticalScrollIndicator={false}
+          scrollEventThrottle={16}
+          onScroll={Animated.event(
+            [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+            { useNativeDriver: false } // false required — animating backgroundColor
+          )}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.tint} />}
         >
-          {/* HeroCarousel is now at the very top of the screen */}
-          <HeroCarousel data={trending.slice(0, 5)} />
-          
-          {/* ✅ RAIL 1: CONTINUE WATCHING */}
-          {continueWatching.length > 0 && (
-              <TrendingRail 
-                  title="Continue Watching" 
-                  data={continueWatching} 
-                  onItemPress={handleContinueWatchingClick}
-              />
-          )}
-          {/* ✅ RAIL 2: RECENTLY VIEWED */}
-          {recentlyViewed.length > 0 && (
-              <TrendingRail 
-                  title="Recently Viewed" 
-                  data={recentlyViewed} 
-                  onItemPress={handleRecentlyViewedClick}
-              />
-          )}
+          {/* ✅ UI: Pushes all content below the fixed header — HeroCarousel is now visually UNDER the header area */}
+          <View style={{ paddingTop: HEADER_HEIGHT }}>
+
+            {/* HeroCarousel is the first thing below the header */}
+            <HeroCarousel data={trending.slice(0, 5)} />
             
-            <AdBanner />
+            {/* ✅ RAIL 1: CONTINUE WATCHING */}
+            {continueWatching.length > 0 && (
+                <TrendingRail 
+                    title="Continue Watching" 
+                    data={continueWatching} 
+                    onItemPress={handleContinueWatchingClick}
+                />
+            )}
+            {/* ✅ RAIL 2: RECENTLY VIEWED */}
+            {recentlyViewed.length > 0 && (
+                <TrendingRail 
+                    title="Recently Viewed" 
+                    data={recentlyViewed} 
+                    onItemPress={handleRecentlyViewedClick}
+                />
+            )}
+              
+              <AdBanner />
 
-          <TrendingRail 
-              title="🔥 Trending Now" 
-              data={trending.slice(0, 5)} 
-              favorites={favorites} 
-              onToggleFavorite={handleToggleFav}
-              onMore={() => router.push('/anime-list?type=trending')} 
-          />
+            <TrendingRail 
+                title="🔥 Trending Now" 
+                data={trending.slice(0, 5)} 
+                favorites={favorites} 
+                onToggleFavorite={handleToggleFav}
+                onMore={() => router.push('/anime-list?type=trending')} 
+            />
 
-          
-          <TrendingRail 
-              title="Upcoming Anime" 
-              data={upcoming.slice(0, 5)} 
-              favorites={favorites} 
-              onToggleFavorite={handleToggleFav}
-              onMore={() => router.push('/anime-list?type=upcoming')}
-              />
+            
+            <TrendingRail 
+                title="Upcoming Anime" 
+                data={upcoming.slice(0, 5)} 
+                favorites={favorites} 
+                onToggleFavorite={handleToggleFav}
+                onMore={() => router.push('/anime-list?type=upcoming')}
+                />
 
-            <AdBanner />
+              <AdBanner />
 
-          <TrendingRail 
-              title="Recommended for You" 
-              data={recommended.slice(0, 5)} 
-              favorites={favorites} 
-              onToggleFavorite={handleToggleFav}
-              onMore={() => router.push('/anime-list?type=recommended')} 
-          />
-          
-            <AdBanner />
+            <TrendingRail 
+                title="Recommended for You" 
+                data={recommended.slice(0, 5)} 
+                favorites={favorites} 
+                onToggleFavorite={handleToggleFav}
+                onMore={() => router.push('/anime-list?type=recommended')} 
+            />
+            
+              <AdBanner />
 
-          {favorites.length > 0 && (
-              <TrendingRail 
-                  title="My Favorites ❤️" 
-                  data={favorites.slice(0, 5)} 
-                  favorites={favorites} 
-                  onToggleFavorite={handleToggleFav} 
-                  onMore={() => router.push('/anime-list?type=favorites')}
-              />
-          )}
+            {favorites.length > 0 && (
+                <TrendingRail 
+                    title="My Favorites ❤️" 
+                    data={favorites.slice(0, 5)} 
+                    favorites={favorites} 
+                    onToggleFavorite={handleToggleFav} 
+                    onMore={() => router.push('/anime-list?type=favorites')}
+                />
+            )}
 
-          <View style={{ height: 100 }} />
-        </ScrollView>
+            <View style={{ height: 100 }} />
+          </View>
+        </Animated.ScrollView>
       )}
     </View>
   );
@@ -473,13 +511,22 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   
-  // ✅ ADDED: Styles for the new floating transparent header
+  // ✅ UI: Animated header — backgroundColor driven by scrollY
   floatingHeader: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
     zIndex: 100,
+  },
+  // ✅ UI: Thin glass border that appears as user scrolls
+  headerBorder: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.15)',
   },
   brandTextShadow: { 
     fontSize: 24, 

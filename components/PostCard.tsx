@@ -20,7 +20,7 @@ import {
     where,
     writeBatch
 } from 'firebase/firestore';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     Alert,
     Dimensions,
@@ -69,7 +69,7 @@ const formatCount = (count: number): string => {
     return (count / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
 };
 
-export default function PostCard({ post, isVisible = true, isProfilePinnedView = false, onDelete, onBlock }: PostCardProps) {
+function PostCard({ post, isVisible = true, isProfilePinnedView = false, onDelete, onBlock }: PostCardProps) {
   const router = useRouter();
   const { theme } = useTheme();
   const currentUser = auth.currentUser;
@@ -108,7 +108,12 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
       setLocalViewCount(post.views || 0);
   }, [post.id, currentUser?.uid, post.views, post.likeCount, post.repostCount, post.likes, post.reposts]);
 
-  const videoSource = post.mediaType === 'video' && post.mediaUrl ? post.mediaUrl : null;
+  // ✅ FIX 4: useMemo — videoSource not recalculated on every render
+  const videoSource = useMemo(
+      () => post.mediaType === 'video' && post.mediaUrl ? post.mediaUrl : null,
+      [post.mediaType, post.mediaUrl]
+  );
+
   const player = useVideoPlayer(videoSource, player => { 
       if (videoSource) player.loop = true;
   });
@@ -122,16 +127,18 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
       }
   }, [isFocused, isVisible, player, videoSource]);
 
-  let timeAgo = "now";
-  if (post.createdAt?.seconds) {
+  // ✅ FIX 3: useMemo — timeAgo not recalculated on every render
+  const timeAgo = useMemo(() => {
+    if (!post.createdAt?.seconds) return "now";
     const seconds = Math.floor((new Date().getTime() / 1000) - post.createdAt.seconds);
-    if (seconds < 60) timeAgo = `${seconds}s`;
-    else if (seconds < 3600) timeAgo = `${Math.floor(seconds / 60)}m`;
-    else if (seconds < 86400) timeAgo = `${Math.floor(seconds / 3600)}h`;
-    else timeAgo = new Date(post.createdAt.seconds * 1000).toLocaleDateString();
-  }
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+    return new Date(post.createdAt.seconds * 1000).toLocaleDateString();
+  }, [post.createdAt?.seconds]);
 
-  const handleGoToDetails = () => {
+  // ✅ FIX 2: useCallback on all handlers — not recreated on every render
+  const handleGoToDetails = useCallback(() => {
     try { if (player && videoSource) player.pause(); } catch(e){}
     const targetPostId = post.isRepost ? post.originalPostId : post.id;
     
@@ -147,9 +154,10 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
         setLocalViewCount((prev: number) => prev + 1);
     }
     router.push({ pathname: '/post-details', params: { postId: targetPostId } });
-  };
+  }, [player, videoSource, post.isRepost, post.originalPostId, post.id, currentUser?.uid, router]);
 
-  const handleLike = async () => {
+  // ✅ FIX 2: useCallback
+  const handleLike = useCallback(async () => {
     if (!currentUser || isProcessingAction) return;
     setIsProcessingAction(true); // Lock the UI
 
@@ -176,9 +184,10 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
         // Enforce a strict cooldown before unlocking
         setTimeout(() => setIsProcessingAction(false), 1000);
     }
-  };
+  }, [currentUser, isProcessingAction, localIsLiked, post, authorId]);
 
-  const handleRepost = async () => {
+  // ✅ FIX 2: useCallback
+  const handleRepost = useCallback(async () => {
     if (!currentUser || isProcessingAction) return;
     setIsProcessingAction(true); // Lock the UI
 
@@ -248,9 +257,10 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
         // Enforce a strict cooldown before unlocking
         setTimeout(() => setIsProcessingAction(false), 1000);
     }
-  };
+  }, [currentUser, isProcessingAction, localIsReposted, post, authorId]);
 
-  const handleShare = async () => {
+  // ✅ FIX 2: useCallback
+  const handleShare = useCallback(async () => {
       try {
           const targetPostId = post.isRepost ? post.originalPostId : post.id;
           const postUrl = Linking.createURL('post-details', { queryParams: { postId: targetPostId } });
@@ -260,9 +270,10 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
               url: postUrl 
           });
       } catch (error) { console.log("Share error", error); }
-  };
+  }, [post.isRepost, post.originalPostId, post.id, post.displayName, post.text]);
 
-  const handlePin = async () => {
+  // ✅ FIX 2: useCallback
+  const handlePin = useCallback(async () => {
       if (!currentUser) return;
       setMenuVisible(false);
       try {
@@ -294,9 +305,10 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
           console.error("Pin Error:", e);
           Alert.alert("Error", e.message || "Could not pin post.");
       }
-  };
+  }, [currentUser, isPinned, post.id]);
 
-  const handleDelete = async () => {
+  // ✅ FIX 2: useCallback
+  const handleDelete = useCallback(async () => {
     setMenuVisible(false);
     Alert.alert("Delete Post", "Are you sure you want to permanently delete this?", [
         { text: "Cancel", style: "cancel" },
@@ -355,9 +367,10 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
             } 
         } }
     ]);
-  };
+  }, [post, currentUser, onDelete]);
 
-  const handleBlockUser = async () => {
+  // ✅ FIX 2: useCallback
+  const handleBlockUser = useCallback(async () => {
       if (!currentUser || isOwner || isOriginalAuthor) return;
       setMenuVisible(false);
       Alert.alert("Block User", `Are you sure you want to block @${post.username}?`, [
@@ -383,9 +396,10 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
               }
           }
       ]);
-  };
+  }, [currentUser, isOwner, isOriginalAuthor, post.username, authorId, onBlock]);
 
-  const submitReport = async (reason: string) => {
+  // ✅ FIX 2: useCallback
+  const submitReport = useCallback(async (reason: string) => {
     if (!currentUser) return;
     try {
       const idToken = await currentUser.getIdToken();
@@ -407,7 +421,7 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
       Alert.alert("Report Submitted", "Thank you.");
       setReportModalVisible(false);
     } catch (error) { Alert.alert("Error", "Could not submit."); }
-  };
+  }, [currentUser, post.id, post.text, authorId]);
 
   return (
     <Pressable onPress={handleGoToDetails} style={[styles.container, { borderBottomColor: theme.border }]}>
@@ -603,6 +617,22 @@ export default function PostCard({ post, isVisible = true, isProfilePinnedView =
     </Pressable>
   );
 }
+
+// ✅ FIX 1: React.memo with custom comparison — PostCard only re-renders when its own
+// data actually changes, not when parent FlatList state changes (loadingMore, refreshing etc).
+// Compares the fields that actually affect what's rendered.
+export default React.memo(PostCard, (prevProps, nextProps) => {
+    return (
+        prevProps.post.id === nextProps.post.id &&
+        prevProps.post.likeCount === nextProps.post.likeCount &&
+        prevProps.post.repostCount === nextProps.post.repostCount &&
+        prevProps.post.commentCount === nextProps.post.commentCount &&
+        prevProps.post.views === nextProps.post.views &&
+        prevProps.post.pinned === nextProps.post.pinned &&
+        prevProps.isVisible === nextProps.isVisible &&
+        prevProps.isProfilePinnedView === nextProps.isProfilePinnedView
+    );
+});
 
 const styles = StyleSheet.create({
   container: { padding: 15, borderBottomWidth: 0.5 },

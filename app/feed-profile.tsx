@@ -18,13 +18,16 @@ import {
     updateDoc,
     where
 } from 'firebase/firestore';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    AppState, // ✅ FIX 1: Battery — pause video when app backgrounds
+    AppStateStatus,
     Dimensions,
     FlatList,
     Modal,
+    Platform, // ✅ FIX 3: Needed for removeClippedSubviews Android guard
     StyleSheet,
     Text,
     TouchableOpacity,
@@ -105,12 +108,29 @@ export default function FeedProfileScreen() {
       }
   }).current;
 
+  // ✅ FIX 2: isMountedRef — prevents setState on unmounted component (memory leak)
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    return () => { isMountedRef.current = false; };
+  }, []);
+
+  // ✅ FIX 1: Battery — stop video playback when app goes to background
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (nextState === 'background' || nextState === 'inactive') {
+        setPlayingPostId(null);
+      }
+    });
+    return () => subscription.remove();
+  }, []);
+
   // Main User Data Fetcher
   useEffect(() => {
     if (!targetUserId) return;
 
     const userRef = doc(db, "users", targetUserId);
     const unsubUser = onSnapshot(userRef, async (docSnap) => {
+        if (!isMountedRef.current) return; // ✅ FIX 2: Guard setState after unmount
         if (docSnap.exists()) {
             const data = docSnap.data();
             setUserData(data);
@@ -131,7 +151,7 @@ export default function FeedProfileScreen() {
                 rank: "GENIN" 
             };
             await setDoc(userRef, newProfile);
-            setLoading(false);
+            if (isMountedRef.current) setLoading(false); // ✅ FIX 2
         }
     });
 
@@ -170,6 +190,7 @@ export default function FeedProfileScreen() {
           }
 
           const snapshot = await getDocs(q);
+          if (!isMountedRef.current) return; // ✅ FIX 2
 
           const newPosts = snapshot.docs
               .map(doc => ({ id: doc.id, ...doc.data() }))
@@ -192,10 +213,10 @@ export default function FeedProfileScreen() {
 
       } catch (e) { 
           console.error("Error loading posts", e); 
-          setHasMorePosts(false);
+          if (isMountedRef.current) setHasMorePosts(false); // ✅ FIX 2
       } finally { 
           loadingPostsRef.current = false;
-          setLoadingMorePosts(false); 
+          if (isMountedRef.current) setLoadingMorePosts(false); // ✅ FIX 2
       }
   };
 
@@ -218,6 +239,7 @@ export default function FeedProfileScreen() {
           }
 
           const snapshot = await getDocs(q);
+          if (!isMountedRef.current) return; // ✅ FIX 2
           
           let newPosts: any[] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
@@ -263,6 +285,8 @@ export default function FeedProfileScreen() {
               } catch (syncErr) { console.log("Failed to sync profile master posts", syncErr); }
           }
 
+          if (!isMountedRef.current) return; // ✅ FIX 2
+
           if (initial) {
               setRepostedPosts(newPosts);
           } else {
@@ -280,10 +304,10 @@ export default function FeedProfileScreen() {
 
       } catch (e) { 
           console.error("Error loading reposts", e); 
-          setHasMoreReposts(false);
+          if (isMountedRef.current) setHasMoreReposts(false); // ✅ FIX 2
       } finally { 
           loadingRepostsRef.current = false;
-          setLoadingMoreReposts(false); 
+          if (isMountedRef.current) setLoadingMoreReposts(false); // ✅ FIX 2
       }
   };
 
@@ -305,6 +329,8 @@ export default function FeedProfileScreen() {
           }
 
           const snapshot = await getDocs(q);
+          if (!isMountedRef.current) return; // ✅ FIX 2
+
           const newPosts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
           if (initial) {
@@ -324,10 +350,10 @@ export default function FeedProfileScreen() {
 
       } catch (e) { 
           console.error("Error loading likes", e); 
-          setHasMoreLikes(false);
+          if (isMountedRef.current) setHasMoreLikes(false); // ✅ FIX 2
       } finally { 
           loadingLikesRef.current = false;
-          setLoadingMoreLikes(false); 
+          if (isMountedRef.current) setLoadingMoreLikes(false); // ✅ FIX 2
       }
   };
 
@@ -336,6 +362,31 @@ export default function FeedProfileScreen() {
           return (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
       });
   }, [myPosts]);
+
+  // ✅ FIX 4: Stable useCallback handlers per tab — PostCard won't re-render from new prop refs
+  const handleDeleteFromPosts = useCallback((id: string) => {
+      setMyPosts(prev => prev.filter(p => p.id !== id));
+  }, []);
+
+  const handleDeleteFromReposts = useCallback((id: string) => {
+      setRepostedPosts(prev => prev.filter(p => p.id !== id));
+  }, []);
+
+  const handleDeleteFromLikes = useCallback((id: string) => {
+      setLikedPosts(prev => prev.filter(p => p.id !== id));
+  }, []);
+
+  const handleBlockFromPosts = useCallback((id: string) => {
+      setMyPosts(prev => prev.filter(p => p.userId !== id && p.originalUserId !== id));
+  }, []);
+
+  const handleBlockFromReposts = useCallback((id: string) => {
+      setRepostedPosts(prev => prev.filter(p => p.userId !== id && p.originalUserId !== id));
+  }, []);
+
+  const handleBlockFromLikes = useCallback((id: string) => {
+      setLikedPosts(prev => prev.filter(p => p.userId !== id && p.originalUserId !== id));
+  }, []);
 
   const handleFollow = async () => {
       if (!currentUser || isOwnProfile || !targetUserId) return;
@@ -420,16 +471,31 @@ export default function FeedProfileScreen() {
       console.error(error);
       Alert.alert("Error", "Could not connect to the server.");
     } finally {
-      setReportLoading(false);
+      if (isMountedRef.current) setReportLoading(false); // ✅ FIX 2
     }
   };
 
-  const renderList = (data: any[], emptyMsg: string, loadMoreFunc: () => void, tabName: string) => (
+  // ✅ FIX 3 & 4: FlatList perf props added + stable callbacks passed in per tab
+  const renderList = (
+      data: any[],
+      emptyMsg: string,
+      loadMoreFunc: () => void,
+      tabName: string,
+      onDeleteCb: (id: string) => void,
+      onBlockCb: (id: string) => void
+  ) => (
       <FlatList
           data={data}
           keyExtractor={(item, index) => item.id ? `${item.id}-${index}` : String(index)}
           contentContainerStyle={{ paddingBottom: 50, width: SCREEN_WIDTH }}
           showsVerticalScrollIndicator={false}
+
+          // ✅ FIX 3: Low-end device performance props
+          removeClippedSubviews={Platform.OS === 'android'}
+          maxToRenderPerBatch={5}
+          windowSize={8}
+          initialNumToRender={5}
+          scrollEventThrottle={16}
           
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={viewabilityConfig}
@@ -439,16 +505,8 @@ export default function FeedProfileScreen() {
                   post={item as any} 
                   isVisible={playingPostId === item.id && activeTab === tabName} 
                   isProfilePinnedView={tabName === 'Posts'}
-                  onDelete={(deletedId) => {
-                      if (tabName === 'Posts') setMyPosts(prev => prev.filter(p => p.id !== deletedId));
-                      if (tabName === 'Reposts') setRepostedPosts(prev => prev.filter(p => p.id !== deletedId));
-                      if (tabName === 'Likes') setLikedPosts(prev => prev.filter(p => p.id !== deletedId));
-                  }}
-                  onBlock={(blockedId) => {
-                      if (tabName === 'Posts') setMyPosts(prev => prev.filter(p => p.userId !== blockedId && p.originalUserId !== blockedId));
-                      if (tabName === 'Reposts') setRepostedPosts(prev => prev.filter(p => p.userId !== blockedId && p.originalUserId !== blockedId));
-                      if (tabName === 'Likes') setLikedPosts(prev => prev.filter(p => p.userId !== blockedId && p.originalUserId !== blockedId));
-                  }}
+                  onDelete={onDeleteCb}
+                  onBlock={onBlockCb}
               />
           )}
           
@@ -566,9 +624,10 @@ export default function FeedProfileScreen() {
       </View>
 
       <View style={{ flex: 1 }}>
-          {activeTab === 'Posts' && renderList(sortedMyPosts, "No posts yet.", () => loadPosts(false), 'Posts')}
-          {activeTab === 'Reposts' && renderList(repostedPosts, "No reposts yet.", () => loadReposts(false), 'Reposts')}
-          {activeTab === 'Likes' && renderList(likedPosts, "No liked posts yet.", () => loadLikes(false), 'Likes')}
+          {/* ✅ FIX 4: Stable callbacks passed per tab — no inline closures */}
+          {activeTab === 'Posts' && renderList(sortedMyPosts, "No posts yet.", () => loadPosts(false), 'Posts', handleDeleteFromPosts, handleBlockFromPosts)}
+          {activeTab === 'Reposts' && renderList(repostedPosts, "No reposts yet.", () => loadReposts(false), 'Reposts', handleDeleteFromReposts, handleBlockFromReposts)}
+          {activeTab === 'Likes' && renderList(likedPosts, "No liked posts yet.", () => loadLikes(false), 'Likes', handleDeleteFromLikes, handleBlockFromLikes)}
       </View>
 
        <Modal visible={menuVisible} transparent animationType="fade">

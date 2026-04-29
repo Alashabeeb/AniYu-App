@@ -3,16 +3,16 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router'; // ✅ Removed useFocusEffect
 import { doc, getDoc } from 'firebase/firestore';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    Animated, // ✅ UI: Scroll-animated header
     FlatList,
     Keyboard,
     LayoutAnimation,
     Platform,
     RefreshControl,
-    ScrollView,
     StyleSheet,
     Text,
     TextInput,
@@ -20,7 +20,7 @@ import {
     UIManager,
     View
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import MangaGrid from '../../components/MangaGrid';
 import TrendingRail from '../../components/TrendingRail';
@@ -45,6 +45,9 @@ const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 // 🔐 SECURITY: Max search length
 const MAX_SEARCH_CHARS = 15;
 
+// ✅ UI: Scroll threshold at which header finishes transitioning to glass
+const HEADER_SCROLL_THRESHOLD = 60;
+
 interface GroupedManga {
   mal_id: string | number;
   title: string;
@@ -54,8 +57,30 @@ interface GroupedManga {
 
 export default function ComicScreen() {
   const router = useRouter();
-  const { theme } = useTheme();
-  
+  const { theme, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
+
+  // ✅ UI: Tracks scroll position for the header animation
+  const scrollY = useRef(new Animated.Value(0)).current;
+
+  // ✅ UI: Header background — solid at rest, transitions to glass on scroll
+  // Uses isDark so animation works correctly in both dark and light themes
+  const headerBgColor = scrollY.interpolate({
+    inputRange: [0, HEADER_SCROLL_THRESHOLD],
+    outputRange: [
+      isDark ? 'rgba(13,17,23,1)' : 'rgba(255,255,255,1)',
+      isDark ? 'rgba(13,17,23,0.82)' : 'rgba(255,255,255,0.82)',
+    ],
+    extrapolate: 'clamp',
+  });
+
+  // ✅ UI: Bottom border fades in as glass effect activates
+  const headerBorderOpacity = scrollY.interpolate({
+    inputRange: [0, HEADER_SCROLL_THRESHOLD],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
+
   const isMountedRef = useRef(true);
 
   const [activeTab, setActiveTab] = useState('Discover'); 
@@ -77,6 +102,9 @@ export default function ComicScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  // ✅ UI: Header height — used to push content below the fixed header
+  const HEADER_HEIGHT = insets.top + 120;
+
   useEffect(() => {
       isMountedRef.current = true;
       
@@ -92,6 +120,12 @@ export default function ComicScreen() {
       
       return () => { isMountedRef.current = false; };
   }, []);
+
+  // ✅ UI: Reset scroll position when switching tabs
+  const handleTabSwitch = useCallback((tab: string) => {
+      setActiveTab(tab);
+      scrollY.setValue(0);
+  }, [scrollY]);
 
   // ✅ BUG 20 FIX: Implemented Time-To-Live validation to prevent tab-switch reads
   const loadFromCache = async (): Promise<boolean> => {
@@ -277,7 +311,8 @@ export default function ComicScreen() {
 
   const isFavorite = (id: any) => library.some((fav: any) => String(fav.mal_id) === String(id));
 
-  const renderGridItem = ({ item }: { item: any }) => {
+  // ✅ FIX 1: useCallback — renderGridItem no longer recreated on every render
+  const renderGridItem = useCallback(({ item }: { item: any }) => {
       const isFav = isFavorite(item.mal_id);
       return (
         <TouchableOpacity 
@@ -307,11 +342,12 @@ export default function ComicScreen() {
             </Text>
         </TouchableOpacity>
       );
-  };
+  }, [library, theme, router]);
 
+  // ✅ FIX 2 & UI: Downloads FlatList with perf props + drives header animation
   const renderLibrary = () => (
       <View style={{ flex: 1 }}>
-          <View style={{ flexDirection: 'row', margin: 15, marginBottom: 5 }}>
+          <View style={{ flexDirection: 'row', margin: 15, marginBottom: 5, marginTop: HEADER_HEIGHT + 5 }}>
               <TouchableOpacity onPress={() => setLibraryType('Favorites')} style={{ marginRight: 20 }}>
                   <Text style={{ 
                       color: libraryType === 'Favorites' ? theme.tint : theme.subText, 
@@ -337,9 +373,19 @@ export default function ComicScreen() {
                 emptyMsg="No favorites yet."
              />
           ) : (
-             <FlatList
+             // ✅ FIX 2: Downloads FlatList — perf props added + drives header animation
+             <Animated.FlatList
                 data={groupedDownloads}
                 keyExtractor={(item, index) => `${item.mal_id}-${index}`}
+                removeClippedSubviews={Platform.OS === 'android'}
+                maxToRenderPerBatch={5}
+                windowSize={8}
+                initialNumToRender={5}
+                scrollEventThrottle={16}
+                onScroll={Animated.event(
+                    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                    { useNativeDriver: false }
+                )}
                 renderItem={({ item }) => {
                     const isExpanded = expandedId === item.mal_id;
                     return (
@@ -405,10 +451,16 @@ export default function ComicScreen() {
       </View>
   );
 
+  // ✅ UI: Discover uses Animated.ScrollView to drive header animation
   const renderDiscover = () => (
-      <ScrollView 
+      <Animated.ScrollView 
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.tint} />}
-        contentContainerStyle={{ paddingBottom: 100 }}
+        contentContainerStyle={{ paddingBottom: 100, paddingTop: HEADER_HEIGHT }}
+        scrollEventThrottle={16}
+        onScroll={Animated.event(
+            [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+            { useNativeDriver: false }
+        )}
       >
           <View style={[styles.searchBar, { backgroundColor: theme.card }]}>
               <Ionicons name="search" size={20} color={theme.subText} style={{ marginRight: 10 }} />
@@ -434,12 +486,18 @@ export default function ComicScreen() {
                   {searchLoading ? (
                       <View style={styles.center}><ActivityIndicator size="small" color={theme.tint} /></View>
                   ) : (
+                      // ✅ FIX 3: Search results FlatList — perf props added
                       <FlatList
                           data={searchResults}
                           keyExtractor={(item, index) => `${item.mal_id}-${index}`}
                           numColumns={3}
                           renderItem={renderGridItem}
                           contentContainerStyle={{ padding: 10 }}
+                          removeClippedSubviews={Platform.OS === 'android'}
+                          maxToRenderPerBatch={6}
+                          windowSize={8}
+                          initialNumToRender={9}
+                          scrollEventThrottle={16}
                           ListEmptyComponent={<Text style={{ color: theme.subText, textAlign: 'center', marginTop: 50 }}>No results found.</Text>}
                       />
                   )}
@@ -486,7 +544,7 @@ export default function ComicScreen() {
                   </View>
               </>
           )}
-      </ScrollView>
+      </Animated.ScrollView>
   );
 
   if (loading && topManga.length === 0) {
@@ -499,24 +557,34 @@ export default function ComicScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top']}>
-      <View style={styles.header}>
-        <Text style={[styles.headerTitle, { color: theme.text }]}>Manga</Text>
-        <View style={[styles.switchContainer, { backgroundColor: theme.border }]}>
-          <TouchableOpacity 
-            style={[styles.switchBtn, activeTab === 'Discover' && { backgroundColor: theme.card }]}
-            onPress={() => setActiveTab('Discover')}
-          >
-            <Text style={[styles.switchText, { color: activeTab === 'Discover' ? theme.text : theme.subText }]}>Discover</Text>
-          </TouchableOpacity>
 
-          <TouchableOpacity 
-            style={[styles.switchBtn, activeTab === 'Library' && { backgroundColor: theme.card }]}
-            onPress={() => setActiveTab('Library')}
-          >
-            <Text style={[styles.switchText, { color: activeTab === 'Library' ? theme.text : theme.subText }]}>Library</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+      {/* ✅ UI: Animated floating header — solid at rest, glass on scroll */}
+      <Animated.View style={[
+          styles.floatingHeader,
+          { paddingTop: insets.top, backgroundColor: headerBgColor }
+      ]}>
+          {/* ✅ UI: Glass border fades in as user scrolls */}
+          <Animated.View style={[styles.headerBorder, { opacity: headerBorderOpacity, backgroundColor: theme.border }]} />
+
+          <View style={styles.headerInner}>
+              <Text style={[styles.headerTitle, { color: theme.text }]}>Manga</Text>
+              <View style={[styles.switchContainer, { backgroundColor: theme.border }]}>
+                <TouchableOpacity 
+                  style={[styles.switchBtn, activeTab === 'Discover' && { backgroundColor: theme.card }]}
+                  onPress={() => handleTabSwitch('Discover')}
+                >
+                  <Text style={[styles.switchText, { color: activeTab === 'Discover' ? theme.text : theme.subText }]}>Discover</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={[styles.switchBtn, activeTab === 'Library' && { backgroundColor: theme.card }]}
+                  onPress={() => handleTabSwitch('Library')}
+                >
+                  <Text style={[styles.switchText, { color: activeTab === 'Library' ? theme.text : theme.subText }]}>Library</Text>
+                </TouchableOpacity>
+              </View>
+          </View>
+      </Animated.View>
 
       <View style={styles.content}>
         {activeTab === 'Discover' ? renderDiscover() : renderLibrary()}
@@ -528,16 +596,37 @@ export default function ComicScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  header: { padding: 20, paddingBottom: 10 },
+
+  // ✅ UI: Animated header styles
+  floatingHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+  },
+  headerBorder: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 1,
+    opacity: 0.4,
+  },
+  headerInner: {
+    padding: 20,
+    paddingBottom: 12,
+  },
+
   headerTitle: { fontSize: 28, fontWeight: 'bold', marginBottom: 15 },
   switchContainer: { flexDirection: 'row', borderRadius: 10, padding: 4 },
   switchBtn: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
   switchText: { fontWeight: '600' },
-  content: { flex: 1, marginTop: 10 },
+  content: { flex: 1 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   sectionTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 15, marginLeft: 20 },
   headerContainer: { paddingHorizontal: 15, paddingBottom: 10 },
-  searchBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 15, height: 45, borderRadius: 12, marginBottom: 10 },
+  searchBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 15, height: 45, borderRadius: 12, marginBottom: 10, marginHorizontal: 15 },
   input: { flex: 1, marginLeft: 10, fontSize: 16 },
   sectionContainer: { marginBottom: 20 },
   gridContainer: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 10 },

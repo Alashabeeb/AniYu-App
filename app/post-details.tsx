@@ -13,10 +13,12 @@ import {
     query, serverTimestamp, updateDoc,
     where, writeBatch
 } from 'firebase/firestore';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    AppState, // ✅ FIX 4: Battery — pause video when app backgrounds
+    AppStateStatus,
     Dimensions,
     FlatList, KeyboardAvoidingView, Modal, Platform, Pressable,
     RefreshControl,
@@ -68,6 +70,15 @@ const formatCount = (count: number): string => {
     return (count / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
 };
 
+const formatTimeAgo = (timestamp: any) => {
+    if (!timestamp?.seconds) return "now";
+    const seconds = Math.floor((new Date().getTime() / 1000) - timestamp.seconds);
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds/60)}m`;
+    if (seconds < 86400) return `${Math.floor(seconds/3600)}h`;
+    return new Date(timestamp.seconds * 1000).toLocaleDateString();
+};
+
 export default function PostDetailsScreen() {
   const router = useRouter();
   const { theme } = useTheme();
@@ -102,11 +113,16 @@ export default function PostDetailsScreen() {
 
   const isMountedRef = useRef(true);
 
-  const showAlert = (type: 'success' | 'error' | 'warning' | 'info', title: string, message: string) => {
+  const showAlert = useCallback((type: 'success' | 'error' | 'warning' | 'info', title: string, message: string) => {
     setAlertConfig({ visible: true, type, title, message });
-  };
+  }, []);
 
-  const videoSource = post?.mediaType === 'video' && post?.mediaUrl ? post.mediaUrl : null;
+  // ✅ FIX 3: useMemo — videoSource not recalculated on every render
+  const videoSource = useMemo(
+      () => post?.mediaType === 'video' && post?.mediaUrl ? post.mediaUrl : null,
+      [post?.mediaType, post?.mediaUrl]
+  );
+
   const player = useVideoPlayer(videoSource, player => {
       if (videoSource) {
           player.loop = true;
@@ -123,6 +139,16 @@ export default function PostDetailsScreen() {
       };
     }, [player, videoSource])
   );
+
+  // ✅ FIX 4: Battery — save progress and pause player when app goes to background
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (nextState === 'background' || nextState === 'inactive') {
+        try { if (player) player.pause(); } catch (e) {}
+      }
+    });
+    return () => subscription.remove();
+  }, [player]);
 
   const isOwner = post?.userId === user?.uid;
   const authorId = post?.isRepost && post?.originalUserId ? post.originalUserId : post?.userId;
@@ -141,7 +167,7 @@ export default function PostDetailsScreen() {
   }, [user]);
 
   // ✅ BUG 1 FIX: Separate function to fetch comments without live listener
-  const fetchComments = async () => {
+  const fetchComments = useCallback(async () => {
       if (!postId) return;
       try {
           const q = query(
@@ -157,14 +183,14 @@ export default function PostDetailsScreen() {
       } catch (error) {
           console.error("Error fetching comments:", error);
       }
-  };
+  }, [postId]);
 
   const onRefresh = useCallback(async () => {
       if (!isMountedRef.current) return;
       setRefreshing(true);
       await fetchComments();
       if (isMountedRef.current) setRefreshing(false);
-  }, [postId]);
+  }, [fetchComments]);
 
   useEffect(() => {
     if (!postId) {
@@ -204,7 +230,7 @@ export default function PostDetailsScreen() {
     fetchComments();
 
     return () => { postUnsub(); };
-  }, [postId]);
+  }, [postId, fetchComments]);
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
@@ -218,7 +244,8 @@ export default function PostDetailsScreen() {
       });
   }).current;
 
-  const toggleAction = async (id: string, field: 'likes' | 'reposts', currentArray: string[]) => {
+  // ✅ FIX 5: useCallback — not recreated on every render
+  const toggleAction = useCallback(async (id: string, field: 'likes' | 'reposts', currentArray: string[]) => {
       if (!user) return;
       const ref = doc(db, 'posts', id);
       const isActive = currentArray?.includes(user.uid);
@@ -286,9 +313,10 @@ export default function PostDetailsScreen() {
               : 'Network error. Try again.';
           showAlert('error', 'Action Failed', errorMessage);
       }
-  };
+  }, [user, post, comments, showAlert]);
 
-  const handleShare = async (item: any) => {
+  // ✅ FIX 5: useCallback
+  const handleShare = useCallback(async (item: any) => {
       try {
           const itemUrl = Linking.createURL('post-details', { queryParams: { postId: item.id } });
           await Share.share({
@@ -296,14 +324,16 @@ export default function PostDetailsScreen() {
               url: itemUrl 
           });
       } catch (error) { console.log("Share error", error); }
-  };
+  }, []);
 
-  const goToDetails = (id: string) => {
+  // ✅ FIX 5: useCallback
+  const goToDetails = useCallback((id: string) => {
       try { if (player && videoSource) player.pause(); } catch(e){}
       router.push({ pathname: '/post-details', params: { postId: id } });
-  };
+  }, [player, videoSource, router]);
 
-  const handleDelete = () => {
+  // ✅ FIX 5: useCallback
+  const handleDelete = useCallback(() => {
       setMenuVisible(false);
       Alert.alert("Delete Post", "Are you sure you want to delete this post permanently?", [
           { text: "Cancel", style: "cancel" },
@@ -333,9 +363,10 @@ export default function PostDetailsScreen() {
               }
           }}
       ]);
-  };
+  }, [post, user, postId, router, showAlert]);
 
-  const handleBlockUser = async () => {
+  // ✅ FIX 5: useCallback
+  const handleBlockUser = useCallback(async () => {
       if (!user || !post || isOwner || isOriginalAuthor) return;
       setMenuVisible(false);
       Alert.alert("Block User", `Are you sure you want to block @${post.username}?`, [
@@ -356,9 +387,10 @@ export default function PostDetailsScreen() {
               }
           }
       ]);
-  };
+  }, [user, post, isOwner, isOriginalAuthor, authorId, router, showAlert]);
 
-  const submitReport = async (reason: string) => {
+  // ✅ FIX 5: useCallback
+  const submitReport = useCallback(async (reason: string) => {
       if (!user) return;
       setReportLoading(true);
       try {
@@ -383,11 +415,12 @@ export default function PostDetailsScreen() {
       } catch (error) {
         showAlert('error', 'Submission Failed', getFriendlyErrorMessage(error));
       } finally {
-        setReportLoading(false);
+        if (isMountedRef.current) setReportLoading(false);
       }
-  };
+  }, [user, postId, post?.text, authorId, showAlert]);
 
-  const handleSendComment = async () => {
+  // ✅ FIX 5: useCallback
+  const handleSendComment = useCallback(async () => {
     if (!newComment.trim() || !user) return;
 
     if (newComment.length > MAX_COMMENT_CHARS) {
@@ -444,7 +477,6 @@ export default function PostDetailsScreen() {
       }
 
       setNewComment('');
-      
       fetchComments();
 
     } catch (e: any) { 
@@ -455,46 +487,11 @@ export default function PostDetailsScreen() {
             showAlert('error', 'Comment Failed', getFriendlyErrorMessage(e));
         }
     } 
-    finally { setSending(false); }
-  };
+    finally { if (isMountedRef.current) setSending(false); }
+  }, [newComment, user, currentUserData, postId, post, fetchComments, showAlert]);
 
-  if (loading) {
-      return (
-          <SafeAreaView style={[styles.container, { backgroundColor: theme.background, justifyContent: 'center', alignItems: 'center' }]}>
-              <ActivityIndicator size="large" color={theme.tint} />
-          </SafeAreaView>
-      );
-  }
-
-  if (!postFound || !post) {
-      return (
-          <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
-              <Stack.Screen options={{ headerShown: false }} />
-              <View style={[styles.header, { borderBottomColor: theme.border }]}>
-                  <TouchableOpacity onPress={() => router.back()} style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <Ionicons name="arrow-back" size={24} color={theme.text} />
-                      <Text style={[styles.headerTitle, { color: theme.text }]}>Back</Text>
-                  </TouchableOpacity>
-              </View>
-              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-                  <Ionicons name="document-text-outline" size={64} color={theme.subText} style={{ marginBottom: 15 }} />
-                  <Text style={{ color: theme.text, fontSize: 18, fontWeight: 'bold' }}>Post not found</Text>
-                  <Text style={{ color: theme.subText, marginTop: 10, textAlign: 'center' }}>This post may have been deleted by the author.</Text>
-              </View>
-          </SafeAreaView>
-      );
-  }
-
-  const formatTimeAgo = (timestamp: any) => {
-    if (!timestamp?.seconds) return "now";
-    const seconds = Math.floor((new Date().getTime() / 1000) - timestamp.seconds);
-    if (seconds < 60) return `${seconds}s`;
-    if (seconds < 3600) return `${Math.floor(seconds/60)}m`;
-    if (seconds < 86400) return `${Math.floor(seconds/3600)}h`;
-    return new Date(timestamp.seconds * 1000).toLocaleDateString();
-  };
-
-  const renderComment = ({ item, index }: { item: any, index: number }) => {
+  // ✅ FIX 1: useCallback — renderComment not recreated on every render
+  const renderComment = useCallback(({ item, index }: { item: any, index: number }) => {
       const isLiked = item.likes?.includes(user?.uid);
       const isReposted = item.reposts?.includes(user?.uid);
       const timeAgo = formatTimeAgo(item.createdAt);
@@ -555,7 +552,34 @@ export default function PostDetailsScreen() {
         {(index + 1) % 3 === 0 && <AdBanner />}
         </>
       );
-  };
+  }, [user?.uid, theme, goToDetails, toggleAction, handleShare, router]);
+
+  if (loading) {
+      return (
+          <SafeAreaView style={[styles.container, { backgroundColor: theme.background, justifyContent: 'center', alignItems: 'center' }]}>
+              <ActivityIndicator size="large" color={theme.tint} />
+          </SafeAreaView>
+      );
+  }
+
+  if (!postFound || !post) {
+      return (
+          <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
+              <Stack.Screen options={{ headerShown: false }} />
+              <View style={[styles.header, { borderBottomColor: theme.border }]}>
+                  <TouchableOpacity onPress={() => router.back()} style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Ionicons name="arrow-back" size={24} color={theme.text} />
+                      <Text style={[styles.headerTitle, { color: theme.text }]}>Back</Text>
+                  </TouchableOpacity>
+              </View>
+              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+                  <Ionicons name="document-text-outline" size={64} color={theme.subText} style={{ marginBottom: 15 }} />
+                  <Text style={{ color: theme.text, fontSize: 18, fontWeight: 'bold' }}>Post not found</Text>
+                  <Text style={{ color: theme.subText, marginTop: 10, textAlign: 'center' }}>This post may have been deleted by the author.</Text>
+              </View>
+          </SafeAreaView>
+      );
+  }
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
@@ -580,10 +604,16 @@ export default function PostDetailsScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0} 
       >
+          {/* ✅ FIX 2: FlatList perf props added */}
           <FlatList
             data={comments}
             keyExtractor={item => item.id}
             contentContainerStyle={{ paddingBottom: 20 }}
+            removeClippedSubviews={Platform.OS === 'android'}
+            maxToRenderPerBatch={8}
+            windowSize={10}
+            initialNumToRender={8}
+            scrollEventThrottle={16}
             onViewableItemsChanged={onViewableItemsChanged}
             viewabilityConfig={viewabilityConfig}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.tint} />} // ✅ BUG 1 FIX: Pull to refresh comments

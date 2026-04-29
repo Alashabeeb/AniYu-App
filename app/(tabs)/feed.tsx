@@ -18,6 +18,8 @@ import {
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
+    AppState, // ✅ PERF: Battery — pause video when app backgrounds
+    AppStateStatus,
     Dimensions,
     FlatList,
     Platform,
@@ -59,6 +61,10 @@ export default function FeedScreen() {
   const [userInterests, setUserInterests] = useState<string[]>([]);
   const [blockedUsers, setBlockedUsers] = useState<string[]>([]);
 
+  // ✅ FIX 1: Refs so fetchFeedChunk always reads fresh values even after setState
+  const userInterestsRef = useRef<string[]>([]);
+  const blockedUsersRef = useRef<string[]>([]);
+
   const [refreshing, setRefreshing] = useState(false);
   
   const [globalLastVisible, setGlobalLastVisible] = useState<DocumentSnapshot | null>(null);
@@ -89,6 +95,16 @@ export default function FeedScreen() {
   const isMountedRef = useRef(true);
   useEffect(() => {
     return () => { isMountedRef.current = false; };
+  }, []);
+
+  // ✅ FIX 2: Battery — stop video playback when app goes to background
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (nextState === 'background' || nextState === 'inactive') {
+        setPlayingPostId(null);
+      }
+    });
+    return () => subscription.remove();
   }, []);
 
   // ✅ GATEKEEPER CHECK: See if user needs to onboard
@@ -132,8 +148,12 @@ export default function FeedScreen() {
               const cachedPrefs = await AsyncStorage.getItem(cacheKey);
               if (cachedPrefs && isMountedRef.current) {
                   const data = JSON.parse(cachedPrefs);
-                  setBlockedUsers(data.blockedUsers || []);
+                  const blocked = data.blockedUsers || [];
                   const ints = data.interests || [];
+                  // ✅ FIX 1: Sync refs before calling fetch so it reads fresh values
+                  blockedUsersRef.current = blocked;
+                  userInterestsRef.current = ints;
+                  setBlockedUsers(blocked);
                   setUserInterests(ints);
                   previousInterestsRef.current = JSON.stringify(ints);
                   fetchFeedChunk(true); // Initial Load from Cache Prefs
@@ -142,8 +162,12 @@ export default function FeedScreen() {
               const userSnap = await getDoc(doc(db, 'users', currentUser.uid));
               if (userSnap.exists() && isMountedRef.current) {
                   const data = userSnap.data();
-                  setBlockedUsers(data?.blockedUsers || []);
+                  const blocked = data?.blockedUsers || [];
                   const freshInterests = data?.interests || data?.favoriteGenres || [];
+                  // ✅ FIX 1: Sync refs before calling fetch so it reads fresh values
+                  blockedUsersRef.current = blocked;
+                  userInterestsRef.current = freshInterests;
+                  setBlockedUsers(blocked);
                   setUserInterests(freshInterests);
                   
                   // ✅ BUG 2 & 5 FIX: If Firestore interests differ from Cache, force a silent background re-fetch!
@@ -160,7 +184,7 @@ export default function FeedScreen() {
                   }
                   
                   await AsyncStorage.setItem(cacheKey, JSON.stringify({
-                      blockedUsers: data?.blockedUsers || [],
+                      blockedUsers: blocked,
                       interests: freshInterests
                   }));
               }
@@ -181,7 +205,8 @@ export default function FeedScreen() {
       }
   }, [blockedUsers]);
 
-  const calculatePostScore = (post: any, interests: string[], userId: string) => {
+  // ✅ FIX 7: useCallback so calculatePostScore is not recreated every render
+  const calculatePostScore = useCallback((post: any, interests: string[], userId: string) => {
       let score = 0;
       
       if (post.tags && Array.isArray(post.tags) && interests.length > 0) {
@@ -222,7 +247,7 @@ export default function FeedScreen() {
       score += personalizedJitter;
 
       return score;
-  };
+  }, [sessionShuffleSeed]);
 
   const fetchFeedChunk = async (isRefresh = false) => {
       if (!isMountedRef.current) return;
@@ -244,7 +269,9 @@ export default function FeedScreen() {
       }
       
       try {
-          const safeInterests = userInterests.slice(0, 10);
+          // ✅ FIX 1: Read from refs — always fresh even if called right after setState
+          const safeInterests = userInterestsRef.current.slice(0, 10);
+          const currentBlockedUsers = blockedUsersRef.current;
           const fetchPromises = [];
 
           // Query 1: Global Feed (Only if not exhausted)
@@ -305,13 +332,14 @@ export default function FeedScreen() {
 
           const currentUserId = currentUser?.uid || 'guest_user';
 
+          // ✅ FIX 1: Use ref for blockedUsers filter — not stale closure
           let fetchedChunk = Array.from(postMap.values())
               .filter(p => {
-                  if (blockedUsers.includes(p.userId)) return false;
-                  if (p.isRepost && p.originalUserId && blockedUsers.includes(p.originalUserId)) return false;
+                  if (currentBlockedUsers.includes(p.userId)) return false;
+                  if (p.isRepost && p.originalUserId && currentBlockedUsers.includes(p.originalUserId)) return false;
                   return true;
               })
-              .map(p => ({ ...p, algoScore: calculatePostScore(p, userInterests, currentUserId) }));
+              .map(p => ({ ...p, algoScore: calculatePostScore(p, safeInterests, currentUserId) }));
 
           const reposts = fetchedChunk.filter(p => p.isRepost && p.originalPostId);
           if (reposts.length > 0) {
@@ -418,7 +446,28 @@ export default function FeedScreen() {
       }
   }).current;
 
-  const renderUserItem = ({ item }: { item: any }) => (
+  // ✅ FIX 5: Stable callbacks so PostCard doesn't re-render on every feed state change
+  const handleDelete = useCallback((deletedId: string) => {
+      setPosts(prev => prev.filter(p => p.id !== deletedId));
+  }, []);
+
+  const handleBlock = useCallback((blockedId: string) => {
+      setPosts(prev => prev.filter(p => p.userId !== blockedId && p.originalUserId !== blockedId));
+      setBlockedUsers(prev => {
+          const newBlocked = [...prev, blockedId];
+          blockedUsersRef.current = newBlocked; // ✅ FIX 1: Keep ref in sync
+          if (currentUser) {
+              AsyncStorage.setItem(`prefs_${currentUser.uid}`, JSON.stringify({
+                  blockedUsers: newBlocked,
+                  interests: userInterestsRef.current
+              })).catch(() => {});
+          }
+          return newBlocked;
+      });
+  }, [currentUser]);
+
+  // ✅ FIX 4: Stable renderUserItem — not recreated on every render
+  const renderUserItem = useCallback(({ item }: { item: any }) => (
       <TouchableOpacity 
           style={[styles.userCard, { backgroundColor: theme.card }]}
           onPress={() => router.push({ pathname: '/feed-profile', params: { userId: item.id } })}
@@ -430,7 +479,24 @@ export default function FeedScreen() {
           </View>
           <Ionicons name="chevron-forward" size={20} color={theme.subText} />
       </TouchableOpacity>
-  );
+  ), [theme, router]);
+
+  // ✅ FIX 3 & 5: Memoized renderItem — PostCards only re-render when their own data changes
+  const renderItem = useCallback(({ item, index }: { item: any; index: number }) => (
+      <React.Fragment>
+          <PostCard 
+              post={item as any} 
+              isVisible={playingPostId === item.id} 
+              onDelete={handleDelete}
+              onBlock={handleBlock}
+          />
+          {(index + 1) % 3 === 0 && (
+              <View style={{ marginVertical: 8 }}>
+                  <AdBanner />
+              </View>
+          )}
+      </React.Fragment>
+  ), [playingPostId, handleDelete, handleBlock]);
 
   const renderChatPlaceholder = () => (
       <View style={[styles.chatPlaceholderContainer, { flex: 1 }]}>
@@ -554,7 +620,8 @@ export default function FeedScreen() {
                 removeClippedSubviews={Platform.OS === 'android'} 
                 maxToRenderPerBatch={5} 
                 windowSize={10} 
-                initialNumToRender={5} 
+                initialNumToRender={5}
+                scrollEventThrottle={16}  // ✅ FIX 6: Limit scroll events — reduces JS thread pressure on low-end devices
                 
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.tint} />}
                 
@@ -582,33 +649,7 @@ export default function FeedScreen() {
                     ) : null
                 }
                 
-                renderItem={({ item, index }: { item: any, index: number }) => (
-                    <React.Fragment>
-                        <PostCard 
-                            post={item as any} 
-                            isVisible={playingPostId === item.id} 
-                            onDelete={(deletedId) => {
-                                setPosts(prev => prev.filter(p => p.id !== deletedId));
-                            }}
-                            onBlock={(blockedId) => {
-                                setPosts(prev => prev.filter(p => p.userId !== blockedId && p.originalUserId !== blockedId));
-                                const newBlocked = [...blockedUsers, blockedId];
-                                setBlockedUsers(newBlocked);
-                                if (currentUser) {
-                                    AsyncStorage.setItem(`prefs_${currentUser.uid}`, JSON.stringify({
-                                        blockedUsers: newBlocked,
-                                        interests: userInterests
-                                    })).catch(()=>{});
-                                }
-                            }}
-                        />
-                        {(index + 1) % 3 === 0 && (
-                            <View style={{ marginVertical: 8 }}>
-                                <AdBanner />
-                            </View>
-                        )}
-                    </React.Fragment>
-                )}
+                renderItem={renderItem}
             />
         )}
       </View>
